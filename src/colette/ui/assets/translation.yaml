@@ -1,0 +1,99 @@
+fr:
+  Sessions: Conversations
+  New session: New session
+  Available Services: Services disponibles
+  Enter message...: Saisissez un message...
+  Context Chunks: Morceaux de context
+  Sources: Sources
+  Chatbot: Chatbot
+  Logs: Logs
+  About content: ' # À propos de Colette
+
+    Colette est un système avancé de génération augmentée par récupération multimodale
+    (RAG) conçu pour traiter et comprendre divers formats de documents, y compris
+    DOC, PPT, PDF et HTML. Il intègre de manière fluide différents types de données
+    pour fournir des réponses précises et contextuellement pertinentes aux requêtes
+    des utilisateurs.
+
+    ## Aperçu du pipeline
+
+    La fonctionnalité de Colette est structurée en deux étapes principales :
+
+    ### 1. Ingestion de Documents
+
+    - **Téléversement** : Les utilisateurs peuvent téléverser des documents dans plusieurs
+    formats.
+
+    - **Transformation en images** : Chaque document est converti en images pour préserver
+    sa mise en page et ses éléments visuels d''origine.
+
+    - **Découpage en sections** : Les images sont segmentées en parties plus petites
+    et gérables en fonction de leur mise en page, garantissant que chaque section
+    représente une information cohérente.
+
+    - **Création d''embeddings** : Ces sections sont ensuite transformées en vecteurs
+    d''embeddings, capturant leur contenu sémantique pour une récupération efficace.
+
+    ### 2. Génération augmentée par récupération
+
+    - **Récupération** : Lorsqu''une requête utilisateur est reçue, Colette interroge
+    la base de données de vecteurs pour identifier et récupérer les sections les plus
+    pertinentes qui correspondent à l''intention de la requête.
+
+    - **Génération de réponse** : En utilisant un modèle multimodal, Colette synthétise
+    les informations récupérées pour générer une réponse complète et adaptée au contexte.
+
+
+    En combinant des techniques avancées de traitement de documents avec des capacités
+    sophistiquées de récupération et de génération, Colette offre une solution robuste
+    pour extraire et fournir des informations à partir de jeux de données complexes
+    et multimodaux. '
+  About: About
+en:
+  Sessions: Sessions
+  New session: New session
+  Available Services: Available Services
+  Enter message...: Enter message...
+  Context Chunks: Context Chunks
+  Sources: Sources
+  Chatbot: Chatbot
+  Logs: Logs
+  About content: ' # About Colette
+
+    Colette is an advanced Multimodal Retrieval-Augmented Generation (RAG) system
+    designed to process and understand diverse document formats, including DOC, PPT,
+    PDF, and HTML. It seamlessly integrates various data types to provide accurate
+    and contextually relevant responses to user queries.
+
+    ## Pipeline Overview
+
+    Colette''s functionality is structured into two primary stages:
+
+    ### 1. Document Ingestion
+
+    - **Upload**: Users can upload documents in multiple formats.
+
+    - **Transformation into Images**: Each document is converted into images to preserve
+    its original layout and visual elements.
+
+    - **Chunking**: The images are segmented into smaller, manageable sections based
+    on their layout, ensuring that each chunk represents a coherent piece of information.
+
+    - **Embedding**: These chunks are then transformed into vector embeddings, capturing
+    their semantic content for efficient retrieval.
+
+    ### 2. Retrieval-Augmented Generation
+
+    - **Retrieval**: Upon receiving a user query, Colette searches the vector store
+    to identify and retrieve the most relevant chunks that align with the query''''s
+    intent.
+
+    - **Answer Generation**: Utilizing a multimodal model, Colette synthesizes the
+    retrieved information to generate a comprehensive and contextually appropriate
+    response.
+
+
+    By combining sophisticated document processing techniques with advanced retrieval
+    and generation capabilities, Colette offers a robust solution for extracting and
+    delivering information from complex, multimodal datasets. '
+  About: About

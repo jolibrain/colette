@@ -1,0 +1,16 @@
+{
+    "parameters": {
+        "input": {
+            "preprocessing": {
+                "files": ["all"],
+                "dpi": 300
+            },
+            "data": ["docs/pdf"],
+            "rag": {
+                "reindex": true,
+                "index_protection": false,
+                "gpu_id": 0
+            }
+        }
+    }
+}

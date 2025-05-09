@@ -1,0 +1,40 @@
+{
+    "app": {
+        "repository": "",
+        "models_repository": "models",
+        "verbose": "debug"
+    },
+    "parameters": {
+        "input": {
+            "lib": "langchain",
+            "preprocessing": {
+                "files": [
+                    "all"
+                ],
+                "save_output": false,
+                "dpi": 300
+            },
+            "rag": {
+                "embedding_model": "intfloat/multilingual-e5-large-instruct",
+                "gpu_id": 0,
+                "top_k": 4,
+                "reindex": true,
+                "index_protection": false
+            },
+            "template": {
+                "template_prompt": "You are a useful assistant. Question: {question} Context: {context} Answer: ",
+                "template_prompt_variables": ["context", "question"]
+            },
+            "data": []
+        },
+        "llm": {
+            "source": "Qwen/Qwen2.5-0.5B-Instruct",
+            "context_size": 2048,
+            "dtype": "float32",
+	    "conversational": true,
+            "inference": {
+                "lib": "vllm"
+            }
+        }
+    }
+}

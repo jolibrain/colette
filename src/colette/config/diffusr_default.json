@@ -1,0 +1,22 @@
+{
+    "app": {
+        "repository": "",
+        "models_repository": "models",
+        "verbose": "debug"
+    },
+    "parameters": {
+        "input": {
+            "lib": "diffusr"
+        },
+        "llm": {
+            "source": "black-forest-labs/FLUX.1-schnell",
+            "load_in_8bit": true,
+            "gpu_ids": [0],
+            "image_width": 512,
+            "image_height": 512,
+            "inference": {
+                "lib": "diffusers"
+            }
+        }
+    }
+}

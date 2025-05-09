@@ -1,0 +1,23 @@
+export HF_HOME=/path/to/datasets/hf/dse
+python ./train.py \
+       --output_dir custom_dse \
+       --model_name_or_path MrLight/dse-qwen2-2b-mrl-v1 \
+       --save_steps 100 \
+       --dataset_name custom \
+       --dataset_path dataset.json \
+       --corpus_path /path/to/data/ \
+       --bf16 True \
+       --pooling eos \
+       --tf32 True \
+       --normalize True \
+       --temperature 0.02 \
+       --per_device_train_batch_size 1 \
+       --gradient_checkpointing True \
+       --train_group_size 3 \
+       --learning_rate 1e-5 \
+       --query_max_len 128 \
+       --passage_max_len 4096 \
+       --num_train_epochs 1 \
+       --logging_steps 1 \
+       --overwrite_output_dir True \
+       --gradient_accumulation_steps 64
