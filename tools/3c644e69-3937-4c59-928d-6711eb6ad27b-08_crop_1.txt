@@ -1,0 +1,9 @@
+7. Mitigation measures
+
+7.1 Limit Releasing Objects During Normal Operations
+
+In all operational orbit regimes, spacecraft and orbital stages should be designed to eliminate debris released during normal operations. When it is not feasible to eliminate debris, it should be minimized and a justification should be provided.
+
+Any project and experiments, which will release a number of objects, or extend or deploy physically large objects, should not be planned unless an adequate assessment can verify that its effectse on the orbital environment and hazards to other space operating objects are negligible in long-term prediction.
+
+Tether systems will be uniquely analyzed for both intact and severe condition.

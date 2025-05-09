@@ -1,0 +1,16 @@
+{
+    "parameters": {
+        "input": {
+            "preprocessing": {
+                "files": ["all" ],
+                "dpi": 300
+            },
+            "rag": {
+                "gpu_id": 0,
+                "reindex": true,
+                "index_protection": false
+            },
+            "data": []
+        }
+    }
+}

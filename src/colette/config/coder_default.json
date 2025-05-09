@@ -1,0 +1,19 @@
+{
+    "app": {
+        "repository": "",
+        "models_repository": "models",
+        "verbose": "debug"
+    },
+    "parameters": {
+        "input": {
+            "lib": "langchain"
+	},
+        "llm": {
+            "source": "qwen2.5-coder",
+            "conversational": true,
+            "inference": {
+                "lib": "ollama"
+            }
+        }
+    }
+}
