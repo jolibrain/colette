@@ -1,0 +1,38 @@
+{
+    "app": {
+        "repository": "app_colette",
+        "models_repository": "models",
+        "verbose": "info"
+    },
+    "parameters": {
+        "input": {
+            "lib": "hf",
+            "rag": {
+                "indexdb_lib": "chromadb",
+                "embedding_lib": "huggingface",
+                "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                "top_k": 4,
+                "gpu_id": 0,
+                "ragm": {
+                    "layout_detection": true,
+                    "image_width": 512,
+                    "image_height": 512,
+                    "auto_scale_for_font": false
+                }
+            },
+            "template": {
+                "template_prompt": "Tu es un assistant de réponse à des questions. Question: {question} Réponse: ",
+                "template_prompt_variables": ["question"]
+            }
+        },
+        "llm": {
+            "source": "Qwen/Qwen2-VL-2B-Instruct",
+            "gpu_ids": [0],
+            "image_width": 640,
+            "image_height": 320,
+            "inference": {
+                "lib": "huggingface"
+            }
+        }
+    }
+}

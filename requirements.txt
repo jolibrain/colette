@@ -1,0 +1,42 @@
+torch
+torchvision
+transformers>=4.49.0
+accelerate
+bitsandbytes
+fastapi
+pydantic
+uvicorn
+pdfminer.six
+opencv-python
+pymupdf # for unstructured fast mode
+tiktoken
+gpt4all
+chromadb
+# vllm # only supported via pip for cuda machines, otherwise requires a custom build
+# llama-cpp-python==0.3.1 # can be built for CPU only
+huggingface_hub
+rank_bm25
+unstructured[docx]
+unstructured[pptx]
+unstructured[xlsx]
+unstructured[pdf]
+unstructured-inference # needed for non fast partitioning
+langchain-core 
+langchain-community
+langchain-chroma
+langchain-huggingface
+langchain-openai
+langchain-ollama
+langchain-unstructured
+faiss-gpu-cu12
+ujson
+GitPython
+ninja
+qwen_vl_utils
+wheel
+#flash-attn; --global-option="--no-build-isolation"
+pdf2image
+pypandoc_binary
+accelerate
+python-doctr
+diffusers

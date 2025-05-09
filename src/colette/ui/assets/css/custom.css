@@ -1,0 +1,310 @@
+:root {
+    --main-area-height: calc(100vh - 110px);
+}
+
+/* no footer */
+footer {
+    display: none !important;
+}
+
+/* customize scrollbar */
+::-webkit-scrollbar {
+    background: var(--background-fill-primary);
+}
+::-webkit-scrollbar-thumb {
+    background-color: var(--border-color-primary);
+    border: 4px solid transparent;
+    border-radius: 100px;
+    background-clip: content-box;
+}
+::-webkit-scrollbar-corner {
+    background: var(--background-fill-primary);
+}
+
+.gradio-container {
+    max-width: 100% !important;
+    /* overflow: scroll !important;
+  height: 100% !important; */
+}
+
+/* styling for header bar */
+.header-bar {
+    background-color: transparent;
+    margin: 0px 0px 20px;
+    overflow-x: scroll;
+    display: block !important;
+    text-wrap: nowrap;
+    border: none;
+}
+.header-bar button.selected {
+    border: none;
+
+    /* an alternative header bar style with rounded background */
+    /* background-color: var(--background-fill-primary);
+  border: 4px solid transparent;
+  border-radius: var(--radius-lg);
+  background-clip: padding-box; */
+}
+
+/* selected buttons have highlighted text */
+button.selected {
+    color: var(--block-label-text-color);
+    font-weight: bold;
+}
+
+#chat-tab,
+#indices-tab,
+#settings-tab,
+#help-tab,
+#resources-tab,
+#login-tab {
+    border: none !important;
+}
+
+#help-tab,
+#settings-tab {
+    /* text-dense view should not be wide for readability */
+    max-width: max(56vw, 900px) !important;
+    margin: 0 auto !important;
+}
+
+.indices-tab,
+#resources-tab {
+    /* Other view should not be too wide */
+    border: none !important;
+    max-width: max(70vw, 1200px) !important;
+    margin: 0 auto !important;
+}
+
+#main-chat-bot {
+    background: var(--background-fill-primary);
+    flex: auto;
+}
+
+#chat-area {
+    height: var(--main-area-height) !important;
+}
+
+#chat-info-panel {
+    max-height: var(--main-area-height) !important;
+    overflow: auto !important;
+}
+
+#conv-settings-panel {
+    max-height: var(--main-area-height) !important;
+    flex-wrap: unset;
+    overflow-y: scroll !important;
+    position: sticky;
+}
+
+.setting-answer-mode-description {
+    margin: 5px 5px 2px !important;
+}
+
+mark {
+    background-color: #004f91;
+}
+
+/* clpse */
+.clpse {
+    background-color: var(--background-fill-secondary);
+    font-weight: bold;
+    cursor: pointer;
+    padding: 3px;
+    width: 100%;
+    border: none;
+    text-align: left;
+    outline: none;
+}
+
+/* for setting transparent background for elements */
+.no-background {
+    background-color: transparent;
+    border: none;
+}
+
+/* for setting bold text for elements */
+.bold-text {
+    font-weight: bold;
+}
+
+/* for setting highlighted text for elements */
+.body-text-color {
+    color: var(--body-text-color);
+}
+
+/* for setting right-aligned buttons */
+.right-button {
+    min-width: 200px !important;
+    width: fit-content;
+    padding-left: 20px;
+    padding-right: 20px;
+    margin: 0px 0px 0px auto;
+}
+
+/* for setting height limit for buttons */
+.cap-button-height {
+    max-height: 42px;
+}
+
+/* Hide sort buttons at gr.DataFrame */
+.sort-button {
+    display: none !important;
+}
+
+/* Show sort button only in File list*/
+#file_list_view .sort-button {
+    display: block !important;
+}
+
+#logo-image {
+    position: fixed;
+    top: 14px;
+    right: 40px;
+}
+
+#toggle-dark-button {
+    position: fixed;
+    top: 6px;
+    right: 40px;
+}
+
+.scrollable {
+    overflow-y: auto;
+}
+
+.fill-main-area-height {
+    max-height: var(--main-area-height);
+}
+
+.unset-overflow {
+    overflow: unset !important;
+}
+
+/*body {*/
+/*  margin: 0;*/
+/*  font-family: Arial, sans-serif;*/
+/*}*/
+
+pdfjs-viewer-element {
+    height: 100vh;
+    height: 100dvh;
+}
+
+/* Modal styles */
+
+.modal {
+    display: none;
+    position: relative;
+    z-index: 1;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgb(0, 0, 0);
+    background-color: rgba(0, 0, 0, 0.4);
+}
+
+.modal-header {
+    padding: 0px 10px;
+}
+
+.modal-content {
+    background-color: #fefefe;
+    height: 110%;
+    display: flex;
+    flex-direction: column;
+}
+
+.close {
+    color: #aaa;
+    align-self: flex-end;
+    font-size: 28px;
+    font-weight: bold;
+}
+
+.close:hover,
+.close:focus {
+    color: black;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.modal-body {
+    flex: 1;
+    overflow: auto;
+}
+
+/* Style on source panel */
+/* each <details> is a context source item */
+details {
+    margin-bottom: 15px;
+}
+details > a > img {
+    height: 20vh;
+}
+details > a:hover > img {
+    border: 1px solid #004f91;
+}
+
+/* Full height usage */
+/* Chat input must be at the bottom of the page fold */
+html,
+body {
+    height: 100%;
+}
+#chatbot {
+    min-height: calc(100vh - 200px);
+    height: auto !important;
+}
+#chatbot-column {
+    box-sizing: border-box;
+}
+
+/* On smaller screen, like tablet,*/
+/* UI must be displayed on single colmun */
+@media only screen and (max-width: 1200px) {
+    #chatbot {
+        min-height: 300px !important;
+    }
+    #chatbot-column {
+        min-width: min(640px, 100%) !important;
+    }
+}
+
+/* Position language toggle at the top of the page near the logo */
+#lang_radio {
+    position: absolute;
+    top: 0px;
+    left: 140px;
+    z-index: 2;
+}
+
+/* Set the clear button as the same height as chatbot input */
+#clearButtonChat {
+    height: 100%;
+}
+
+.examples {
+    position: absolute;
+    bottom: 5px;
+    width: 100%;
+}
+
+button.example {
+    background-color: var(--example-button-bg);
+    color: var(--neutral-900);
+}
+
+.dark button.example {
+    color: white;
+}
+
+button.example:hover {
+    background-color: var(--example-button-bg-hover);
+}
+
+.example-text-content {
+    margin: 0 auto;
+}

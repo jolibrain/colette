@@ -1,0 +1,46 @@
+services:
+    gpu_server:
+        build:
+            context: .
+            dockerfile: docker/gpu_server.Dockerfile
+        deploy:
+            resources:
+                reservations:
+                    devices:
+                        - driver: nvidia
+                          count: 2
+                          capabilities: [gpu]
+        ports:
+            - "1873:1873"
+        environment:
+            NVIDIA_VISIBLE_DEVICES: "2,3"
+            NVIDIA_DRIVER_CAPABILITIES: compute,utility
+            HF_TOKEN: ${HF_TOKEN}
+        volumes:
+            - ${MODELS_PATH}:/models
+            - ${DATA_PATH}:/data
+            - ${APPS_PATH}:/rag
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "wget -qO- http://localhost:1873/v1/info > /dev/null || exit 1",
+                ]
+            interval: 5s
+            timeout: 3s
+            retries: 10
+            start_period: 15s
+    ui:
+        build:
+            context: .
+            dockerfile: docker/ui.Dockerfile
+        environment:
+            PYTHONPATH: /app/src
+            APP_NAME: ${APP_NAME}
+        ports:
+            - "7860:7860"
+        entrypoint: ["python", "src/colette/ui/app.py"]
+        command: ["--config", "/app/src/colette/config/vrag_default.json"]
+        depends_on:
+            gpu_server:
+                condition: service_healthy
