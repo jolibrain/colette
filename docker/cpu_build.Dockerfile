@@ -16,10 +16,10 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
     libreoffice \
     libmagic1 \
     poppler-utils \
-    g++ && \
+    g++ \
     texlive-latex-base \
     texlive-latex-recommended \
-    texlive-luatex \
+    texlive-luatex && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
