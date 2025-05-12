@@ -13,7 +13,6 @@ services:
         ports:
             - "1873:1873"
         environment:
-            NVIDIA_VISIBLE_DEVICES: "2,3"
             NVIDIA_DRIVER_CAPABILITIES: compute,utility
             HF_TOKEN: ${HF_TOKEN}
         volumes:
