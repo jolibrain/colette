@@ -346,8 +346,5 @@ class JSONApi(APIStrategy):
         return APIResponse(message=f"Indexing for {sname} started.")
 
     async def service_index_status(self, sname: str) -> APIResponse:
-        self.logger_api.error("getting indexing status for service name: " + sname)
-        self.logger_api.error(f"indexing_status: {self.indexing_status}")
         status = self.indexing_status.get(sname, "finished")
-        self.logger_api.error("service name [" + sname + "] is: " + status)
         return APIResponse(message=f"Indexing for {sname}: {status}.")
