@@ -60,14 +60,14 @@ docker pull docker.jolibrain.com/colette_gpu
 2. Index your data
 
 ```bash
-docker run --runtime=nvidia -v $PWD:/rag -v $PWD/docs:/data -v $PWD/models:/app/models docker.jolibrain.com/colette_gpu colette_cli index --app-dir /rag/app_colette --data-dir /data/pdf --config-file src/colette/config/vrag_default.json --models-dir /app/models
+docker run --gpus all -v $PWD:/rag -v $PWD/docs:/data -v $PWD/models:/app/models docker.jolibrain.com/colette_gpu colette_cli index --app-dir /rag/app_colette --data-dir /data/pdf --config-file src/colette/config/vrag_default.json --models-dir /app/models
 ```
 
 
 3. Test by sending a question
 
 ```bash
-docker run --runtime=nvidia -v $PWD:/rag -v $PWD/models:/app/models docker.jolibrain.com/colette_gpu colette_cli chat --app-dir app_colette --models-dir /app/models --msg "What are the identified sources of errors of a RAG?"
+docker run --gpus all -v $PWD:/rag -v $PWD/app_colette:/app/app_colette -v $PWD/models:/models docker.jolibrain.com/colette_gpu colette_cli chat --app-dir app_colette --models-dir /models --msg "What are the identified sources of errors of a RAG?"
 ```
 
 ### Command line
