@@ -76,6 +76,33 @@ def get_md5sum(file_path, kvstore):
     return md5_hash.hexdigest()
 
 
+def take_top_k(data: dict[str, list], k: int) -> dict[str, list]:
+    """
+    Extracts the first k elements from each list in the data dictionary and reverses them.
+    Each value in data is expected to be a list (or a list of lists).
+
+    Args:
+        data: dictionary with keys such as 'distances', 'documents', etc.
+        k: number of elements to extract
+
+    Returns:
+        A new dictionary containing only the first k elements for each key, in reversed order.
+    """
+    result = {}
+    for key, value in data.items():
+        if value is None:
+            result[key] = None
+            continue
+
+        if isinstance(value, list) and value and isinstance(value[0], list):
+            result[key] = [value[0][:k][::-1]]
+        elif isinstance(value, list):
+            result[key] = value[:k][::-1]
+        else:
+            result[key] = value
+    return result
+
+
 def sort_and_select_top_k(
     data: dict[str, list[list[Any]]], k: int, remove_duplicates: bool, kvstore, logger
 ) -> dict[str, list[list[Any]]]:
@@ -430,9 +457,14 @@ class RAGImgRetriever:
             docs = self.colretriever.invoke(question, query_depth_mult)
 
         self.logger.debug(f"retrieved documents: {json.dumps(docs, indent=2)}")
+
         ##- filter docs and add images
-        docs = self.filter(docs)
-        self.logger.debug(f"filtered documents: {json.dumps(docs, indent=2)}")
+        # docs = self.filter(docs)
+        # self.logger.debug(f"filtered documents: {json.dumps(docs, indent=2)}")
+
+        # Filter function is inconsistent wrt the size of the db (80 seconds to filter 290 docs)
+        # so we just take the top_k docs
+        docs = take_top_k(docs, self.top_k) 
 
         return docs
 

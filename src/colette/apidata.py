@@ -1,7 +1,7 @@
 # define APIData
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, List, Optional
 
 from pydantic import (
     BaseModel,
@@ -324,3 +324,37 @@ class APIResponse(BaseModel):
     """ Original input question as message """
     output: str | None = None
     """ RAG API output, i.e. object to take the answer's from """
+
+class ChatMessage(BaseModel):
+    role: str
+    """ Role of the message, e.g. user, assistant """
+    content: str
+    """ Content of the message """
+
+class ChatCompletionRequest(BaseModel):
+    model: str
+    """ Model to use for the chat completion """
+    messages: List[ChatMessage]
+    """ List of chat messages """
+    max_tokens: Optional[int] = 512
+    """ Maximum number of tokens to generate in the completion """
+    temperature: Optional[float] = 0.1
+    """ Sampling temperature for the completion """
+    stream: Optional[bool] = False
+    """ Whether to stream the completion response """
+
+class Choice(BaseModel):
+    message: ChatMessage
+    """ Message in the choice """
+
+class ChatCompletionResponse(BaseModel):
+    id: str
+    """ Unique identifier for the chat completion """
+    object: str 
+    """ Object type, e.g. chat.completion """
+    created: int
+    """ Timestamp of the chat completion creation """
+    model: str
+    """ Model used for the chat completion """
+    choices: List[Choice]
+    """ List of choices in the chat completion """

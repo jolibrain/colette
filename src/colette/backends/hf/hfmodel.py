@@ -289,6 +289,16 @@ class HFModel(LLMModel):
             else:
                 messages = history.copy()
                 messages.append(new_message)
+            
+            system_prompt = {
+                "role": "system",
+                "content": [{"type": "text", "text": "You are a helpful assistant. Answer the question based on the "
+                "provided images. If the images are not relevant to the question, answer based on your "
+                "knowledge. If the answer cannot be derivated from the documents start your answer with : Based on my knowledge. "
+                "Please respond in a professional concise manner."
+                "Respond in the language of the question."}],
+            }
+            messages.insert(0, system_prompt)
 
             text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             image_inputs, video_inputs = process_vision_info(messages)
