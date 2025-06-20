@@ -7,6 +7,7 @@ import torch
 from qwen_vl_utils import process_vision_info
 from transformers import (
     AutoModelForVision2Seq,
+    AutoModelForImageTextToText,
     AutoProcessor,
     AutoTokenizer,
     BitsAndBytesConfig,
@@ -163,6 +164,16 @@ class HFModel(LLMModel):
                     self.llm_source,
                 )
                 self.llm_type = "smolvlm"
+            elif "nanonets-ocr" in self.llm_source.lower():
+                self.llm = AutoModelForImageTextToText.from_pretrained(
+                    self.llm_source,
+                    torch_dtype="auto",
+                    device_map=self.device,
+                    attn_implementation="flash_attention_2",
+                    cache_dir=self.models_repository,
+                )
+                self.llm_type = "nanonets"
+                self.processor = AutoProcessor.from_pretrained(self.llm_source)
             else:
                 msg = "Unknown Multimodal LLM source: " + self.llm_source
                 self.logger.error(msg)
@@ -250,7 +261,7 @@ class HFModel(LLMModel):
             images = [stitch_images_vertically(images)]
 
         # process inputs
-        if self.llm_type == "qwen2-vl":
+        if self.llm_type in ["qwen2-vl", "nanonets"]:
             content = []
             if not history:
                 for image, metadata in zip(docs["images"][0], docs["metadatas"][0], strict=False):
@@ -483,6 +494,16 @@ class HFModel(LLMModel):
                             generated_ids_trimmed,
                             skip_special_tokens=True,
                             clean_up_tokenization_spaces=False,
+                        )[0]
+                    elif self.llm_type == "nanonets":
+                        generated_ids_trimmed = [
+                            out_ids[len(in_ids) :]
+                            for in_ids, out_ids in zip(model_inputs.input_ids, generation, strict=False)
+                        ]
+                        decoded = self.processor.batch_decode(
+                            generated_ids_trimmed,
+                            skip_special_tokens=True,
+                            clean_up_tokenization_spaces=True,
                         )[0]
                     elif self.llm_type == "pixtral":
                         generated_ids_trimmed = [
