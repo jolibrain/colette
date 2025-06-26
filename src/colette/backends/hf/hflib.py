@@ -13,6 +13,7 @@ from colette.outputconnector import OutputConnector
 from .query_rephraser import QueryRephraser
 from .session_cache import SessionCache
 
+import time
 
 def load_image_as_base64(path: Path) -> str:
     #
@@ -65,9 +66,11 @@ class HFLib(LLMLib):
     def predict(self, ad: APIData) -> APIResponse:
         # - input connector transform()
         try:
+            time_start = time.time()
             message, docs_source, _ = self.inputc.transform(ad.parameters.input, self.query_rephraser)
-            self.logger.info(f"message: {message}")
-            # self.logger.debug(f"docs_source: {json.dumps(docs_source, indent=2)}")
+            time_end = time.time()
+            self.logger.info(f"Input transform and document retrieval took {time_end - time_start:.2f} seconds")
+            self.logger.debug(f"message: {message}")
         except Exception as e:
             self.logger.error(e, exc_info=True)
             raise InputConnectorInternalException("HFLib input transform error") from e
@@ -83,6 +86,7 @@ class HFLib(LLMLib):
                 history = self.sessions.get_session(ad.parameters.input.session_id)
 
         # - hf call
+        time_start = time.time()
         response, new_message, streamer = self.llmmodel.generate(
             message,
             self.outputc.num_tokens,
@@ -91,6 +95,8 @@ class HFLib(LLMLib):
             streaming=ad.parameters.input.streaming,
         )
         self.logger.debug(f"response: {response}")
+        time_end = time.time()
+        self.logger.info(f"LLM generation took {time_end - time_start:.2f} seconds")
 
         # if session, update it
         if self.llmmodel.llm_obj.conversational and ad.parameters.input.session_id is not None:

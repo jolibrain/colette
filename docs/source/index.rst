@@ -8,6 +8,7 @@
 
    users/get_started.md
    users/ui.md
+   users/openwebui.md
    users/configuration.md
    users/data.md
 

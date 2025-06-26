@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from .apidata import (
     APIData,
     APIResponse,
+
 )
 from .jsonapi import (
     JSONApi,
@@ -19,6 +20,7 @@ from .jsonapi import (
 )
 
 VERSION = "v1"
+NAME_PREFIX = "Colette -"
 
 git_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=os.path.dirname(__file__)).decode("ascii").strip()
 print(f"Colette {VERSION} server - commit={git_hash}", flush=True)
@@ -111,7 +113,7 @@ class HTTPJsonApi(JSONApi):
         response = self.service_info()
         response.version = version_str
         return response
-
+    
     async def delete_service(self, sname: str) -> APIResponse:
         response = await self.service_delete(sname)
         return response
@@ -193,6 +195,7 @@ app = FastAPI(
     title="Colette {VERSION} server", description=description, version=VERSION, openapi_tags=TAGS, lifespan=lifespan
 )
 app.include_router(http_json_api.router)
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=1873)

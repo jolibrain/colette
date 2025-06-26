@@ -1,7 +1,7 @@
 # define APIData
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, List, Optional
 
 from pydantic import (
     BaseModel,
@@ -91,7 +91,7 @@ class RAGObj(BaseModel):
     (diff to the existing index is automatically discovered) """
     top_k: int = 4
     """ Top-k documents retrieved by RAGs. Note: internally more may be retrieved, but top-k are surfaced """
-    remove_duplicates: bool = True
+    remove_duplicates: bool = False
     """ Whether to remove duplicates """
     num_partitions: int = -1
     """ Colbert-only: number of clustering partitions, if unset, internally evaluated """
@@ -214,7 +214,6 @@ class LLMModelObj(BaseModel):
     """ Whether to rephrase queries (V-RAG) only """
     query_rephrasing_num_tok: int = 512
     """ Number of token for rephrasing queries (V-RAG) only """
-
     external_vllm_server: VLLMServerObj = Field(default_factory=VLLMServerObj)
     """ vllm server parameters """
 
@@ -324,3 +323,37 @@ class APIResponse(BaseModel):
     """ Original input question as message """
     output: str | None = None
     """ RAG API output, i.e. object to take the answer's from """
+
+class ChatMessage(BaseModel):
+    role: str
+    """ Role of the message, e.g. user, assistant """
+    content: str
+    """ Content of the message """
+
+class ChatCompletionRequest(BaseModel):
+    model: str
+    """ Model to use for the chat completion """
+    messages: List[ChatMessage]
+    """ List of chat messages """
+    max_tokens: Optional[int] = 512
+    """ Maximum number of tokens to generate in the completion """
+    temperature: Optional[float] = 0.1
+    """ Sampling temperature for the completion """
+    stream: Optional[bool] = False
+    """ Whether to stream the completion response """
+
+class Choice(BaseModel):
+    message: ChatMessage
+    """ Message in the choice """
+
+class ChatCompletionResponse(BaseModel):
+    id: str
+    """ Unique identifier for the chat completion """
+    object: str 
+    """ Object type, e.g. chat.completion """
+    created: int
+    """ Timestamp of the chat completion creation """
+    model: str
+    """ Model used for the chat completion """
+    choices: List[Choice]
+    """ List of choices in the chat completion """

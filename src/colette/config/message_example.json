@@ -1,0 +1,24 @@
+{
+    "parameters": {
+      "input": {
+        "lib": "hf",
+        "preprocessing": {
+          "files": [
+            "all"
+          ],
+          "lib": "string",
+          "save_output": false,
+          "strict": false,
+          "filters": [
+            "string"
+          ],
+          "strategy": "auto",
+          "cleaning": true,
+          "dpi": 300
+        },
+        "message": "string",
+        "query_depth_mult": 200,
+        "streaming": false
+      }
+    }
+  }
