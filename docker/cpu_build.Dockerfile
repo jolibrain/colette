@@ -26,8 +26,8 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
 RUN mkdir /app
 
 WORKDIR /app
-ADD requirements.txt .
-RUN python3 -m pip install --upgrade pip && pip3 install -r requirements.txt --upgrade && pip3 install llama-cpp-python==0.3.1 uvicorn[standard] fastapi && pip3 cache purge
+ADD requirements_cpu_build.txt .
+RUN python3 -m pip install --upgrade pip && pip3 install -r requirements_cpu_build.txt --upgrade && pip3 install llama-cpp-python==0.3.1 uvicorn[standard] fastapi && pip3 cache purge
 RUN mkdir .cache && mkdir .cache/torch && export TORCH_HOME=/app/.cache/torch
 
 ADD . /app

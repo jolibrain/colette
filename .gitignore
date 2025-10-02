@@ -1,3 +1,10 @@
+# VENV
+venv_colette/
+
+# app example folder
+app_colette/
+None/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

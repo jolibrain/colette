@@ -41,6 +41,8 @@ Colette was co-financed by [Jolibrain](https://www.jolibrain.com/), [CNES](https
 
 ### Prerequisites
 
+* Python >= 3.12
+* CUDA >= 12.1
 * GPU >= 24GB
 * RAM >= 16GB
 * Disk >= 50GB
@@ -63,14 +65,13 @@ docker pull docker.jolibrain.com/colette_gpu
 docker run --gpus all -v $PWD:/rag -v $PWD/docs:/data -v $PWD/models:/app/models docker.jolibrain.com/colette_gpu colette_cli index --app-dir /rag/app_colette --data-dir /data/pdf --config-file src/colette/config/vrag_default.json --models-dir /app/models
 ```
 
-
 3. Test by sending a question
 
 ```bash
 docker run --gpus all -v $PWD:/rag -v $PWD/app_colette:/app/app_colette -v $PWD/models:/models docker.jolibrain.com/colette_gpu colette_cli chat --app-dir app_colette --models-dir /models --msg "What are the identified sources of errors of a RAG?"
 ```
 
-### Command line
+### Activate `venv_colette` for Command line & Developer Setup (Python API)
 
 1. Clone the repo:
 
@@ -78,13 +79,22 @@ docker run --gpus all -v $PWD:/rag -v $PWD/app_colette:/app/app_colette -v $PWD/
 git clone https://github.com/jolibrain/colette.git
 ```
 
-2. Install dependencies
+2. Create a virtual environment and install dependencies
 
 ```bash
-pip install -e .[dev,trag]
+cd colette
+chmod +x create_venv_colette.sh
+./create_venv_colette.sh
+source venv_colette/bin/activate
 ```
 
-3. Index the data
+NOTE: This process may take a while, as there are many dependencies to install and some of them require compilation.
+
+#### Command Line Interface (CLI)
+
+(don't forget to activate the virtual environment, see above)
+
+##### Index the data
 
 Let's index a PDF slidedeck from docs/pdf
 
@@ -92,7 +102,7 @@ Let's index a PDF slidedeck from docs/pdf
 colette_cli index --app-dir app_colette --data-dir docs/pdf/ --config-file src/colette/config/vrag_default.json
 ```
 
-4. Test with a question
+##### Test with a question
 
 ```bash
 colette_cli chat --app-dir app_colette --msg "What are the identified sources of errors ?"
@@ -100,12 +110,9 @@ colette_cli chat --app-dir app_colette --msg "What are the identified sources of
 
 ### Python API
 
-Index PDFs and query them.
+(don't forget to activate the virtual environment, see above)
 
-```bash
-git clone https://github.com/jolibrain/colette.git
-pip install -e .[dev,trag]
-```
+##### Index PDFs and query
 
 ```Python
 import json
@@ -134,8 +141,6 @@ api_data_create = APIData(**create_config)
 api_data_index = APIData(**index_config)
 colette_api.service_create(app_name, api_data_create)
 colette_api.service_index(app_name, api_data_index)
-
-
 
 # query the vision RAG
 query_api_msg = {
