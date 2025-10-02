@@ -11,7 +11,7 @@ cli = typer.Typer(help="Colette CLI: indexing, chatting, and UI management.")
 
 option_appdir = typer.Option(..., help="Specify the application directory")
 option_datadir = typer.Option(..., help="Specify the data directory")
-option_modelsdir = typer.Option(None, help="Specify the models directory")
+option_modelsdir = typer.Option("models", help="Specify the models directory")
 option_configfile = typer.Option(None, help="Specify the config file")
 option_indexfile = typer.Option(None, help="Specify the index file")
 option_msg = typer.Option(..., help="Specify the user message")

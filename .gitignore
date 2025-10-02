@@ -4,6 +4,7 @@ venv_colette/
 # app example folder
 app_colette/
 None/
+models/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
