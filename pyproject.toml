@@ -32,7 +32,7 @@ dependencies = [
     "GitPython",
     "faiss-gpu-cu12",
     "transformers>=4.50.0",
-    "flash-attn>=2.7.4.post1",
+    "flash-attn==2.5.6",
     "diffusers",
     "colpali-engine",
 ]
