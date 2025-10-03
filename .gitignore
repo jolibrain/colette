@@ -1,3 +1,6 @@
+# ENV files
+.env
+
 # VENV
 venv_colette/
 

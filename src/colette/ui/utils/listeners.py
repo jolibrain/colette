@@ -7,7 +7,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import gradio as gr
-from gradio_i18n import gettext as _
 from nltk.corpus import stopwords
 from nltk.tag import pos_tag
 from nltk.tokenize import word_tokenize
@@ -18,6 +17,13 @@ from colette.ui.utils.config import Config
 from colette.ui.utils.logger import logger
 from colette.ui.utils.namesgenerator import get_random_name, is_random_name
 
+# Import the shared i18n utility
+try:
+    from colette.ui.utils.i18n import _
+except ImportError:
+    # Fallback if the i18n utility is not available
+    def _(text):
+        return text
 
 def mask_base64_data(msg: dict) -> dict:
     """Process the base64 image data in the message, replacing it with placeholders for easier logging
@@ -60,13 +66,21 @@ def generate_name_from_history(history):
             print(message)
             if "content" in message and isinstance(message["content"], str):
                 tokens = word_tokenize(message["content"])
-                filtered_tokens = [word for word in tokens if word.lower() not in stopwords.words("english")]
-                tagged_tokens = pos_tag(filtered_tokens)
-                keywords = [word for word, tag in tagged_tokens if tag.startswith('NN') or tag.startswith('VB')]
+                try:
+                    filtered_tokens = [word for word in tokens if word.lower() not in stopwords.words("english")]
+                except:
+                    # If NLTK data is not available, just use all tokens
+                    filtered_tokens = tokens
+                try:
+                    tagged_tokens = pos_tag(filtered_tokens)
+                    keywords = [word for word, tag in tagged_tokens if tag.startswith('NN') or tag.startswith('VB')]
+                except:
+                    # If POS tagging fails, use first few words
+                    keywords = filtered_tokens[:3]
                 title = " ".join(keywords)
                 logger.debug(f"Title: {title}")
-                # returns firt 20 charecters of the title
-                return title[-20:]
+                # returns first 20 characters of the title
+                return title[:20] if title else get_random_name()
     except Exception as e:
         logger.error(f"Error generating name from history: {e}")
         return get_random_name()
@@ -207,20 +221,25 @@ def colette(
         app_url, app, system_prompt, session, query_txt
     )
 
-    detected_language = "en" # detect(query_txt)
+    detected_language = "en"  # detect(query_txt) - commented out as detect might not be available
 
-    # Determine the language for stopwords based on the system prompt key
+    # Determine the language for stopwords based on the detected language
     if detected_language == "fr":
         language = _("french")
     else:
         language = _("english")
 
     # Tokenize and remove stopwords
-    stop_words = set(stopwords.words(language))
-    word_tokens = word_tokenize(query_txt)
-    keywords = [
-        w for w in word_tokens if w.lower() not in stop_words and w.isalpha()
-    ]
+    try:
+        stop_words = set(stopwords.words(language))
+        word_tokens = word_tokenize(query_txt)
+        keywords = [
+            w for w in word_tokens if w.lower() not in stop_words and w.isalpha()
+        ]
+    except:
+        # If NLTK data is not available, use simple word splitting
+        word_tokens = query_txt.split()
+        keywords = [w for w in word_tokens if w.isalpha()]
 
     context_html = ""
     if output["documents"]:
@@ -249,7 +268,7 @@ def colette(
             else:
                 highlighted_content = highlight_text(document["content"], keywords)
                 context_html += "<b>"
-                context_html += _("Content")
+                context_html += _("content")
                 context_html += f":</b><br>{highlighted_content}"
 
             context_html += "</details>"
@@ -387,7 +406,10 @@ def change_app(
 
     list_of_examples = []
     for example in config.apps[app].get("examples", []):
-        list_of_examples.append({"text": _(example.get("text", ""))})
+        # For examples, we'll use the text directly since it might be dynamic content
+        example_text = example.get("text", "")
+        # You could enhance this to translate example text if needed
+        list_of_examples.append({"text": example_text})
 
     return (
         gr.update(value=sessions_dict),
