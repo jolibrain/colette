@@ -22,17 +22,36 @@ Easiest way to get started uses Docker. If you with to install from sources, see
 docker pull docker.jolibrain.com/colette_gpu
 ```
 
-2. Index your data
+2. Create folders for models and app_colette
 
 ```bash
-docker run --runtime=nvidia -v $PWD:/rag -v $PWD/docs:/data -v $PWD/models:/models docker.jolibrain.com/colette_gpu colette_cli index --app-dir /rag/app_colette --data-dir /data/pdf --config-file src/colette/config/vrag_default.json --models-dir /models
+mkdir -p models
+mkdir -p app_colette
+```
+This is to ensure that your user is the owner of these folders, as the docker container runs as root.
+
+3. Index your data
+
+```bash
+docker run --gpus all --user $(id -u):$(id -g) \
+  -e HOME=/tmp \
+  -v $PWD:/rag \
+  -v $PWD/docs:/data \
+  -v $PWD/models:/app/models \
+  docker.jolibrain.com/colette_gpu \
+  bash -c "git config --global --add safe.directory /app && colette_cli index --app-dir /rag/app_colette --data-dir /data/pdf --config-file src/colette/config/vrag_default.json --models-dir /app/models"
 ```
 
-
-3. Test by sending a question
+4. Test by sending a question
 
 ```bash
-docker run --runtime=nvidia -v $PWD:/rag -v $PWD/models:/models docker.jolibrain.com/colette_gpu colette_cli chat --app-dir app_colette --models-dir /models --msg "What are the identified sources of errors of a RAG?"
+docker run --gpus all --user $(id -u):$(id -g) \
+  -e HOME=/tmp \
+  -v $PWD:/rag \
+  -v $PWD/app_colette:/app/app_colette \
+  -v $PWD/models:/models \
+  docker.jolibrain.com/colette_gpu \
+  bash -c "git config --global --add safe.directory /app && colette_cli chat --app-dir app_colette --models-dir /models --msg \"What are the identified sources of errors of a RAG?\""
 ```
 
 ### Activate `venv_colette` for Command line & Developer Setup (Python API)
