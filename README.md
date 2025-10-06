@@ -18,7 +18,10 @@ Colette was co-financed by [Jolibrain](https://www.jolibrain.com/), [CNES](https
 
 ## Demo
 
-![](https://www.colette.chat/img/screenshot_1.png)
+<video width="800" controls>
+  <source src="docs/video/DEMO_Colette.mp4" type="video/mp4">
+  Your browser does not support the video tag.
+</video>
 
 ## Key Features
 
