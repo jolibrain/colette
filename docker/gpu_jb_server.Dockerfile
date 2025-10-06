@@ -2,6 +2,9 @@ ARG GTAG=latest
 FROM docker.jolibrain.com/colette_gpu:$GTAG AS colette_gpu_server
 WORKDIR /app
 
+# Add this near the end of your Dockerfile, before CMD/ENTRYPOINT
+RUN git config --global --add safe.directory /app
+
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

@@ -1,0 +1,6 @@
+gradio==5.47.0
+gradio_client==1.13.2
+pyyaml==6.0.2
+gradio-log==0.0.8
+nltk==3.9.1
+python-dotenv==1.1.1
