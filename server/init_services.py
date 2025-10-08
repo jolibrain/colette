@@ -2,6 +2,7 @@
 import sys
 import time
 import json
+import argparse
 from pathlib import Path
 import requests
 
@@ -15,7 +16,7 @@ def wait_for_backend(url, timeout=60):
             if response.status_code == 200:
                 print("✓ Backend is ready!")
                 return True
-        except requests.exceptions.RequestException as e:
+        except requests.exceptions.RequestException:
             pass
         time.sleep(2)
     print("✗ Backend timeout!")
@@ -35,7 +36,6 @@ def create_service(backend_url, service_name, config):
         return True
     except Exception as e:
         print(f"✗ Failed to create service '{service_name}': {e}")
-        print(f"Response: {response.text if 'response' in locals() else 'N/A'}")
         return False
 
 def start_indexing(backend_url, service_name, config):
@@ -52,15 +52,25 @@ def start_indexing(backend_url, service_name, config):
         return True
     except Exception as e:
         print(f"✗ Failed to start indexing for '{service_name}': {e}")
-        print(f"Response: {response.text if 'response' in locals() else 'N/A'}")
         return False
 
 def main():
-    backend_url = "http://localhost:1873"
-    service_name = "app_colette"
     
-    # Load the service config template
-    config_path = Path("/app/src/colette/config/vrag_default.json")
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Initialize Colette backend services')
+    parser.add_argument('--service-name', type=str, default='app_colette',
+                        help='Name of the service to create (default: app_colette)')
+    parser.add_argument('--backend-url', type=str, default='http://localhost:1873',
+                        help='Backend URL (default: http://localhost:1873)')
+    parser.add_argument('--config', type=str, 
+                        default='/app/src/colette/config/vrag_default.json',
+                        help='Path to config file')
+    
+    args = parser.parse_args()
+    
+    backend_url = args.backend_url
+    service_name = args.service_name
+    config_path = Path(args.config)
     
     if not config_path.exists():
         print(f"✗ Config file not found: {config_path}")
@@ -69,8 +79,8 @@ def main():
     with open(config_path) as f:
         service_config = json.load(f)
     
-    # Set the repository to a writable path (mounted volume)
-    service_config["app"]["repository"] = f"/rag/{service_name}"  # ← Full path!
+    # Set the repository to a writable path
+    service_config["app"]["repository"] = f"/rag/{service_name}"
     
     print(f"Backend URL: {backend_url}")
     print(f"Service name: {service_name}")

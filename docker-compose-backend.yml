@@ -38,7 +38,7 @@ services:
     init_services:
         image: colette-gpu_server
         user: "${USER_ID}:${GROUP_ID}"
-        working_dir: /tmp  # ← ADD THIS
+        working_dir: /tmp
         environment:
             HF_TOKEN: ${HF_TOKEN}
             HF_HOME: /cache/huggingface
@@ -50,5 +50,11 @@ services:
         depends_on:
             gpu_server:
                 condition: service_healthy
-        command: python3 /init_services.py
+        command: 
+            - python3
+            - /init_services.py
+            - --service-name
+            - ${APP_NAME}  # ← From env var with default
+            - --backend-url
+            - http://localhost:1873
         network_mode: "service:gpu_server"
