@@ -186,3 +186,25 @@ curl -X POST http://localhost:1873/v1/predict/app_colette \
   .
 ]
 ```
+
+### Query Colette to get the text sources (pretty print)
+
+```bash
+curl -X POST http://localhost:1873/v1/predict/app_colette \
+  -H "Content-Type: application/json" \
+  -d '{
+    "app": {"verbose": "info"},
+    "parameters": {
+      "input": {
+        "message": "What is this document about?",
+        "session_id": "test-session-123"
+      }
+    }
+  }' | jq '.sources.context[] | {
+    page: .page_number,
+    type: .crop_label,
+    distance: .distance,
+    source: (.source | split("/") | last),
+    has_image: (.content | startswith("data:image/"))
+  }'
+```
