@@ -12,6 +12,9 @@ app_colette/
 None/
 models/
 
+# examples folder
+examples/*.png
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
