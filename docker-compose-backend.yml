@@ -18,12 +18,12 @@ services:
             HF_TOKEN: ${HF_TOKEN}
             HF_HOME: /cache/huggingface
             HOME: /tmp
+            PYTHONPATH: /app/src
         volumes:
             - ${MODELS_PATH}:/models
             - ${DATA_PATH}:/data
             - ${APPS_PATH}:/rag
             - ${APPS_PATH}/.cache:/cache
-        # Remove the entrypoint and command overrides - let the Dockerfile's defaults work
         healthcheck:
             test:
                 [
@@ -34,23 +34,27 @@ services:
             timeout: 3s
             retries: 10
             start_period: 15s
-    ui:
-        build:
-            context: .
-            dockerfile: docker/ui.Dockerfile
+
+    init_services:
+        image: colette-gpu_server
         user: "${USER_ID}:${GROUP_ID}"
-        working_dir: /tmp  # Change to writable directory
+        working_dir: /tmp
         environment:
-            PYTHONPATH: /app/src
-            APP_NAME: ${APP_NAME}
+            HF_TOKEN: ${HF_TOKEN}
             HF_HOME: /cache/huggingface
+            PYTHONPATH: /app/src
             HOME: /tmp
         volumes:
+            - ./server/init_services.py:/init_services.py
             - ${APPS_PATH}/.cache:/cache
-        ports:
-            - "7860:7860"
-        entrypoint: ["python", "/app/src/colette/ui/app.py"]
-        command: ["--config", "/app/src/colette/config/vrag_default.json"]
         depends_on:
             gpu_server:
                 condition: service_healthy
+        command: 
+            - python3
+            - /init_services.py
+            - --service-name
+            - ${APP_NAME}  # ← From env var with default
+            - --backend-url
+            - http://localhost:1873
+        network_mode: "service:gpu_server"

@@ -89,7 +89,7 @@ HF_TOKEN=your_huggingface_token
 To start the server and UI using the pre-built Docker images:
 
 ```bash
-docker compose --env-file .env up
+docker compose -f docker-compose-backend-ui.yml --env-file .env up
 ```
 
 Once the application is initialized, the UI will be available at [http://localhost:7860](http://localhost:7860).
@@ -101,5 +101,5 @@ Once the application is initialized, the UI will be available at [http://localho
 To stop the server and UI:
 
 ```bash
-docker compose --env-file .env down
+docker compose -f docker-compose-backend-ui.yml --env-file .env down
 ```
