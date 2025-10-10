@@ -178,8 +178,8 @@ class VLLMServerObj(BaseModel):
 class LLMModelObj(BaseModel):
     """Main LLM parameters for answering"""
 
-    source: str = "Qwen/Qwen2.5-VL-3B-Instruct"
-    """ Source model, e.g. Qwen/Qwen2-VL-2B-Instruct """
+    source: str = "Qwen/Qwen3-VL-30B-A3B-Instruct-FP8"
+    """ Source model, e.g. Qwen/Qwen3-VL-30B-A3B-Instruct-FP8"""
     filename: str | None = None
     """ Path to model file, when required (llamacpp), e.g. qwen2.5-0.5b-instruct-q8_0.gguf """
     shared_model: bool = True

@@ -21,7 +21,7 @@
             "data": []
         },
         "llm": {
-            "source": "Qwen/Qwen2.5-VL-3B-Instruct",
+            "source": "Qwen/Qwen3-VL-30B-A3B-Instruct-FP8",
             "gpu_ids": [0],
             "image_width": 320,
             "image_height": 480,

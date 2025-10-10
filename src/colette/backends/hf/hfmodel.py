@@ -14,6 +14,7 @@ from transformers import (
     Gemma3ForConditionalGeneration,
     LlavaForConditionalGeneration,
     Qwen2_5_VLForConditionalGeneration,
+    Qwen3VLForConditionalGeneration,
     Qwen2VLForConditionalGeneration,
     TextIteratorStreamer,
 )
@@ -130,6 +131,19 @@ class HFModel(LLMModel):
                     self.llm_source, min_pixels=min_pixels, max_pixels=max_pixels
                 )
                 self.llm_type = "qwen2-vl"
+            elif "Qwen3-VL" in self.llm_source:
+                self.llm = Qwen3VLForConditionalGeneration.from_pretrained(
+                    self.llm_source,
+                    torch_dtype=torch.float16,
+                    quantization_config=bandb_config,
+                    cache_dir=self.models_repository,
+                ).eval()
+                min_pixels = 1 * 28 * 28
+                max_pixels = 2560 * 28 * 28
+                self.processor = AutoProcessor.from_pretrained(
+                    self.llm_source, min_pixels=min_pixels, max_pixels=max_pixels
+                )
+                self.llm_type = "qwen3-vl"
             elif "gemma-3" in self.llm_source:
                 self.llm = Gemma3ForConditionalGeneration.from_pretrained(
                     self.llm_source,
@@ -204,6 +218,8 @@ class HFModel(LLMModel):
                 self.llm_subtype = "qwen2-vl"
             elif "Qwen2.5-VL" in self.llm_source:
                 self.llm_subtype = "qwen25-vl"
+            elif "Qwen3-VL" in self.llm_source:
+                self.llm_subtype = "qwen3-vl"
             elif "SmolVLM" in self.llm_source:
                 self.llm_subtype = "smolvlm"
             else:
