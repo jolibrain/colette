@@ -46,7 +46,7 @@ This is to ensure that your user is the owner of these folders.
 Then run:
 
 ```bash
-colette_cli index --app-dir app_colette --data-dir docs/pdf/ --config-file src/colette/config/vrag_default.json
+colette_cli index --app-dir app_colette --data-dir docs/pdf/ --config-file src/colette/config/vrag_default_lite.json
 ```
 
 Make sure to replace `app_colette`, `docs/pdf/`, and the config file path with your actual application directory, data directory, and configuration file path.

@@ -4,13 +4,7 @@
 
 ### 1. Clone the repository and install dependencies
 
-```bash
-git clone https://github.com/jolibrain/colette.git
-cd colette
-pip install -e .[dev,trag]
-```
-
-It is strongly recommanded to create a virtual environnement before installing dependencies
+NOTE: It is strongly recommanded to create a virtual environnement before installing dependencies as mentioned in the [Get Started](get_started.md) section.
 
 ---
 
@@ -40,7 +34,7 @@ app_name = 'colette_doc' # the name of your application
 
 url_base = "http://127.0.0.1:8889/v1" # The adress of your backend server 
 
-config_file = 'src/colette/config/vrag_default.json'
+config_file = 'src/colette/config/vrag_default_lite.json'
 index_file = 'src/colette/config/vrag_default_index.json'
 with open(config_file, 'r') as f:
     create_config = json.load(f)
