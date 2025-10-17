@@ -50,6 +50,10 @@ https://github.com/user-attachments/assets/7e36b4af-880a-4260-af61-3041b7d60439
   > If you have not installed Docker on your local machine (Windows, Mac, or Linux),
   > see [Install Docker Engine](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
 
+NOTE: Colette requires a GPU with at least 24GB of VRAM to run the default models. If you have less VRAM, you can try to change the models to lighter ones in the configuration files, but performance may be impacted.
+
+Also the default config file is `vrag_default_lite.json` which is designed to run on 24GB VRAM GPUs. If you have multiples GPUs, you can try `vrag_default.json` which uses larger models and should provide better results and also needs multiple GPUs
+
 ### Docker (recommended)
 Easiest way to get started uses Docker. If you with to install from sources, see [Developer Setup](https://colette.chat/doc/developers/setup.html)
 
@@ -77,7 +81,7 @@ docker run --gpus all --user $(id -u):$(id -g) \
   -v $PWD/docs:/data \
   -v $PWD/models:/app/models \
   docker.jolibrain.com/colette_gpu \
-  bash -c "git config --global --add safe.directory /app && colette_cli index --app-dir /rag/app_colette --data-dir /data/pdf --config-file src/colette/config/vrag_default.json --models-dir /app/models"
+  bash -c "git config --global --add safe.directory /app && colette_cli index --app-dir /rag/app_colette --data-dir /data/pdf --config-file src/colette/config/vrag_default_lite.json --models-dir /app/models"
 ```
 
 4. Test by sending a question
@@ -120,7 +124,7 @@ NOTE: This process may take a while, as there are many dependencies to install a
 Let's index a PDF slidedeck from docs/pdf
 
 ```bash
-colette_cli index --app-dir app_colette --data-dir docs/pdf/ --config-file src/colette/config/vrag_default.json
+colette_cli index --app-dir app_colette --data-dir docs/pdf/ --config-file src/colette/config/vrag_default_lite.json
 ```
 
 ##### Test with a question
@@ -164,7 +168,7 @@ models_dir = os.path.join(colette_root, 'models') # where the models are located
 app_name = 'app_colette' # name of the app
 
 # read the configuration file
-config_file = os.path.join(colette_root, 'src/colette/config/vrag_default.json')
+config_file = os.path.join(colette_root, 'src/colette/config/vrag_default_lite.json')
 index_file = os.path.join(colette_root, 'src/colette/config/vrag_default_index.json')
 
 with open(config_file, 'r') as f:
