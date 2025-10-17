@@ -20,7 +20,7 @@ dependencies = [
     "fastapi==0.118.0",
     "pydantic==2.11.9",
     "uvicorn==0.37.0",
-    "vllm==0.9.1",
+    "vllm==0.11.0",
     "bitsandbytes==0.48.0",
     "qwen_vl_utils==0.0.14",
     "pypandoc_binary==1.15",
