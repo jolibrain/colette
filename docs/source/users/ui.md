@@ -2,6 +2,10 @@
 
 ## Server + Web User Interface via Docker Compose
 
+NOTE: Colette requires a GPU with at least 24GB of VRAM to run the default models. If you have less VRAM, you can try to change the models to lighter ones in the configuration files, but performance may be impacted.
+
+Also the default config file is `vrag_default_lite.json` which is designed to run on 24GB VRAM GPUs. If you have multiples GPUs, you can try `vrag_default.json` which uses larger models and should provide better results and also needs multiple GPUs
+
 ### 0. Get the GPU Colette image
 
 ```bash
@@ -34,7 +38,7 @@ docker run --gpus all --user $(id -u):$(id -g) \
   -v $PWD/docs:/data \
   -v $PWD/models:/app/models \
   docker.jolibrain.com/colette_gpu \
-  bash -c "git config --global --add safe.directory /app && colette_cli index --app-dir /rag/app_colette --data-dir /data/pdf --config-file src/colette/config/vrag_default.json --models-dir /app/models"
+  bash -c "git config --global --add safe.directory /app && colette_cli index --app-dir /rag/app_colette --data-dir /data/pdf --config-file src/colette/config/vrag_default_lite.json --models-dir /app/models"
 ```
 
 ### 4. Define your HuggingFace token and paths
