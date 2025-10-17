@@ -277,7 +277,7 @@ class HFModel(LLMModel):
             images = [stitch_images_vertically(images)]
 
         # process inputs
-        if self.llm_type in ["qwen2-vl", "nanonets"]:
+        if self.llm_type in ["qwen2-vl", "qwen3-vl", "nanonets"]:
             content = []
             if not history:
                 for image, metadata in zip(docs["images"][0], docs["metadatas"][0], strict=False):
@@ -511,6 +511,16 @@ class HFModel(LLMModel):
                             skip_special_tokens=True,
                             clean_up_tokenization_spaces=False,
                         )[0]
+                    if self.llm_type == "qwen3-vl":
+                        generated_ids_trimmed = [
+                            out_ids[len(in_ids) :]
+                            for in_ids, out_ids in zip(model_inputs.input_ids, generation, strict=False)
+                        ]
+                        decoded = self.processor.batch_decode(
+                            generated_ids_trimmed,
+                            skip_special_tokens=True,
+                            clean_up_tokenization_spaces=False,
+                        )[0]                        
                     elif self.llm_type == "nanonets":
                         generated_ids_trimmed = [
                             out_ids[len(in_ids) :]
