@@ -1,0 +1,121 @@
+[project]
+name = "colette"
+version = "0.1.0"
+authors = [{ name = "Colette Team", email = "contact@jolibrain.com" }]
+license = "Apache-2.0"
+readme = "README.md"
+description = "Colette is an open-source local RAG for your documents"
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+requires-python = ">=3.12"
+dependencies = [
+    "click==8.3.0",
+    "chromadb==1.1.0",
+    "fastapi==0.118.0",
+    "pydantic==2.11.9",
+    "uvicorn==0.37.0",
+    "vllm==0.9.1",
+    "bitsandbytes==0.48.0",
+    "qwen_vl_utils==0.0.14",
+    "pypandoc_binary==1.15",
+    "python-doctr==1.0.0",
+    "ujson==5.11.0",
+    "GitPython==3.1.45",
+    "transformers==4.53.3",
+    "flash-attn==2.5.6",
+    "diffusers==0.35.1",
+    "colpali-engine==0.3.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.4.2",
+    "pytest-asyncio==1.2.0",
+    "ruff==0.13.2",
+    "pre-commit==4.3.0",
+]
+trag = [
+    "huggingface_hub[cli]==0.35.3",
+    "rank_bm25==0.2.2",
+    "unstructured[docx]==0.18.15",
+    "unstructured[pptx]==0.18.15",
+    "unstructured[xlsx]==0.18.15",
+    "unstructured[pdf]==0.18.15",
+    "unstructured-inference==1.0.5",
+    "langchain-core==0.3.77",
+    "langchain-community==0.3.30",
+    "langchain-chroma==0.2.6",
+    "langchain-huggingface==0.3.1",
+    "langchain-openai==0.3.33",
+    "langchain-ollama==0.3.8",
+    "langchain-unstructured==0.1.6",
+    "llama-cpp-python==0.3.1",
+    "pymupdf==1.26.4",
+]
+
+[project.scripts]
+colette_cli = "colette.colette_cli:cli"
+
+[build-system]
+requires = [
+    "setuptools>=61.0",
+    "ninja",
+    "packaging",
+    "setuptools-scm>=8.0",
+    "wheel",
+    "jinja2",
+]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "F",  # pyflakes
+    "I",  # isort (imports)
+    "UP", # pyupgrade
+    "B",  # flake8-bugbear
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/colette/apidata.py" = ["E501"]
+"src/colette/backends/hf/query_rephraser.py" = ["E501"]
+"src/colette/backends/coldb/collection.py" = ["E501"]
+"src/colette/backends/coldb/indexing/collection_encoder.py" = ["E501"]
+"src/colette/backends/coldb/indexing/collection_indexer.py" = ["E501"]
+"src/colette/backends/coldb/infra/config/base_config.py" = ["E501"]
+"src/colette/backends/coldb/infra/launcher.py" = ["E501"]
+"src/colette/backends/coldb/infra/run.py" = ["E501"]
+"src/colette/backends/coldb/utility/utils/save_metadata.py" = ["E501"]
+"src/colette/backends/coldb/modeling/checkpoint.py" = ["E501"]
+"src/colette/ui/utils/namesgenerator.py" = ["E501"]
+"src/colette/ui/utils/config.py" = ["E501"]
+"src/colette/ui/utils/api.py" = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+docstring-code-line-length = 120
+
+[tool.uv]
+default-groups = []
+no-build-isolation-package = ["flash-attn"]
+
+[tool.uv.sources]
+colpali-engine = { git = "https://github.com/illuin-tech/colpali" }
