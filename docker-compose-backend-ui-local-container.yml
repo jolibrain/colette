@@ -51,7 +51,7 @@ services:
         ports:
             - "7860:7860"
         entrypoint: ["python", "/app/src/colette/ui/app.py"]
-        command: ["--config", "/app/src/colette/config/vrag_default.json"]
+        command: ["--config", "/app/src/colette/config/vrag_default_lite.json"]
         depends_on:
             gpu_server:
                 condition: service_healthy
