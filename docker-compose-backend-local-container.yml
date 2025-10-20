@@ -1,0 +1,60 @@
+services:
+    gpu_server:
+        build:
+            context: .
+            dockerfile: docker/gpu_server.Dockerfile
+        user: "${USER_ID}:${GROUP_ID}"
+        deploy:
+            resources:
+                reservations:
+                    devices:
+                        - driver: nvidia
+                          count: 2
+                          capabilities: [gpu]
+        ports:
+            - "1873:1873"
+        environment:
+            NVIDIA_DRIVER_CAPABILITIES: compute,utility
+            HF_TOKEN: ${HF_TOKEN}
+            HF_HOME: /cache/huggingface
+            HOME: /tmp
+            PYTHONPATH: /app/src
+        volumes:
+            - ${MODELS_PATH}:/models
+            - ${DATA_PATH}:/data
+            - ${APPS_PATH}:/rag
+            - ${APPS_PATH}/.cache:/cache
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "wget -qO- http://localhost:1873/v1/info > /dev/null || exit 1",
+                ]
+            interval: 5s
+            timeout: 3s
+            retries: 10
+            start_period: 15s
+
+    init_services:
+        image: colette-gpu_server
+        user: "${USER_ID}:${GROUP_ID}"
+        working_dir: /tmp
+        environment:
+            HF_TOKEN: ${HF_TOKEN}
+            HF_HOME: /cache/huggingface
+            PYTHONPATH: /app/src
+            HOME: /tmp
+        volumes:
+            - ./server/init_services.py:/init_services.py
+            - ${APPS_PATH}/.cache:/cache
+        depends_on:
+            gpu_server:
+                condition: service_healthy
+        command: 
+            - python3
+            - /init_services.py
+            - --service-name
+            - ${APP_NAME}  # ← From env var with default
+            - --backend-url
+            - http://localhost:1873
+        network_mode: "service:gpu_server"
