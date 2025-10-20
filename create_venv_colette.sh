@@ -20,7 +20,7 @@ source venv_colette/bin/activate
 echo "virtual environment 'venv_colette' activated."
 pip install packaging wheel
 echo "Installing torch with CUDA support based on detected CUDA version..."
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu${cuda_short}
+pip install torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu${cuda_short}
 echo "Installing other dependencies..."
 pip install -e .[dev,trag]
 pip cache purge

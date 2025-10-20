@@ -8,7 +8,7 @@ export HOME=/tmp
 git config --global --add safe.directory /app
 
 # always log in
-huggingface-cli login --token "$HF_TOKEN"
+hf auth login --token "$HF_TOKEN"
 
 # then exec the user-specified command (or the default from CMD)
 exec "$@"

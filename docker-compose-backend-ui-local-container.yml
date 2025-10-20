@@ -2,7 +2,7 @@ services:
     gpu_server:
         build:
             context: .
-            dockerfile: docker/gpu_jb_server.Dockerfile
+            dockerfile: docker/gpu_server.Dockerfile
         user: "${USER_ID}:${GROUP_ID}"
         deploy:
             resources:

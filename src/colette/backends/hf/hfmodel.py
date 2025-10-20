@@ -14,6 +14,7 @@ from transformers import (
     Gemma3ForConditionalGeneration,
     LlavaForConditionalGeneration,
     Qwen2_5_VLForConditionalGeneration,
+    Qwen3VLForConditionalGeneration,
     Qwen2VLForConditionalGeneration,
     TextIteratorStreamer,
 )
@@ -130,6 +131,19 @@ class HFModel(LLMModel):
                     self.llm_source, min_pixels=min_pixels, max_pixels=max_pixels
                 )
                 self.llm_type = "qwen2-vl"
+            elif "Qwen3-VL" in self.llm_source:
+                self.llm = Qwen3VLForConditionalGeneration.from_pretrained(
+                    self.llm_source,
+                    torch_dtype=torch.float16,
+                    quantization_config=bandb_config,
+                    cache_dir=self.models_repository,
+                ).eval()
+                min_pixels = 1 * 28 * 28
+                max_pixels = 2560 * 28 * 28
+                self.processor = AutoProcessor.from_pretrained(
+                    self.llm_source, min_pixels=min_pixels, max_pixels=max_pixels
+                )
+                self.llm_type = "qwen3-vl"
             elif "gemma-3" in self.llm_source:
                 self.llm = Gemma3ForConditionalGeneration.from_pretrained(
                     self.llm_source,
@@ -204,6 +218,8 @@ class HFModel(LLMModel):
                 self.llm_subtype = "qwen2-vl"
             elif "Qwen2.5-VL" in self.llm_source:
                 self.llm_subtype = "qwen25-vl"
+            elif "Qwen3-VL" in self.llm_source:
+                self.llm_subtype = "qwen3-vl"
             elif "SmolVLM" in self.llm_source:
                 self.llm_subtype = "smolvlm"
             else:
@@ -261,7 +277,7 @@ class HFModel(LLMModel):
             images = [stitch_images_vertically(images)]
 
         # process inputs
-        if self.llm_type in ["qwen2-vl", "nanonets"]:
+        if self.llm_type in ["qwen2-vl", "qwen3-vl", "nanonets"]:
             content = []
             if not history:
                 for image, metadata in zip(docs["images"][0], docs["metadatas"][0], strict=False):
@@ -495,6 +511,16 @@ class HFModel(LLMModel):
                             skip_special_tokens=True,
                             clean_up_tokenization_spaces=False,
                         )[0]
+                    if self.llm_type == "qwen3-vl":
+                        generated_ids_trimmed = [
+                            out_ids[len(in_ids) :]
+                            for in_ids, out_ids in zip(model_inputs.input_ids, generation, strict=False)
+                        ]
+                        decoded = self.processor.batch_decode(
+                            generated_ids_trimmed,
+                            skip_special_tokens=True,
+                            clean_up_tokenization_spaces=False,
+                        )[0]                        
                     elif self.llm_type == "nanonets":
                         generated_ids_trimmed = [
                             out_ids[len(in_ids) :]
