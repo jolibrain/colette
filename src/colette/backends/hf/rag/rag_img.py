@@ -446,13 +446,22 @@ class RAGImgRetriever:
         if self.indexlib == "coldb":
             self.colretriever = self.indexdb.as_retriever(search_type="similarity", search_kwargs={"k": self.top_k})
 
-    def invoke(self, question: str, query_depth_mult: int):
+    def invoke(self, question: str, query_depth_mult: int, crop_label: str = None):
         ##- call on DB
         if query_depth_mult is None:
             query_depth_mult = self.query_depth_mult
 
         if self.indexlib == "chromadb":
-            docs = self.indexdb.query(query_texts=[question], n_results=self.top_k * query_depth_mult)
+            # Build where filter for ChromaDB if crop_label is provided
+            where_filter = None
+            if crop_label is not None:
+                where_filter = {"crop_label": crop_label}
+            
+            docs = self.indexdb.query(
+                query_texts=[question], 
+                n_results=self.top_k * query_depth_mult,
+                where=where_filter  # Apply filter at ChromaDB query level
+            )
         else:
             docs = self.colretriever.invoke(question, query_depth_mult)
 
@@ -759,8 +768,22 @@ class RAGImg:
             del self.rag_layout_detector.model
 
     # returns docs
-    def retrieve(self, rag_question, query_depth_mult):
+    def retrieve(self, rag_question, query_depth_mult, crop_label=None):
+        """
+        Retrieve relevant documents for a question.
+        
+        Args:
+            rag_question: The query text
+            query_depth_mult: Depth multiplier for search
+            crop_label: Optional label to filter results (e.g., 'text', 'figure', 'table')
+        
+        Returns:
+            Retrieved documents
+        """
         self.logger.debug("retrieving " + rag_question)
+        if crop_label:
+            self.logger.debug(f"with crop_label filter: {crop_label}")
+        
         if self.rag_retriever is None:
             self.rag_retriever = RAGImgRetriever(
                 self.rag_indexdb_lib,
@@ -774,8 +797,7 @@ class RAGImg:
                 self.logger,
             )
 
-        return self.rag_retriever.invoke(rag_question, query_depth_mult)
-
+        return self.rag_retriever.invoke(rag_question, query_depth_mult, crop_label)
     def delete_embedder(self):
         if self.rag_embf:
             if self.rag_embf.vllm:
