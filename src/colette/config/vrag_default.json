@@ -8,7 +8,7 @@
         "input": {
             "lib": "hf",
             "rag": {
-                "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
                 "gpu_id": 0,
                 "top_k": 4,
                 "ragm": {
