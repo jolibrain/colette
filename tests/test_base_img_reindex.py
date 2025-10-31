@@ -57,7 +57,7 @@ def test_create_app_and_index(temp_dir, client):
                 "rag": {
                     "indexdb_lib": "chromadb",
                     "embedding_lib": "huggingface",
-                    "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                    "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
                     "top_k": 2,
                     "ragm": {
                         "layout_detection": False,
@@ -176,7 +176,7 @@ def test_create_app_twice(temp_dir, client):
                 "rag": {
                     "indexdb_lib": "chromadb",
                     "embedding_lib": "huggingface",
-                    "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                    "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
                     "gpu_id": 0,
                     "top_k": 2,
                     "ragm": {
@@ -296,7 +296,7 @@ def test_index_first(temp_dir, client):
                 "rag": {
                     "indexdb_lib": "chromadb",
                     "embedding_lib": "huggingface",
-                    "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                    "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
                     "top_k": 2,
                     "ragm": {"layout_detection": False},
                 },
@@ -365,7 +365,7 @@ def test_create_app_and_multiple_index(temp_dir, client):
                 "rag": {
                     "indexdb_lib": "chromadb",
                     "embedding_lib": "huggingface",
-                    "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                    "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
                     "top_k": 2,
                     "ragm": {
                         "layout_detection": False,

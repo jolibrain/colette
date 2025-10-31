@@ -45,7 +45,7 @@ def test_logging_payload(client):
                     "rag": {
                         "indexdb_lib": "chromadb",
                         "embedding_lib": "huggingface",
-                        "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                        "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
                         "chunk_num": 3,
                         "chunk_overlap": 20,
                         "top_k": 4,

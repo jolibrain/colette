@@ -67,7 +67,7 @@ def test_hf_single_image(temp_dir, client):
                 "rag": {
                     "indexdb_lib": "chromadb",
                     "embedding_lib": "huggingface",
-                    "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                    "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
                     "top_k": 1,
                     "ragm": {
                         "layout_detection": False,
@@ -155,7 +155,7 @@ def test_hf_single_image_rephrasing(temp_dir, client):
                 "rag": {
                     "indexdb_lib": "chromadb",
                     "embedding_lib": "huggingface",
-                    "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                    "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
                     "top_k": 1,
                     "ragm": {"layout_detection": False},
                 },
@@ -238,7 +238,7 @@ def test_hf_single_image_autoscale(temp_dir, client):
                 "rag": {
                     "indexdb_lib": "chromadb",
                     "embedding_lib": "huggingface",
-                    "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                    "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
                     "top_k": 1,
                     "ragm": {
                         "layout_detection": False,
@@ -325,7 +325,7 @@ def test_hf_multiple_images(temp_dir, client):
                 "rag": {
                     "indexdb_lib": "chromadb",
                     "embedding_lib": "huggingface",
-                    "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                    "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
                     "top_k": 2,
                     "ragm": {
                         "layout_detection": False,
@@ -426,7 +426,7 @@ def test_hf_multiple_images(temp_dir, client):
 #                 "rag": {
 #                     "indexdb_lib": "chromadb",
 #                     "embedding_lib": "huggingface",
-#                     "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+#                     "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
 #                     "reindex": True,
 #                     "index_protection": False,
 #                     "top_k": 2,
@@ -522,7 +522,7 @@ def test_hf_multiple_images(temp_dir, client):
 #                 "rag": {
 #                     "indexdb_lib": "chromadb",
 #                     "embedding_lib": "huggingface",
-#                     "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+#                     "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
 #                     "chunk_num": 3,
 #                     "chunk_overlap": 20,
 #                     "reindex": True,
@@ -616,7 +616,7 @@ def test_hf_multiple_images_crops(temp_dir, client):
                 "rag": {
                     "indexdb_lib": "chromadb",
                     "embedding_lib": "huggingface",
-                    "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                    "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
                     "top_k": 4,
                     "ragm": {
                         "layout_detection": True,
@@ -716,7 +716,7 @@ def test_hf_multiple_images_crops(temp_dir, client):
 #                 "rag": {
 #                     "indexdb_lib": "chromadb",
 #                     "embedding_lib": "huggingface",
-#                     "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+#                     "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
 #                     "reindex": True,
 #                     "index_protection": False,
 #                     "top_k": 4,
@@ -813,7 +813,7 @@ def test_hf_multiple_images_crops(temp_dir, client):
 #                 "rag": {
 #                     "indexdb_lib": "chromadb",
 #                     "embedding_lib": "huggingface",
-#                     "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+#                     "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
 #                     "reindex": True,
 #                     "index_protection": False,
 #                     "top_k": 4,
@@ -903,7 +903,7 @@ def test_hf_multiple_images_preproc_layout(temp_dir, client):
                 "rag": {
                     "indexdb_lib": "chromadb",
                     "embedding_lib": "huggingface",
-                    "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                    "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
                     "gpu_id": 0,
                     "top_k": 4,
                     "ragm": {
@@ -1024,7 +1024,7 @@ def test_hf_shared_models(temp_dir, client):
                 "rag": {
                     "indexdb_lib": "chromadb",
                     "embedding_lib": "huggingface",
-                    "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                    "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
                     "shared_model": True,
                     "top_k": 4,
                     "gpu_id": 0,
@@ -1393,7 +1393,7 @@ def test_vllm_single_image(temp_dir, client):
 #                 "rag": {
 #                     "indexdb_lib": "chromadb",
 #                     "embedding_lib": "huggingface",
-#                     "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+#                     "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
 #                     "top_k": 1,
 #                     "shared_model": True,
 #                     "ragm": {
@@ -1490,7 +1490,7 @@ def test_hf_multiple_images_with_duplicates(temp_dir, client):
                 "rag": {
                     "indexdb_lib": "chromadb",
                     "embedding_lib": "huggingface",
-                    "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                    "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
                     "top_k": 2,
                     "gpu_id": 0,
                     "ragm": {

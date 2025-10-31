@@ -77,7 +77,7 @@ def test_create_without_upload(temp_dir, client):
                 "rag": {
                     "indexdb_lib": "chromadb",
                     "embedding_lib": "huggingface",
-                    "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                    "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
                     "top_k": 3,
                     "ragm": {"layout_detection": True, "image_width": 512, "image_height": 512},
                 },
@@ -141,7 +141,7 @@ def test_create_with_upload(temp_dir, client):
                 "rag": {
                     "indexdb_lib": "chromadb",
                     "embedding_lib": "huggingface",
-                    "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                    "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
                     "gpu_id": 0,
                     "top_k": 3,
                     "reindex": True,

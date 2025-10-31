@@ -57,7 +57,7 @@ def test_hf_single_image(temp_dir):
                 "rag": {
                     "indexdb_lib": "chromadb",
                     "embedding_lib": "huggingface",
-                    "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                    "embedding_model": "jinaai/jina-embeddings-v4-vllm-retrieval",
                     "reindex": True,
                     "index_protection": False,
                     "top_k": 1,
