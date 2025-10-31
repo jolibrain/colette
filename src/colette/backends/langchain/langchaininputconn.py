@@ -74,8 +74,17 @@ class LangChainInputConn(InputConnector):
         if self.ragobj is not None:
             if ad._rag_question is not None:
                 # retrieving chunks from retrieved docs
-                # docs = self.rag_retriever.invoke(ad._rag_question)
-                docs = self.ragobj.retrieve(ad._rag_question)
+                # CHANGE: Pass crop_label to retrieve method
+                # Note: For text-based RAG, crop_label filtering may not apply
+                # unless you're using layout detection on documents
+                crop_label = ad.crop_label if hasattr(ad, 'crop_label') else None
+                
+                if crop_label:
+                    # If crop_label is specified, pass it to retrieve
+                    docs = self.ragobj.retrieve(ad._rag_question, crop_label=crop_label)
+                else:
+                    # Standard retrieval without filtering
+                    docs = self.ragobj.retrieve(ad._rag_question)
 
                 # storing the chunks used for the context
                 for d in docs:
@@ -87,14 +96,20 @@ class LangChainInputConn(InputConnector):
                         d.page_content,
                         d.metadata["start_index"] if has_start_index else None,
                     )
-                    docs_source["context"].append(
-                        {
-                            "source": d.metadata.get("source", None),
-                            "page": d.metadata.get("page", None),
-                            "content": d.page_content if hasattr(d, "page_content") else None,
-                            "start_index": d.metadata.get("start_index", None) if has_start_index else None,
-                        }
-                    )
+                    
+                    # CHANGE: Include label in docs_source if available
+                    doc_dict = {
+                        "source": d.metadata.get("source", None),
+                        "page": d.metadata.get("page", None),
+                        "content": d.page_content if hasattr(d, "page_content") else None,
+                        "start_index": d.metadata.get("start_index", None) if has_start_index else None,
+                    }
+                    
+                    # Add label if present in metadata
+                    if "label" in d.metadata:
+                        doc_dict["label"] = d.metadata["label"]
+                    
+                    docs_source["context"].append(doc_dict)
 
                 self.logger.info("RAG has retrieved %s docs", len(docs))
                 context_fill = (
