@@ -18,7 +18,7 @@ from chromadb.config import Settings
 from PIL import Image
 from qwen_vl_utils import process_vision_info
 from tqdm import tqdm
-from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
+from transformers import AutoProcessor, AutoModel, Qwen2VLForConditionalGeneration
 from vllm import LLM as VLLM
 
 from colette.apidata import InputConnectorObj
@@ -189,7 +189,7 @@ class ImageEmbeddingFunction(EmbeddingFunction):
         if ad.rag.embedding_model is not None:
             self.rag_embedding_model = ad.rag.embedding_model
         else:
-            self.rag_embedding_model = "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct"
+            self.rag_embedding_model = "jinaai/jina-embeddings-v4-vllm-retrieval"
         self.shared = ad.rag.shared_model
         self.rag_image_width = ad.rag.ragm.image_width
         self.rag_image_height = ad.rag.ragm.image_height
@@ -202,11 +202,11 @@ class ImageEmbeddingFunction(EmbeddingFunction):
 
         # min/max image size
         min_pixels = 1 * 28 * 28
-        max_pixels = 2560 * 28 * 28
+        max_pixels = 768 * 28 * 28
 
         # load model
         ## only qwen2vl-based embedder for now
-        expected_prefix = "Alibaba-NLP/gme-Qwen2-VL"
+        expected_prefix = "jinaai/jina-embeddings"
         if not self.vllm and not self.rag_embedding_model.startswith(expected_prefix):
             self.logger.warning("rag.embedding_model should be " + expected_prefix)
         self.model = None
@@ -227,41 +227,76 @@ class ImageEmbeddingFunction(EmbeddingFunction):
                     self.vllm_load_format = "auto"
                 self.model = VLLM(
                     model=self.rag_embedding_model,
-                    download_dir=models_repository,
+                    download_dir=str(models_repository),
                     load_format=self.vllm_load_format,
                     quantization=self.vllm_quantization,
-                    max_model_len=4096,
+                    max_model_len=2048,
                     max_num_seqs=5,
                     task="embed",
                     mm_processor_kwargs={
                         "min_pixels": 28 * 28,
-                        "max_pixels": 1280 * 28 * 28,
+                        "max_pixels": 768 * 28 * 28,
                         "fps": 1,
                     },
                     disable_mm_preprocessor_cache=False,
                     gpu_memory_utilization=self.vllm_memory_utilization,
                     limit_mm_per_prompt={"image": 1},
                     enforce_eager=self.vllm_enforce_eager,
+                    trust_remote_code=True,  # ADD THIS LINE
                 )
             else:
                 self.processor = AutoProcessor.from_pretrained(
                     self.rag_embedding_model,
-                    min_pixels=min_pixels,
-                    max_pixels=max_pixels,
+                    trust_remote_code=True,
+                    # torch_dtype=torch.float16,
+                    # min_pixels=min_pixels,
+                    # max_pixels=max_pixels,
                     cache_dir=str(models_repository),
                 )
-                self.model = (
-                    Qwen2VLForConditionalGeneration.from_pretrained(
-                        self.rag_embedding_model,
-                        attn_implementation="flash_attention_2",
-                        torch_dtype=torch.bfloat16,
-                        cache_dir=str(models_repository),
-                    )
-                    .to("cuda:" + str(self.device))
-                    .eval()
+
+                # Configure the image processor separately
+                self.processor.image_processor.min_pixels = min_pixels
+                self.processor.image_processor.max_pixels = max_pixels
+
+                # Load model
+                loaded_model = AutoModel.from_pretrained(
+                    self.rag_embedding_model,
+                    trust_remote_code=True,
+                    # attn_implementation="flash_attention_2",
+                    torch_dtype=torch.bfloat16,
+                    cache_dir=str(models_repository),
                 )
 
+                # Check if it's a PEFT model and get the base model
+                if hasattr(loaded_model, 'base_model'):
+                    self.logger.info("PEFT model detected, extracting base model for vision processing")
+                    # Get the actual base model without PEFT wrappers
+                    self.model = loaded_model.get_base_model()
+                else:
+                    self.model = loaded_model
+
+                self.model = self.model.to("cuda:" + str(self.device)).eval()
+
+                # Add diagnostic logging
+                self.logger.info(f"Model type: {type(self.model)}")
+                self.logger.info(f"Model class: {self.model.__class__.__name__}")
+                if hasattr(self.model, 'peft_config'):
+                    self.logger.info(f"PEFT config found: {self.model.peft_config}")
+                else:
+                    self.logger.info("No PEFT config found - ready for vision processing")
+
+                # CRITICAL FIX: Check vision encoder configuration
+                if hasattr(self.model, 'model') and hasattr(self.model.model, 'visual'):
+                    visual = self.model.model.visual
+                    self.logger.info(f"Vision encoder found")
+                    self.logger.info(f"  spatial_merge_unit: {getattr(visual, 'spatial_merge_unit', 'N/A')}")
+                    self.logger.info(f"  patch_size: {getattr(visual.patch_embed, 'patch_size', 'N/A') if hasattr(visual, 'patch_embed') else 'N/A'}")
+
+        # Set chat template if not present (only for HuggingFace, not vLLM)
         if not self.vllm:
+            if not hasattr(self.processor, 'chat_template') or self.processor.chat_template is None:
+                self.processor.chat_template = "{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n'}}{% if message['content'] is string %}{{ message['content'] }}{% else %}{% for content in message['content'] %}{% if content['type'] == 'image' %}{{'<|vision_start|><|image_pad|><|vision_end|>'}}{% elif content['type'] == 'text' %}{{ content['text'] }}{% endif %}{% endfor %}{% endif %}{{'<|im_end|>\n'}}{% endfor %}{% if add_generation_prompt %}{{'<|im_start|>assistant\n'}}{% endif %}"
+            
             # https://huggingface.co/Alibaba-NLP/gme-Qwen2-VL-2B-Instruct/blob/main/gme_inference.py#L39
             self.processor.tokenizer.padding_side = "right"
             self.model.padding_side = "left"
@@ -335,88 +370,223 @@ class ImageEmbeddingFunction(EmbeddingFunction):
     def __call__(self, input: dict) -> Embeddings:
         if self.vllm:
             return self.__call_vllm__(input)
-        # prepare data
-        doc_messages = []
-
+        
+        # Separate images and texts
+        images_list = []
+        texts_list = []
+        
         for item in input:
-            # if is_image(input): ##XXX: fails to detect PIL image, checks for np array...
             if type(item) is dict:
                 label = item.get("label", None)
                 item = item.get("doc", None)
             else:
                 label = None
-            if "PIL" in str(type(item)):  # or "Png" in str(type(item)) or "Jpeg" in str(type(item)):
+                
+            if "PIL" in str(type(item)):
+                # Handle PIL images
                 if not self.rag_auto_scale_for_font and self.rag_image_width and self.rag_image_height:
                     width, height = item.size
                     if width > self.rag_image_width or height > self.rag_image_height:
                         item.thumbnail((self.rag_image_width, self.rag_image_height))
-
-                embed_prompt = ""  # gme-Qwen2-VL does not have a user prompt by default
-                if label:
-                    embed_prompt = "This image has a " + label + ". " + embed_prompt
-                message = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image",
-                                "image": item,
-                            },
-                            #'resized_height':xxx , 'resized_width':xxx
-                            # adjust the image size for efficiency trade-off
-                            {
-                                "type": "text",
-                                "text": embed_prompt,
-                            },
-                        ],
-                    }
-                ]
+                images_list.append(item)
             else:
+                # Handle text
+                texts_list.append(item)
+        
+        all_embeddings = []
+        
+        # Process images using the correct format for Jina v4
+        if images_list:
+            for idx, img in enumerate(images_list):
+                self.logger.info(f"Processing image {idx + 1}/{len(images_list)}")
+                self.logger.info(f"Image type: {type(img)}, size: {img.size if hasattr(img, 'size') else 'N/A'}")
+                
+                try:
+                    # CRITICAL: Resize image to dimensions that work well with the vision encoder
+                    # The vision encoder expects images that result in patch grids divisible by spatial_merge_unit (4)
+                    width, height = img.size
+                    self.logger.info(f"Original image size: {width}x{height}")
+                    
+                    # Calculate target size that will result in patch counts divisible by 4
+                    # With patch_size=14 and spatial_merge_unit=4, we need dimensions where:
+                    # (h/14) % 4 == 0 and (w/14) % 4 == 0
+                    # This means h and w should be multiples of 56 (14*4)
+                    
+                    target_width = ((width // 56) * 56)
+                    target_height = ((height // 56) * 56)
+                    
+                    # Ensure we don't make it too small
+                    if target_width < 224:
+                        target_width = 224
+                    if target_height < 224:
+                        target_height = 224
+                        
+                    if (width, height) != (target_width, target_height):
+                        self.logger.info(f"Resizing image from {width}x{height} to {target_width}x{target_height}")
+                        img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
+                    
+                    # Calculate if we need to resize based on min/max pixels
+                    total_pixels = img.size[0] * img.size[1]
+                    min_pixels = self.processor.image_processor.min_pixels
+                    max_pixels = self.processor.image_processor.max_pixels
+                    
+                    self.logger.info(f"Image pixels: {total_pixels}, min: {min_pixels}, max: {max_pixels}")
+                    
+                    # Use the message format that Jina v4 expects
+                    messages = [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image", "image": img},
+                            ],
+                        }
+                    ]
+                    
+                    # Use process_vision_info to extract images properly
+                    image_inputs, video_inputs = process_vision_info(messages)
+                    
+                    self.logger.info(f"Number of images from process_vision_info: {len(image_inputs) if image_inputs else 0}")
+                    
+                    # Apply chat template 
+                    text = self.processor.apply_chat_template(
+                        messages, tokenize=False, add_generation_prompt=False
+                    )
+                    
+                    self.logger.info(f"Generated text: {text[:200]}")
+                    
+                    # Process - the key is here
+                    inputs = self.processor(
+                        text=[text],
+                        images=image_inputs,
+                        videos=video_inputs,
+                        padding=True,
+                        return_tensors="pt",
+                    )
+                    
+                    # Check what we got back
+                    self.logger.info(f"After processor - pixel_values shape: {inputs.get('pixel_values', 'missing').shape if 'pixel_values' in inputs else 'missing'}")
+                    self.logger.info(f"After processor - image_grid_thw: {inputs.get('image_grid_thw', 'missing')}")
+                    
+                    # Move to device
+                    inputs = {k: v.to("cuda:" + str(self.device)) if isinstance(v, torch.Tensor) else v 
+                            for k, v in inputs.items()}
+                    
+                    self.logger.info(f"Processor output keys: {inputs.keys()}")
+                    for key in inputs.keys():
+                        if hasattr(inputs[key], 'shape'):
+                            self.logger.info(f"{key} shape: {inputs[key].shape}")
+                    
+                    # Validate inputs
+                    if 'pixel_values' not in inputs or inputs['pixel_values'].numel() == 0:
+                        self.logger.error("No pixel_values generated")
+                        all_embeddings.append([0.0] * 2048)
+                        continue
+                        
+                    if inputs.get('input_ids') is None or inputs['input_ids'].shape[1] == 0:
+                        self.logger.error("Invalid input_ids generated")
+                        all_embeddings.append([0.0] * 2048)
+                        continue
+                    
+                    # Check if pixel_values shape is correct
+                    # Should be [num_patches, hidden_dim] or similar
+                    pv_shape = inputs['pixel_values'].shape
+                    if len(pv_shape) != 2:
+                        self.logger.error(f"Unexpected pixel_values dimensions: {pv_shape}")
+                        all_embeddings.append([0.0] * 2048)
+                        continue
+                        
+                except Exception as e:
+                    self.logger.error(f"Error in processor: {e}")
+                    import traceback
+                    self.logger.error(traceback.format_exc())
+                    all_embeddings.append([0.0] * 2048)
+                    continue
+                
+                # Call model
+                with torch.no_grad():
+                    try:
+                        batch_size = inputs['input_ids'].shape[0]
+                        # task_label=1 for image embeddings
+                        task_label = torch.ones(batch_size, dtype=torch.long, device="cuda:" + str(self.device))
+                        
+                        self.logger.info(f"Calling model.forward() with:")
+                        self.logger.info(f"  batch_size: {batch_size}")
+                        self.logger.info(f"  input_ids: {inputs['input_ids'].shape}")
+                        self.logger.info(f"  pixel_values: {inputs['pixel_values'].shape}, dtype: {inputs['pixel_values'].dtype}")
+                        self.logger.info(f"  image_grid_thw: {inputs['image_grid_thw']}, shape: {inputs['image_grid_thw'].shape}")
+                        self.logger.info(f"  task_label: {task_label}")
+                        
+                        # Convert pixel_values to match model dtype if needed
+                        if inputs['pixel_values'].dtype != self.model.dtype:
+                            self.logger.info(f"Converting pixel_values from {inputs['pixel_values'].dtype} to {self.model.dtype}")
+                            inputs['pixel_values'] = inputs['pixel_values'].to(self.model.dtype)
+                        
+                        # Log model's expected input format
+                        self.logger.info(f"Model dtype: {self.model.dtype}")
+                        self.logger.info(f"Model device: {next(self.model.parameters()).device}")
+                        
+                        output = self.model(
+                            input_ids=inputs['input_ids'],
+                            attention_mask=inputs['attention_mask'],
+                            pixel_values=inputs['pixel_values'],
+                            image_grid_thw=inputs['image_grid_thw'],
+                            task_label=task_label,
+                            return_dict=True,
+                            output_hidden_states=True
+                        )
+                        
+                        embedding = self.get_embedding(output.hidden_states[-1])
+                        all_embeddings.append(embedding.squeeze().cpu().tolist())
+                        self.logger.info("Successfully generated embedding")
+                        
+                        del output
+                        del inputs
+                        torch.cuda.empty_cache()
+                        
+                    except Exception as e:
+                        self.logger.error(f"Error in model forward: {e}")
+                        import traceback
+                        self.logger.error(traceback.format_exc())
+                        all_embeddings.append([0.0] * 2048)
+
+        # Process texts
+        if texts_list:
+            for text_item in texts_list:
                 message = [
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": item},
+                            {"type": "text", "text": text_item},
                         ],
                     }
                 ]
-        doc_messages.append(message)
-
-        # print("doc_messages=", doc_messages)
-
-        doc_texts = [
-            self.processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) + "<|endoftext|>"
-            for msg in doc_messages
-        ]
-
-        # print("doc_texts=", doc_texts)
-
-        doc_image_inputs, doc_video_inputs = process_vision_info(doc_messages)
-        doc_inputs = self.processor(
-            text=doc_texts,
-            images=doc_image_inputs,
-            videos=doc_video_inputs,
-            # https://huggingface.co/Alibaba-NLP/gme-Qwen2-VL-2B-Instruct/blob/main/gme_inference.py#L116
-            padding=True,
-            truncation=True,
-            return_tensors="pt",
-        ).to("cuda:" + str(self.device))
-        cache_position = torch.arange(0, len(doc_texts))
-        doc_inputs = self.model.prepare_inputs_for_generation(
-            **doc_inputs, cache_position=cache_position, use_cache=False
-        )
-
-        # call on the model
-        with torch.no_grad():
-            output = self.model(**doc_inputs, return_dict=True, output_hidden_states=True)
-
-        doc_embeddings = self.get_embedding(output.hidden_states[-1])
-        del output
-        # output = None
-        db_embeddings = cast(Embedding, doc_embeddings.squeeze().tolist())  ##TODO: beware multiple docs...
-
-        return db_embeddings
-
+                
+                text = self.processor.apply_chat_template(
+                    message, tokenize=False, add_generation_prompt=True
+                ) + "<|endoftext|>"
+                
+                inputs = self.processor(
+                    text=[text],
+                    images=None,
+                    videos=None,
+                    padding=True,
+                    truncation=True,
+                    return_tensors="pt",
+                ).to("cuda:" + str(self.device))
+                
+                with torch.no_grad():
+                    batch_size = inputs['input_ids'].shape[0]
+                    task_label = torch.zeros(batch_size, dtype=torch.long, device="cuda:" + str(self.device))
+                    output = self.model(**inputs, task_label=task_label, return_dict=True, output_hidden_states=True)
+                
+                embedding = self.get_embedding(output.hidden_states[-1])
+                all_embeddings.append(embedding.squeeze().cpu().tolist())
+                del output
+        
+        # Return single embedding or list
+        if len(all_embeddings) == 1:
+            return cast(Embedding, all_embeddings[0])
+        return cast(Embeddings, all_embeddings)
 
 class RAGImgRetriever:
     def __init__(
