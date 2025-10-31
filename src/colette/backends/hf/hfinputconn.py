@@ -48,7 +48,12 @@ class HFInputConn(InputConnector):
 
         # retrieve docs from RAG
         if self.ragobj is not None:
-            docs = self.ragobj.retrieve(message, ad.query_depth_mult)
+            # CHANGE: Pass crop_label to retrieve method
+            docs = self.ragobj.retrieve(
+                message, 
+                ad.query_depth_mult,
+                crop_label=ad.crop_label  # NEW: Pass crop_label parameter
+            )
 
         # optional query rephrasing
         if query_rephraser:
