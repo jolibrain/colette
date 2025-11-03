@@ -44,11 +44,15 @@ colette_api.service_create(app_name, api_data_create)
 api_data_index = APIData(**index_config)
 colette_api.service_index(app_name, api_data_index)
 
+# Note the optional 'crop_label' parameter to filter the sources by crop label
+# The default crop labels are: 'text', 'table', 'figure'
+
 # Query the vision RAG
 query_api_msg = {
     'parameters': {
         'input': {
             'message': 'What are the identified sources of errors ?'
+            # 'crop_label': 'text'
         }
     }
 }
