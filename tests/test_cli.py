@@ -70,6 +70,8 @@ def test_chat(setup_and_cleanup):
             str(APP_DIR),
             "--msg",
             "What is the budget allocated to Space Transportation?",
+            "--crop-label",
+            "text",
         ],
     )
 
