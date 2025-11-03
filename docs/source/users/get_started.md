@@ -88,7 +88,7 @@ colette_cli index --app-dir app_colette --data-dir docs/pdf/ --config-file src/c
 ##### Test with a question
 
 ```bash
-colette_cli chat --app-dir app_colette --msg "What are the identified sources of errors ?"
+colette_cli chat --app-dir app_colette --msg "What are the identified sources of errors ?" #--crop-label "text"
 ```
 
 ## Python API
@@ -148,10 +148,15 @@ api_data_index = APIData(**index_config)
 colette_api.service_index(app_name, api_data_index)
 
 # Query the vision RAG
+
+# Note the optional 'crop_label' parameter to filter the sources by crop label
+# The default crop labels are: 'text', 'table', 'figure'
+
 query_api_msg = {
     'parameters': {
         'input': {
             'message': 'What are the identified sources of errors ?'
+            # 'crop_label': 'text'
         }
     }
 }

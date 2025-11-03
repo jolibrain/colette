@@ -43,6 +43,7 @@ class ServiceIndexRequest(BaseModel):
 
 class QueryRequest(BaseModel):
     message: str
+    crop_label: Optional[str] = None
     return_images: Optional[bool] = False
 
 class QueryResponse(BaseModel):

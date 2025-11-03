@@ -15,6 +15,7 @@ option_modelsdir = typer.Option("models", help="Specify the models directory")
 option_configfile = typer.Option(None, help="Specify the config file")
 option_indexfile = typer.Option(None, help="Specify the index file")
 option_msg = typer.Option(..., help="Specify the user message")
+option_crop_label = typer.Option(None, help="Specify the crop label")
 option_host = typer.Option("0.0.0.0", help="Specify the host")
 option_port = typer.Option(7860, help="Specify the port")
 
@@ -108,9 +109,9 @@ def index(
 
 
 @cli.command()
-def chat(app_dir: Path = option_appdir, msg: str = option_msg, models_dir: Path = option_modelsdir):
+def chat(app_dir: Path = option_appdir, msg: str = option_msg, crop_label: str = None, models_dir: Path = option_modelsdir):
     """Start a chat with the application."""
-    typer.echo(f"Starting chat with {app_dir} using message: {msg}")
+    typer.echo(f"Starting chat with {app_dir} using message: {msg} and crop_label: {crop_label}")
     try:
         app_dir = app_dir.absolute()
         app_name = app_dir.name
@@ -138,7 +139,7 @@ def chat(app_dir: Path = option_appdir, msg: str = option_msg, models_dir: Path 
             typer.echo(f"Initialization failed: {response.text}", err=True)
             raise typer.Exit(code=1)
 
-        chat_payload = dict(parameters=dict(input=dict(message=msg)))
+        chat_payload = dict(parameters=dict(input=dict(message=msg, crop_label=crop_label)))
         response = client.post(f"/v1/predict/{app_name}", json=chat_payload)
         if response.status_code != 200:
             typer.echo(f"Chat request failed: {response.text}", err=True)
