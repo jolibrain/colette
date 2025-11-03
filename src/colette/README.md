@@ -28,6 +28,7 @@ where:
   - `--app-dir` specifies the directory containing the index.
   - `--models-dir` (optional) defines the cache directory for downloaded models.
   - `--msg` is your query directed at the indexed documents.
+  - `--crop-label` (optional) specifies the crop label to filter the sources by.
 
 **Note:** Ensure that the paths provided are absolute or relative to the current working directory to avoid potential path resolution issues.
 
