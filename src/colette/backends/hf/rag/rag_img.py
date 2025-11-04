@@ -455,7 +455,15 @@ class RAGImgRetriever:
             # Build where filter for ChromaDB if crop_label is provided
             where_filter = None
             if crop_label is not None:
-                where_filter = {"crop_label": crop_label}
+                # Handle both single string and list of strings
+                if isinstance(crop_label, str):
+                    # Single label: exact match
+                    where_filter = {"crop_label": crop_label}
+                elif isinstance(crop_label, list):
+                    # Multiple labels: use ChromaDB $in operator
+                    where_filter = {"crop_label": {"$in": crop_label}}
+                else:
+                    self.logger.warning("crop_label should be either a string or a list of strings.")
             
             docs = self.indexdb.query(
                 query_texts=[question], 
@@ -768,7 +776,7 @@ class RAGImg:
             del self.rag_layout_detector.model
 
     # returns docs
-    def retrieve(self, rag_question, query_depth_mult, crop_label=None):
+    def retrieve(self, rag_question, query_depth_mult, crop_label: str | list[str] = None):
         """
         Retrieve relevant documents for a question.
         
