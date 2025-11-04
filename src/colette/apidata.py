@@ -147,7 +147,7 @@ class InputConnectorObj(BaseModel):
     """ V-RAG only, depth multiplier with ChromaDB to accomodate lose similarity-based search guarantees """
     streaming: bool = False
     """ Try to stream the output, might be ignored depending on the backend """
-    crop_label: str | None = None
+    crop_label: str | list[str] | None = None
     """ V-RAG only: filter retrieved crops by label, e.g. 'text', 'figure', 'table' """
 
     @field_serializer("data", mode="plain")
