@@ -425,7 +425,8 @@ class ImageProcessor:
                         metadata_ = metadata.copy()
                         metadata_.update(
                             dict(
-                                label="overview"
+                                label="overview",
+                                crop_label="full_page"
                             )
                         )
                         parts.append(
@@ -442,7 +443,8 @@ class ImageProcessor:
                     metadata_ = metadata.copy()
                     metadata_.update(
                         dict(
-                            label="overview"
+                            label="overview",
+                            crop_label="full_page"
                         )
                     )
                     parts.append(
@@ -483,7 +485,8 @@ class ImageProcessor:
                         metadata_ = metadata.copy()
                         metadata_.update(
                             dict(
-                                label="overview"
+                                label="overview",
+                                crop_label="full_page"
                             )
                         )
                         parts.append(
