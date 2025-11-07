@@ -199,8 +199,10 @@ class LLMModelObj(BaseModel):
     """ Whether to enforce eager execution """
     image_width: int | None = None
     """ Source image width """
-    image_height: int | None = None
+    image_height: int | None = None    
     """ Source image height """
+    adjust_aspect_ratio: bool = True
+    """ Whether to adjust the aspect ratio of the images to the target image_width/image_height """        
     dtype: str = "auto"
     host: str | None = None
     """ Ollama: host to connect to, e.g. localhost """

@@ -59,6 +59,7 @@ class HFModel(LLMModel):
         self.shared = ad.shared_model
         self.image_width = ad.image_width
         self.image_height = ad.image_height
+        self.adjust_aspect_ratio = ad.adjust_aspect_ratio        
         if not self.llm_obj.gpu_ids:
             self.cpu = True
         else:
@@ -281,6 +282,22 @@ class HFModel(LLMModel):
             content = []
             if not history:
                 for image, metadata in zip(docs["images"][0], docs["metadatas"][0], strict=False):
+                    
+                    # Adjust aspect ratio if needed
+                    if self.adjust_aspect_ratio:
+                        width, height = image.size
+                        target_ratio = self.image_width / self.image_height
+                        current_ratio = width / height
+                        if current_ratio != target_ratio:
+                            new_height = int(width / target_ratio)
+                            new_image = PIL.Image.new("RGB", (width, new_height), (255, 255, 255))
+                            upper_padding = (new_height - height) // 2
+                            new_image.paste(image, (0, upper_padding))
+                            image = new_image
+                            self.logger.debug(
+                                f"Adjusted image aspect ratio from {current_ratio:.2f} to {target_ratio:.2f} by padding to size ({width}, {new_height})"
+                            )
+
                     # add image metadata to content
                     context_txt = f"document: {metadata['source']}"
                     if "page_number" in metadata:
