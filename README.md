@@ -55,6 +55,7 @@ NOTE: Colette requires a GPU with at least 24GB of VRAM to run the default model
 Also the default config file is `vrag_default_lite.json` which is designed to run on 24GB VRAM GPUs. If you have multiples GPUs, you can try `vrag_default.json` which uses larger models and should provide better results and also needs multiple GPUs
 
 ### Docker (recommended)
+
 Easiest way to get started uses Docker. If you with to install from sources, see [Developer Setup](https://colette.chat/doc/developers/setup.html)
 
 1. Pull the Docker image
@@ -98,9 +99,9 @@ docker run --gpus all --user $(id -u):$(id -g) \
 
 ### Activate `venv_colette` for Command line & Developer Setup (Python API)
 
-0. (Debian 13) Ensure that your Python environment is complete
+#### (Debian 13) Ensure that your Python environment is complete
 
-* System libraries
+1) System libraries
 
 You'll need the following libraries in order to build all dependencies
 
@@ -110,7 +111,7 @@ sudo apt install -y libffi-dev build-essential zlib1g-dev libssl-dev libbz2-dev 
   libncursesw5-dev xz-utils
 ```
 
-* (recommended) Pyenv + switch to 3.12.1
+2) (recommended) Pyenv + switch to 3.12.1
 
 Pyenv allows you to run multiple python environments. This is desirable because colette pins specific libraries that aren't necessarily buildable with the latest version of python. 
 
@@ -127,7 +128,7 @@ pyenv install 3.12.1
 pyenv local 3.12.1
 ```
 
-* NVCC + GCC 
+3) Install NVCC + GCC 
 
 You need NVCC installed (for multiple reasons, one being that it will tell the `create_venv_colette.sh` script which version of CUDA to use; the script could infer it from `nvidia-smi` but the value obtained that way might be too recent, the wheels might not have been built yet)
 
@@ -167,13 +168,13 @@ export NVCC_FLAGS="--allow-unsupported-compiler"
 ```
 
 
-1. Clone the repo:
+#### Clone the repo:
 
 ```bash
 git clone https://github.com/jolibrain/colette.git
 ```
 
-2. Create a virtual environment and install dependencies
+#### Create a virtual environment and install dependencies
 
 ```bash
 cd colette
