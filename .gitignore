@@ -47,3 +47,9 @@ env/
 *~
 *pycache*
 *\#
+
+# Test folders
+test_coldbimg/
+test_ollama_norag/
+tests/pipeline_debug.log
+tests/pipeline_output/
