@@ -18,7 +18,7 @@ from chromadb.config import Settings
 from PIL import Image
 from qwen_vl_utils import process_vision_info
 from tqdm import tqdm
-from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
+from transformers import AutoProcessor, AutoModel, Qwen2VLForConditionalGeneration
 from vllm import LLM as VLLM
 
 from colette.apidata import InputConnectorObj
@@ -205,10 +205,10 @@ class ImageEmbeddingFunction(EmbeddingFunction):
         max_pixels = 2560 * 28 * 28
 
         # load model
-        ## only qwen2vl-based embedder for now
-        expected_prefix = "Alibaba-NLP/gme-Qwen2-VL"
-        if not self.vllm and not self.rag_embedding_model.startswith(expected_prefix):
-            self.logger.warning("rag.embedding_model should be " + expected_prefix)
+        ## qwen2vl and qwen3-vl embedder support
+        expected_prefixes = ("Alibaba-NLP/gme-Qwen2-VL", "Qwen/Qwen3-VL-Embedding")
+        if not self.vllm and not any(self.rag_embedding_model.startswith(p) for p in expected_prefixes):
+            self.logger.warning("rag.embedding_model should start with one of: %s", ",".join(expected_prefixes))
         self.model = None
         if self.shared:
             cache_key = ("vllm_embed" if self.vllm else "huggingface", self.rag_embedding_model)
@@ -250,21 +250,47 @@ class ImageEmbeddingFunction(EmbeddingFunction):
                     max_pixels=max_pixels,
                     cache_dir=str(models_repository),
                 )
-                self.model = (
-                    Qwen2VLForConditionalGeneration.from_pretrained(
-                        self.rag_embedding_model,
-                        attn_implementation="flash_attention_2",
-                        torch_dtype=torch.bfloat16,
-                        cache_dir=str(models_repository),
-                    )
-                    .to("cuda:" + str(self.device))
-                    .eval()
-                )
+                # Support both the legacy Alibaba Qwen2-VL and the newer Qwen3-VL-Embedding model.
+                # Try to instantiate a model class that provides embeddings. We prefer the
+                # Qwen2 VL-specific class when detected, otherwise fall back to a generic
+                # AutoModel (the Qwen3 embedding model should expose hidden states).
+                try:
+                    if self.rag_embedding_model.startswith("Alibaba-NLP/gme-Qwen2-VL"):
+                        self.model = (
+                            Qwen2VLForConditionalGeneration.from_pretrained(
+                                self.rag_embedding_model,
+                                attn_implementation="flash_attention_2",
+                                torch_dtype=torch.bfloat16,
+                                cache_dir=str(models_repository),
+                            )
+                            .to("cuda:" + str(self.device))
+                            .eval()
+                        )
+                    else:
+                        # Generic HF model for embeddings (Qwen3-VL-Embedding or similar)
+                        self.model = (
+                            AutoModel.from_pretrained(
+                                self.rag_embedding_model,
+                                cache_dir=str(models_repository),
+                            )
+                            .to("cuda:" + str(self.device))
+                            .eval()
+                        )
+                except Exception as e:
+                    self.logger.error("Error loading embedding model %s: %s", self.rag_embedding_model, repr(e))
+                    raise
 
         if not self.vllm:
-            # https://huggingface.co/Alibaba-NLP/gme-Qwen2-VL-2B-Instruct/blob/main/gme_inference.py#L39
-            self.processor.tokenizer.padding_side = "right"
-            self.model.padding_side = "left"
+            # Ensure tokenizer/model padding sides are set consistently for chat-style templates
+            try:
+                self.processor.tokenizer.padding_side = "right"
+            except Exception:
+                pass
+            try:
+                # some model wrappers expose padding_side on the model or processor
+                self.model.padding_side = "left"
+            except Exception:
+                pass
 
         # Cache the embedder for future use
         if self.shared:
@@ -402,15 +428,36 @@ class ImageEmbeddingFunction(EmbeddingFunction):
             return_tensors="pt",
         ).to("cuda:" + str(self.device))
         cache_position = torch.arange(0, len(doc_texts))
-        doc_inputs = self.model.prepare_inputs_for_generation(
-            **doc_inputs, cache_position=cache_position, use_cache=False
-        )
+        # Some embedding models (e.g., Qwen2 VL) require prepare_inputs_for_generation,
+        # while other embedding models (e.g., Qwen3 embeddings) can be called directly.
+        try:
+            doc_inputs = self.model.prepare_inputs_for_generation(
+                **doc_inputs, cache_position=cache_position, use_cache=False
+            )
+        except Exception:
+            # model has no prepare_inputs_for_generation; assume doc_inputs is acceptable
+            pass
 
         # call on the model
         with torch.no_grad():
-            output = self.model(**doc_inputs, return_dict=True, output_hidden_states=True)
-
-        doc_embeddings = self.get_embedding(output.hidden_states[-1])
+            # If the model implements an `embed` method, use it (some wrappers provide it).
+            if hasattr(self.model, "embed"):
+                outputs = self.model.embed(inputs)
+                # model.embed may return a list-like of outputs with .outputs.embedding
+                try:
+                    embeddings = [o.outputs.embedding for o in outputs]
+                    doc_embeddings = self.get_embedding_vllm(torch.tensor(embeddings))
+                except Exception:
+                    # fallback: if `embed` returns tensor-like
+                    doc_embeddings = torch.nn.functional.normalize(torch.tensor(outputs), p=2, dim=-1)
+            else:
+                output = self.model(**doc_inputs, return_dict=True, output_hidden_states=True)
+                # prefer last_hidden_state if available, otherwise use hidden_states
+                if hasattr(output, "last_hidden_state") and output.last_hidden_state is not None:
+                    src = output.last_hidden_state
+                else:
+                    src = output.hidden_states[-1]
+                doc_embeddings = self.get_embedding(src)
         del output
         # output = None
         db_embeddings = cast(Embedding, doc_embeddings.squeeze().tolist())  ##TODO: beware multiple docs...

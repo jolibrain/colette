@@ -8,7 +8,7 @@
         "input": {
             "lib": "hf",
             "rag": {
-                "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                "embedding_model": "Qwen/Qwen3-VL-Embedding-2B",
                 "gpu_id": 0,
                 "top_k": 4,
                 "ragm": {
@@ -22,7 +22,7 @@
         },
         "llm": {
             "source": "Qwen/Qwen3-VL-8B-Instruct",
-            "gpu_ids": [1],
+            "gpu_ids": [3],
             "image_width": 320,
             "image_height": 480,
             "adjust_aspect_ratio": true,                        
