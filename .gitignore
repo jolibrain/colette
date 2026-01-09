@@ -53,3 +53,4 @@ test_coldbimg/
 test_ollama_norag/
 tests/pipeline_debug.log
 tests/pipeline_output/
+tests/pipeline_debug_qwen2vl.log
