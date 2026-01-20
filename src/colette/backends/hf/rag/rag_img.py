@@ -185,12 +185,17 @@ def sort_and_select_top_k(
 
 class ImageEmbeddingFunction(EmbeddingFunction):
     def __init__(self, ad: InputConnectorObj, models_repository, logger):
+        
         self.device = ad.rag.gpu_id
-        # embedder
-        if ad.rag.embedding_model is not None:
-            self.rag_embedding_model = ad.rag.embedding_model
-        else:
-            self.rag_embedding_model = "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct"
+        
+        # embedder - embedding_model should be set by now from service config
+        if ad.rag.embedding_model is None:
+            msg = "rag.embedding_model must be specified in the service configuration"
+            logger.error(msg)
+            raise ValueError(msg)
+        
+        self.rag_embedding_model = ad.rag.embedding_model
+
         self.shared = ad.rag.shared_model
         self.rag_image_width = ad.rag.ragm.image_width
         self.rag_image_height = ad.rag.ragm.image_height
@@ -206,6 +211,8 @@ class ImageEmbeddingFunction(EmbeddingFunction):
         max_pixels = 2560 * 28 * 28
 
         # load model
+        self.logger.debug(f"Embedding model: {self.rag_embedding_model}")
+
         ## qwen2vl and qwen3-vl embedder support
         expected_prefixes = ("Alibaba-NLP/gme-Qwen2-VL", "Qwen/Qwen3-VL-Embedding")
         if not self.vllm and not any(self.rag_embedding_model.startswith(p) for p in expected_prefixes):
@@ -256,7 +263,9 @@ class ImageEmbeddingFunction(EmbeddingFunction):
                 # Qwen2 VL-specific class when detected, otherwise fall back to a generic
                 # AutoModel (the Qwen3 embedding model should expose hidden states).
                 try:
+
                     if self.rag_embedding_model.startswith("Alibaba-NLP/gme-Qwen2-VL"):
+
                         self.model = (
                             Qwen2VLForConditionalGeneration.from_pretrained(
                                 self.rag_embedding_model,
@@ -592,13 +601,15 @@ class RAGImg:
 
         # indexdb
         self.indexpath = self.app_repository / "mm_index"
+        # Store embedding configuration for reuse during indexing
+        self.rag_embedding_model = ad.rag.embedding_model
+        self.rag_embedding_lib = ad.rag.embedding_lib
+        
         if self.rag_indexdb_lib == "chromadb":
             self.rag_indexdb_client = chromadb.PersistentClient(
                 str(self.indexpath), Settings(anonymized_telemetry=False)
             )
         else:
-            self.rag_embedding_model = ad.rag.embedding_model
-            self.rag_embedding_lib = ad.rag.embedding_lib
             self.rag_indexdb_client = None
 
         self.logger.info(f"self.indexpath exists: {self.indexpath.exists()}")
@@ -644,6 +655,10 @@ class RAGImg:
                 self.logger.error(msg)
                 raise InputConnectorBadParamException(msg)
             if self.rag_indexdb_lib == "chromadb":
+                # Use stored embedding_model from service creation, not from partial config
+                # This ensures consistency even when reloading with partial configs
+                if ad.rag.embedding_model is None and self.rag_embedding_model is not None:
+                    ad.rag.embedding_model = self.rag_embedding_model
                 self.rag_embf = ImageEmbeddingFunction(ad, self.models_repository, self.logger)
             else:
                 self.rag_embf = None
@@ -711,6 +726,10 @@ class RAGImg:
 
             self.logger.info("Creating new index")
             if self.rag_indexdb_lib == "chromadb":
+                # Use stored embedding_model from service creation, not from partial config
+                # This ensures consistency even when indexing with partial configs like vrag_default_index.json
+                if ad.rag.embedding_model is None and self.rag_embedding_model is not None:
+                    ad.rag.embedding_model = self.rag_embedding_model
                 self.rag_embf = ImageEmbeddingFunction(ad, self.models_repository, self.logger)
                 self.rag_indexdb_collection = self.rag_indexdb_client.create_collection(
                     name="mm_db",
