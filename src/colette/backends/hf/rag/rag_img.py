@@ -19,6 +19,7 @@ from PIL import Image
 from qwen_vl_utils import process_vision_info
 from tqdm import tqdm
 from transformers import AutoProcessor, AutoModel, Qwen2VLForConditionalGeneration
+from colette.backends.hf.qwen3_vl_embedding import Qwen3VLEmbedder
 from vllm import LLM as VLLM
 
 from colette.apidata import InputConnectorObj
@@ -266,12 +267,20 @@ class ImageEmbeddingFunction(EmbeddingFunction):
                             .to("cuda:" + str(self.device))
                             .eval()
                         )
+                    elif "Qwen3-VL-Embedding" in self.rag_embedding_model:
+                        embedder = Qwen3VLEmbedder(
+                            model_name_or_path=self.rag_embedding_model,
+                            cache_dir=str(models_repository),
+                        )
+                        self.model = embedder.model.to("cuda:" + str(self.device)).eval()
+                        self.processor = embedder.processor
                     else:
                         # Generic HF model for embeddings (Qwen3-VL-Embedding or similar)
                         self.model = (
                             AutoModel.from_pretrained(
                                 self.rag_embedding_model,
                                 cache_dir=str(models_repository),
+                                trust_remote_code=True,  # Load custom model code for embedding models
                             )
                             .to("cuda:" + str(self.device))
                             .eval()
