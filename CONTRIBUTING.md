@@ -9,6 +9,7 @@ We provide two targets in the `Makefile` to help with this process:
 - `make style`: Automatically formats your code using ruff.
 - `make lint`: Runs ruff to check for any style or linting errors.
 - `make test-smoke`: Runs the validated localhost-safe smoke baseline using the repo virtualenv when available.
+- `make test-coverage`: Runs smoke baseline with coverage report and threshold enforcement.
 
 #### Before Committing
 
@@ -24,6 +25,19 @@ To run the baseline smoke suite locally:
 
 ```bash
 make test-smoke
+```
+
+To run smoke baseline with coverage reporting:
+
+```bash
+make test-coverage
+```
+
+By default coverage is checked against `src/colette` with a minimum threshold of `20%`.
+You can override this locally, for example:
+
+```bash
+make test-coverage COV_MIN=30
 ```
 
 #### Using a Pre-commit Hook
