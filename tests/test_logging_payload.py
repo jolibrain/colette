@@ -3,11 +3,14 @@ import os
 import shutil
 import time
 
+import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 from utils import compare_dicts, pretty_print_response
 
 from colette.httpjsonapi import app
+
+pytestmark = pytest.mark.integration
 
 
 @pytest_asyncio.fixture(scope="module")

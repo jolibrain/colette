@@ -1,5 +1,6 @@
 import os
 import sys
+import pytest
 
 # Ensure test imports that use top-level package names (e.g. `backends`) resolve
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -27,3 +28,17 @@ for alias in ("logger", "httpjsonapi"):
         sys.modules[alias] = mod
     except Exception:
         pass
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip integration tests unless explicitly enabled.
+
+    Set COLETTE_RUN_INTEGRATION=1 to run integration tests.
+    """
+    if os.getenv("COLETTE_RUN_INTEGRATION") == "1":
+        return
+
+    skip_integration = pytest.mark.skip(reason="integration test (set COLETTE_RUN_INTEGRATION=1 to run)")
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(skip_integration)

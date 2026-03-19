@@ -13,6 +13,8 @@ from utils import pretty_print_response
 from colette.httpjsonapi import app
 from colette.kvstore import ImageStorageFactory
 
+pytestmark = pytest.mark.integration
+
 models_repo = os.getenv("MODELS_REPO", "models")
 
 

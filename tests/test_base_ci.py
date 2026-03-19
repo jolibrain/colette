@@ -257,6 +257,7 @@ def test_info(client):
 # build the service with llamacpp and huggingface embeddings
 @pytest.mark.repository_path("test_llamacpp_hf_all-MiniLM-L6-v2")
 @pytest.mark.asyncio
+@pytest.mark.integration
 def test_llamacpp_hf(temp_dir, client):
     json_create_llamacpp_hf_all = {
         "app": {
@@ -329,6 +330,7 @@ def test_llamacpp_hf(temp_dir, client):
 # build a new service with same embeddings but different lib i.e. huggingface
 @pytest.mark.repository_path("test_llamacpp_hf_e5")
 @pytest.mark.asyncio
+@pytest.mark.integration
 def test_llamacpp_hf_e5(temp_dir, client):
     json_create_llamacpp_e5 = {
         "app": {
@@ -398,6 +400,7 @@ def test_llamacpp_hf_e5(temp_dir, client):
 # build the service with vllm
 @pytest.mark.repository_path("test_vllm")
 @pytest.mark.asyncio
+@pytest.mark.integration
 def test_vllm(temp_dir, client):
     json_create_vllm = {
         "app": {

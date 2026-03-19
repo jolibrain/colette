@@ -12,6 +12,8 @@ from utils import pretty_print_response
 
 from colette.httpjsonapi import app
 
+pytestmark = pytest.mark.integration
+
 models_repo = os.getenv("MODELS_REPO", "models")
 
 

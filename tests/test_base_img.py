@@ -10,6 +10,8 @@ from utils import pretty_print_response
 
 from colette.httpjsonapi import app
 
+pytestmark = pytest.mark.integration
+
 
 @pytest_asyncio.fixture(scope="module")
 def client():
