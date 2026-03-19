@@ -4,6 +4,8 @@ from fastapi.testclient import TestClient
 
 from colette.httpjsonapi import app
 
+pytestmark = pytest.mark.integration
+
 
 @pytest_asyncio.fixture(scope="module")
 def client():

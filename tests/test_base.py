@@ -1,10 +1,13 @@
 import copy
 import os
 import sys
+import pytest
 
 from fastapi.testclient import TestClient
 
 from colette.httpjsonapi import app  # noqa
+
+pytestmark = pytest.mark.integration
 
 # messages
 

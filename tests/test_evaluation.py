@@ -16,7 +16,11 @@ tools_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../tools")
 sys.path.append(tools_dir)
 
 from httpjsonapi import app  # noqa
-from evaluation import run_evaluation #noqa
+
+evaluation = pytest.importorskip("evaluation")
+run_evaluation = evaluation.run_evaluation
+
+pytestmark = pytest.mark.integration
 
 models_repo = os.getenv("MODELS_REPO", 'models')
 

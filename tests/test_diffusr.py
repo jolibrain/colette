@@ -1,9 +1,13 @@
 import os
 
+import pytest
+
 from fastapi.testclient import TestClient
 from utils import pretty_print_response
 
 from colette.httpjsonapi import app  # noqa
+
+pytestmark = pytest.mark.integration
 
 models_repo = os.getenv("MODELS_REPO", "models")
 

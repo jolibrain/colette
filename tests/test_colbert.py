@@ -18,6 +18,8 @@ from colette.apidata import (
 )
 from colette.jsonapi import JSONApi
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.asyncio
 async def test_colbert():

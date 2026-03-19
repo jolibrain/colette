@@ -6,11 +6,17 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("torch")
+
 col_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../src")
 sys.path.append(col_dir)
 
 from backends.hf.layout_detector import LayoutDetector # noqa
 from backends.hf.preprocessing import DocumentProcessor, ImageProcessor # noqa
+
+pytestmark = pytest.mark.integration
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
