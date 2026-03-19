@@ -83,7 +83,7 @@ class HDF5ImageStorage(ImageStorageInterface):
 
     def has_key(self, key: str) -> bool:
         """Check if a key exists in the HDF5 file."""
-        hashed_key = self.escape_key(key)
+        hashed_key = self.generate_uuid(key)
         return hashed_key in self.hdf5_file
 
     def iter_keys(self) -> iter:
