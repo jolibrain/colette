@@ -68,8 +68,6 @@ def pytest_sessionstart(session):
         "Ollama": ("127.0.0.1", 11434),
         "vLLM": ("127.0.0.1", 8000),
     }
-
-    session.config.pluginmanager.set_blocked("cacheprovider", False)
     
     print("\n" + "=" * 50)
     print("Integration Test Session: Service Availability")
