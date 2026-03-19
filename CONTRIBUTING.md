@@ -33,7 +33,7 @@ To run smoke baseline with coverage reporting:
 make test-coverage
 ```
 
-By default coverage is checked against `src/colette` with a minimum threshold of `24%`.
+By default coverage is checked against `src/colette` with a minimum threshold of `30%`.
 You can override this locally, for example:
 
 ```bash

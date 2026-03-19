@@ -81,6 +81,11 @@ def test_services_missing_service_raises():
     with pytest.raises(ServiceBadParamException):
         services.streaming("missing", ad=None)
 
+    assert services.index_delete("missing") is None
+    assert services.train("missing") is None
+    assert services.train_status("missing") is None
+    assert services.train_delete("missing") is None
+
 
 @pytest.mark.smoke
 def test_apistrategy_initializes_logger_and_registry():

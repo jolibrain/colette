@@ -1,8 +1,8 @@
 PYTHON ?= $(if $(wildcard venv_colette/bin/python),venv_colette/bin/python,python3)
 PYTEST ?= $(PYTHON) -m pytest
 RUFF ?= $(PYTHON) -m ruff
-SMOKE_TESTS ?= tests/test_base_ci.py::test_info tests/test_embedding_loader.py tests/test_embedding_integration.py tests/test_services_smoke.py
-COV_MIN ?= 24
+SMOKE_TESTS ?= tests/test_base_ci.py::test_info tests/test_embedding_loader.py tests/test_embedding_integration.py tests/test_services_smoke.py tests/test_http_openwebui_smoke.py tests/test_cli_smoke.py tests/test_jsonapi_helpers_smoke.py
+COV_MIN ?= 30
 COV_TARGET ?= src/colette
 
 .PHONY: style lint format-check lint-check test-smoke test-coverage
