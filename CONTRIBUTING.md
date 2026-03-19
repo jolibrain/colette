@@ -8,6 +8,7 @@ We provide two targets in the `Makefile` to help with this process:
 
 - `make style`: Automatically formats your code using ruff.
 - `make lint`: Runs ruff to check for any style or linting errors.
+- `make test-smoke`: Runs the validated localhost-safe smoke baseline using the repo virtualenv when available.
 
 #### Before Committing
 
@@ -18,6 +19,12 @@ make style
 ```
 
 This will automatically fix any formatting issues in your code.
+
+To run the baseline smoke suite locally:
+
+```bash
+make test-smoke
+```
 
 #### Using a Pre-commit Hook
 To make the formatting process easier and more consistent, we recommend using a pre-commit hook. This ensures that your code is formatted before every commit, reducing the chance of missing any formatting issues.

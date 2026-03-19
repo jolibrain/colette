@@ -1,12 +1,15 @@
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 
 import torch
+import pytest
 
 from colette.apidata import InputConnectorObj, RAGObj
 from colette.backends.hf.rag.rag_img import ImageEmbeddingFunction
 
 
+@pytest.mark.smoke
 def test_embedding_integration_flow(monkeypatch):
     # Create a dummy processor that returns tensors compatible with a model call
     class DummyProcessor:
@@ -25,6 +28,7 @@ def test_embedding_integration_flow(monkeypatch):
                 return DummyInputs(
                     {
                         "input_ids": torch.tensor([[1, 2, 3]]),
+                        "attention_mask": torch.tensor([[1, 1, 1]]),
                         "pixel_values": torch.randn(1, 3, 64, 64),
                     }
                 )
@@ -43,11 +47,13 @@ def test_embedding_integration_flow(monkeypatch):
             # Emulate HF output with last_hidden_state and hidden_states
             return type("O", (), {"last_hidden_state": torch.randn(1, 1, 128), "hidden_states": [torch.randn(1, 1, 128)]})()
 
+    class DummyEmbedder:
+        def __init__(self, *args, **kwargs):
+            self.model = DummyModel()
+            self.processor = DummyProcessor()
+
     monkeypatch.setattr(
-        "colette.backends.hf.rag.rag_img.AutoProcessor.from_pretrained", lambda *a, **k: DummyProcessor()
-    )
-    monkeypatch.setattr(
-        "colette.backends.hf.rag.rag_img.AutoModel.from_pretrained", lambda *a, **k: DummyModel()
+        "colette.backends.hf.rag.rag_img.Qwen3VLEmbedder", DummyEmbedder
     )
 
     ad = InputConnectorObj(
