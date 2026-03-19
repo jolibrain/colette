@@ -5,7 +5,7 @@ SMOKE_TESTS ?= tests/test_base_ci.py::test_info tests/test_embedding_loader.py t
 COV_MIN ?= 35
 COV_TARGET ?= src/colette
 
-.PHONY: style lint format-check lint-check test-smoke test-coverage
+.PHONY: style lint format-check lint-check test-smoke test-coverage test-integration
 
 style:
 	$(RUFF) format .
@@ -24,3 +24,6 @@ test-smoke:
 
 test-coverage:
 	$(PYTEST) $(SMOKE_TESTS) -m smoke --cov=$(COV_TARGET) --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=$(COV_MIN) -q
+
+test-integration:
+	COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/ -v --tb=short

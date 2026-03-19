@@ -2,6 +2,7 @@ import os
 import sys
 import pytest
 
+
 # Ensure test imports that use top-level package names (e.g. `backends`) resolve
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SRC_ROOT = os.path.join(ROOT, "src")
@@ -42,3 +43,41 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "integration" in item.keywords:
             item.add_marker(skip_integration)
+
+
+def pytest_sessionstart(session):
+    """Session-level setup for integration testing.
+
+    If integration tests are enabled, log service availability info.
+    """
+    if os.getenv("COLETTE_RUN_INTEGRATION") != "1":
+        return
+
+    import socket
+
+    def _service_available(host, port, timeout=2):
+        """Check if a service is reachable."""
+        try:
+            socket.create_connection((host, port), timeout=timeout)
+            return True
+        except (socket.timeout, OSError):
+            return False
+
+    # Log service availability for integration session
+    services = {
+        "Ollama": ("127.0.0.1", 11434),
+        "vLLM": ("127.0.0.1", 8000),
+    }
+
+    session.config.pluginmanager.set_blocked("cacheprovider", False)
+    
+    print("\n" + "=" * 50)
+    print("Integration Test Session: Service Availability")
+    print("=" * 50)
+    for service_name, (host, port) in services.items():
+        if _service_available(host, port):
+            print(f"  ✓ {service_name} ({host}:{port})")
+        else:
+            print(f"  ⚠ {service_name} ({host}:{port}) - unavailable")
+    print("=" * 50 + "\n")
+
