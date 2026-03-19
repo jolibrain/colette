@@ -4,7 +4,6 @@ import time
 from pathlib import Path
 
 import pytest
-import pytest_asyncio
 from fastapi.testclient import TestClient
 from utils import pretty_print_response
 
@@ -72,7 +71,7 @@ json_predict_prompt = {
 }
 
 
-@pytest_asyncio.fixture(scope="module")
+@pytest.fixture(scope="module")
 def client():
     with TestClient(app) as client:
         yield client
@@ -91,7 +90,7 @@ def temp_dir(request):
     shutil.rmtree(temp_dir)
 
 
-@pytest.mark.asyncio
+@pytest.mark.smoke
 def test_info(client):
     response = client.get("/v1/info")
     assert response.status_code == 200

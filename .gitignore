@@ -1,5 +1,11 @@
 # CACHE FILES
 .cache/
+.locks/
+.coverage
+coverage.xml
+pytest-smoke.xml
+htmlcov/
+models--*/
 
 # ENV files
 .env
