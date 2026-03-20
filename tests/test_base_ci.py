@@ -258,6 +258,7 @@ def test_info(client):
 @pytest.mark.repository_path("test_llamacpp_hf_all-MiniLM-L6-v2")
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.e2e
 def test_llamacpp_hf(temp_dir, client):
     json_create_llamacpp_hf_all = {
         "app": {
@@ -331,6 +332,7 @@ def test_llamacpp_hf(temp_dir, client):
 @pytest.mark.repository_path("test_llamacpp_hf_e5")
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.e2e
 def test_llamacpp_hf_e5(temp_dir, client):
     json_create_llamacpp_e5 = {
         "app": {
@@ -401,6 +403,7 @@ def test_llamacpp_hf_e5(temp_dir, client):
 @pytest.mark.repository_path("test_vllm")
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.e2e
 def test_vllm(temp_dir, client):
     json_create_vllm = {
         "app": {

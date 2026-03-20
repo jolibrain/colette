@@ -4,8 +4,13 @@ RUFF ?= $(PYTHON) -m ruff
 SMOKE_TESTS ?= tests/test_base_ci.py::test_info tests/test_embedding_loader.py tests/test_embedding_integration.py tests/test_services_smoke.py tests/test_http_openwebui_smoke.py tests/test_cli_smoke.py tests/test_jsonapi_helpers_smoke.py tests/test_kvstore_smoke.py tests/test_logger_smoke.py tests/test_jsonapi_service_smoke.py tests/test_core_services_smoke.py
 COV_MIN ?= 35
 COV_TARGET ?= src/colette
+CI_ARTIFACTS_DIR ?= .ci-artifacts
+JUNIT_SMOKE ?= $(CI_ARTIFACTS_DIR)/junit-smoke.xml
+JUNIT_COVERAGE ?= $(CI_ARTIFACTS_DIR)/junit-coverage.xml
+JUNIT_INTEGRATION ?= $(CI_ARTIFACTS_DIR)/junit-integration.xml
+COVERAGE_XML ?= $(CI_ARTIFACTS_DIR)/coverage.xml
 
-.PHONY: style lint format-check lint-check test-smoke test-coverage test-integration
+.PHONY: style lint format-check lint-check test-smoke test-coverage test-integration test-e2e ci-smoke ci-coverage ci-integration
 
 style:
 	$(RUFF) format .
@@ -26,4 +31,19 @@ test-coverage:
 	$(PYTEST) $(SMOKE_TESTS) -m smoke --cov=$(COV_TARGET) --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=$(COV_MIN) -q
 
 test-integration:
-	COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/ -v --tb=short
+	COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/ -m "integration and not e2e" -v --tb=short
+
+test-e2e:
+	COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/ -m e2e -v --tb=short
+
+ci-smoke:
+	mkdir -p $(CI_ARTIFACTS_DIR)
+	$(PYTEST) $(SMOKE_TESTS) -m smoke -q --junitxml=$(JUNIT_SMOKE)
+
+ci-coverage:
+	mkdir -p $(CI_ARTIFACTS_DIR)
+	$(PYTEST) $(SMOKE_TESTS) -m smoke --cov=$(COV_TARGET) --cov-report=term-missing --cov-report=xml:$(COVERAGE_XML) --cov-fail-under=$(COV_MIN) -q --junitxml=$(JUNIT_COVERAGE)
+
+ci-integration:
+	mkdir -p $(CI_ARTIFACTS_DIR)
+	COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/ -m "integration and not e2e" -v --tb=short --junitxml=$(JUNIT_INTEGRATION)

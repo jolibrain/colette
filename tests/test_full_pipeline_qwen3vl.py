@@ -29,8 +29,6 @@ try:
 except Exception:
     psutil = None
 
-pytestmark = pytest.mark.integration
-
 from colette.jsonapi import JSONApi
 from colette.apidata import APIData
 

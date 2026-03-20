@@ -18,7 +18,7 @@ from colette.apidata import (
 )
 from colette.jsonapi import JSONApi
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.e2e]
 
 
 @pytest.mark.asyncio

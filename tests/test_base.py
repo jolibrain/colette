@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from colette.httpjsonapi import app  # noqa
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.e2e]
 
 # messages
 
