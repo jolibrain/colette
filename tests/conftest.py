@@ -2,6 +2,28 @@ import os
 import sys
 import pytest
 
+# ---------------------------------------------------------------------------
+# GPU selection: honour COLETTE_GPU_ID (set by Makefile via GPU_ID variable).
+# This must happen before any CUDA import so that CUDA_VISIBLE_DEVICES takes
+# effect when torch / colette backends are first loaded.
+# Override from the command line:  make test-e2e GPU_ID=0
+# ---------------------------------------------------------------------------
+_colette_gpu_id = os.getenv("COLETTE_GPU_ID")
+if _colette_gpu_id is not None and os.getenv("CUDA_VISIBLE_DEVICES") is None:
+    os.environ["CUDA_VISIBLE_DEVICES"] = _colette_gpu_id
+
+
+@pytest.fixture(scope="session")
+def gpu_id() -> int:
+    """Return the logical CUDA device index for the current test session.
+
+    With CUDA_VISIBLE_DEVICES set to a single physical GPU, the logical device
+    index is always 0 (the only visible device).  Use this fixture instead of
+    hard-coding 0 in tests so that the physical GPU can be changed via
+    ``make test-e2e GPU_ID=<n>``.
+    """
+    return 0
+
 
 # Ensure test imports that use top-level package names (e.g. `backends`) resolve
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -77,5 +99,7 @@ def pytest_sessionstart(session):
             print(f"  ✓ {service_name} ({host}:{port})")
         else:
             print(f"  ⚠ {service_name} ({host}:{port}) - unavailable")
+    _phys_gpu = os.getenv("CUDA_VISIBLE_DEVICES", "unset (all GPUs visible)")
+    print(f"  GPU: CUDA_VISIBLE_DEVICES={_phys_gpu} (override: make test-e2e GPU_ID=<n>)")
     print("=" * 50 + "\n")
 

@@ -5,6 +5,9 @@ SMOKE_TESTS ?= tests/test_base_ci.py::test_info tests/test_embedding_loader.py t
 COV_MIN ?= 35
 COV_TARGET ?= src/colette
 CI_ARTIFACTS_DIR ?= .ci-artifacts
+# GPU to use for e2e / integration tests (override with: make test-e2e GPU_ID=0)
+GPU_ID ?= 1
+GPU_ENV = CUDA_VISIBLE_DEVICES=$(GPU_ID) COLETTE_GPU_ID=$(GPU_ID)
 JUNIT_SMOKE ?= $(CI_ARTIFACTS_DIR)/junit-smoke.xml
 JUNIT_COVERAGE ?= $(CI_ARTIFACTS_DIR)/junit-coverage.xml
 JUNIT_INTEGRATION ?= $(CI_ARTIFACTS_DIR)/junit-integration.xml
@@ -34,7 +37,7 @@ test-integration:
 	COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/ -m "integration and not e2e" -v --tb=short
 
 test-e2e:
-	COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/ -m e2e -v --tb=short
+	$(GPU_ENV) COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/ -m e2e -v --tb=short
 
 ci-smoke:
 	mkdir -p $(CI_ARTIFACTS_DIR)
@@ -46,4 +49,8 @@ ci-coverage:
 
 ci-integration:
 	mkdir -p $(CI_ARTIFACTS_DIR)
-	COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/ -m "integration and not e2e" -v --tb=short --junitxml=$(JUNIT_INTEGRATION)
+	$(GPU_ENV) COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/ -m "integration and not e2e" -v --tb=short --junitxml=$(JUNIT_INTEGRATION)
+
+ci-e2e:
+	mkdir -p $(CI_ARTIFACTS_DIR)
+	$(GPU_ENV) COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/ -m e2e -v --tb=short --junitxml=$(CI_ARTIFACTS_DIR)/junit-e2e.xml
