@@ -57,17 +57,26 @@ def generic_upload(client, sname, ad_index, files):
     return response
 
 
+def ensure_service_deleted(client, sname):
+    """Best-effort cleanup to avoid cross-test leakage."""
+    try:
+        client.delete(f"/v1/app/{sname}")
+    except Exception:
+        pass
+
+
 @pytest.fixture
 def temp_dir(request):
     # Get the repository path from the test function's parameters
     temp_dir = Path(request.node.get_closest_marker("repository_path").args[0])
+    # Ensure a clean writable repository for every test run.
+    shutil.rmtree(temp_dir, ignore_errors=True)
     temp_dir.mkdir(parents=True, exist_ok=True)
     yield temp_dir
-    shutil.rmtree(temp_dir)
+    shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @pytest.mark.repository_path("test_create_without_upload")
-@pytest.mark.asyncio
 def test_create_without_upload(temp_dir, client):
     # Define the content of the JSON to send as part of the multipart
     ad_content = {
@@ -111,26 +120,27 @@ def test_create_without_upload(temp_dir, client):
 
     ad_index["parameters"]["input"]["data"].append(str(upload_data_dir))
 
-    # Post to the correct endpoint
-    response = client.put("/v1/app/test_create_without_upload", json=ad_content)
+    sname = "test_create_without_upload"
+    ensure_service_deleted(client, sname)
+    try:
+        # Post to the correct endpoint
+        response = client.put(f"/v1/app/{sname}", json=ad_content)
 
-    print(response.status_code)
-    pprint(response.json())
+        print(response.status_code)
+        pprint(response.json())
 
-    generic_index(client, "test_create_without_upload", ad_index)
-    # Assert the expected response
-    assert response.status_code == 200
+        generic_index(client, sname, ad_index)
+        # Assert the expected response
+        assert response.status_code == 200
 
-    # Check the number of crops
-    kv = ImageStorageFactory.create_storage("hdf5", temp_dir / "kvstore.db")
-    assert len(list(kv.iter_keys())) == 32
-
-    response = client.delete("/v1/app/test_create_without_upload")
-    assert response.status_code == 200
+        # Check the number of crops
+        kv = ImageStorageFactory.create_storage("hdf5", temp_dir / "kvstore.db")
+        assert len(list(kv.iter_keys())) == 32
+    finally:
+        ensure_service_deleted(client, sname)
 
 
 @pytest.mark.repository_path("test_create_with_upload")
-@pytest.mark.asyncio
 def test_create_with_upload(temp_dir, client):
     # Define the content of the JSON to send as part of the multipart
     ad_content = {
@@ -184,39 +194,42 @@ def test_create_with_upload(temp_dir, client):
     assert pdf_file_path.exists(), f"PDF file does not exist: {pdf_file_path}"
     assert jpg_file_path.exists(), f"JPEG file does not exist: {jpg_file_path}"
 
-    response = client.put("/v1/app/test_create_with_upload", json=ad_content)
-    print(response.status_code)
-    pprint(response.json())
+    sname = "test_create_with_upload"
+    ensure_service_deleted(client, sname)
+    try:
+        response = client.put(f"/v1/app/{sname}", json=ad_content)
+        print(response.status_code)
+        pprint(response.json())
 
-    # Assert the expected response
-    assert response.status_code == 200
+        # Assert the expected response
+        assert response.status_code == 200
 
-    generic_index(client, "test_create_with_upload", ad_index)
+        generic_index(client, sname, ad_index)
 
-    # Open the files in binary mode using 'with' statement
-    with open(pdf_file_path, "rb") as pdf_file, open(jpg_file_path, "rb") as jpg_file:
-        # Prepare the files to upload
-        files = [
-            ("files", ("DeepSeek_R1.pdf", pdf_file, "application/pdf")),
-            ("files", ("RINFANR5L16B2040.jpg-016.jpg", jpg_file, "image/jpeg")),
-        ]
-        del ad_index["parameters"]["input"]["data"]
+        # Open the files in binary mode using 'with' statement
+        with open(pdf_file_path, "rb") as pdf_file, open(jpg_file_path, "rb") as jpg_file:
+            # Prepare the files to upload
+            files = [
+                ("files", ("DeepSeek_R1.pdf", pdf_file, "application/pdf")),
+                ("files", ("RINFANR5L16B2040.jpg-016.jpg", jpg_file, "image/jpeg")),
+            ]
+            del ad_index["parameters"]["input"]["data"]
 
-        # Post to the correct endpoint
-        response = generic_upload(client, "test_create_with_upload", ad_index, files)
-        # response = client.put("/v1/upload/test_create_with_upload", json=ad_index, files=files)
+            # Post to the correct endpoint
+            response = generic_upload(client, sname, ad_index, files)
 
-    print(response.status_code)
-    print(response.json())
+        print(response.status_code)
+        print(response.json())
 
-    # Assert the expected response
-    assert response.status_code == 200
+        # Assert the expected response
+        assert response.status_code == 200
 
-    # check that tempdir / uploads / files exist
-    assert (temp_dir / "uploads").exists(), "Upload directory does not exist"
+        # check that tempdir / uploads / files exist
+        assert (temp_dir / "uploads").exists(), "Upload directory does not exist"
+        assert count_files_recursively(temp_dir / "uploads") == 2
 
-    assert count_files_recursively(temp_dir / "uploads") == 2
-
-    # Check the number of crops
-    kv = ImageStorageFactory.create_storage("hdf5", temp_dir / "kvstore.db")
-    assert len(list(kv.iter_keys())) == 32
+        # Check the number of crops
+        kv = ImageStorageFactory.create_storage("hdf5", temp_dir / "kvstore.db")
+        assert len(list(kv.iter_keys())) == 32
+    finally:
+        ensure_service_deleted(client, sname)
