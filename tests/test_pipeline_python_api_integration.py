@@ -46,12 +46,6 @@ def pipeline_context(tmp_path):
         "inference": {"lib": "huggingface"},
     }
 
-    rag = create_config["parameters"]["input"].setdefault("rag", {})
-    rag["embedding_model"] = os.getenv(
-        "COLETTE_PIPELINE_EMBEDDING_MODEL",
-        "Qwen/Qwen3-VL-Embedding-2B",
-    )
-
     index_config["parameters"]["input"]["data"] = [str(root / "tests" / "data_pdf1")]
     index_config["parameters"]["input"]["rag"]["reindex"] = True
     index_config["parameters"]["input"]["rag"]["index_protection"] = False
@@ -63,12 +57,24 @@ def pipeline_context(tmp_path):
     }
 
 
-def test_pipeline_python_api_create_index_predict(pipeline_context):
+@pytest.mark.parametrize(
+    "embedding_model",
+    [
+        "Qwen/Qwen3-VL-Embedding-2B",
+        "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+    ],
+)
+def test_pipeline_python_api_create_index_predict(pipeline_context, embedding_model):
     api = JSONApi()
-    app_name = pipeline_context["app_name"]
+    create_config = pipeline_context["create"]
+    rag = create_config["parameters"]["input"].setdefault("rag", {})
+    rag["embedding_model"] = embedding_model
+
+    embedding_suffix = embedding_model.split("/")[-1].lower().replace("-", "_")
+    app_name = f"{pipeline_context['app_name']}_{embedding_suffix[:20]}"
 
     try:
-        create_resp = api.service_create(app_name, APIData(**pipeline_context["create"]))
+        create_resp = api.service_create(app_name, APIData(**create_config))
         assert create_resp.service_name == app_name
 
         info_resp = api.service_info()
