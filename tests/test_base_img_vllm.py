@@ -95,94 +95,10 @@ def test_vllm_single_image(temp_dir, client):
         assert response.status_code == 200
 
 
-# # build the service with hf backend with a single image, vllm version, qwen25
-# @pytest.mark.repository_path("test_vllm_q25")
-# @pytest.mark.asyncio
-# def test_vllm_single_image_25(temp_dir, client):
-#     json_create_img_hf = {
-#         "app": {
-#             "repository": str(temp_dir),
-#             "models_repository": models_repo,
-#             "verbose": "debug",
-#         },
-#         "parameters": {
-#             "input": {
-#                 "lib": "hf",
-#                 "rag": {
-#                     "indexdb_lib": "chromadb",
-#                     "embedding_lib": "huggingface",
-#                     "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
-#                     "top_k": 1,
-#                     "shared_model": True,
-#                     "ragm": {
-#                         "layout_detection": True,
-#                         "index_overview": False,
-#                         "image_width": 512,
-#                         "image_height": 512,
-#                     },
-#                 },
-#                 "template": {
-#                     "template_prompt": "Tu es un assistant de réponse à des questions."
-#                     " Question: {question} Réponse: ",
-#                     "template_prompt_variables": ["question"],
-#                 },
-#             },
-#             "llm": {
-#                 "source": "Qwen/Qwen2.5-VL-3B-Instruct",
-#                 "gpu_ids": [0],
-#                 "image_width": 320,
-#                 "image_height": 160,
-#                 "inference": {"lib": "vllm"},
-#                 "shared": True,
-#                 "vllm_memory_utilization": 0.4,
-#                 "vllm_quantization": "bitsandbytes",
-#                 "context_size": 256,
-#             },
-#         },
-#     }
-#     json_index_img_hf = {
-#         "parameters": {
-#             "input": {
-#                 "preprocessing": {"files": ["all"]},
-#                 "data": ["tests/data_img1"],
-#                 "rag": {
-#                     "reindex": True,
-#                     "index_protection": False,
-#                     "gpu_id": 0,
-#                 },
-#             },
-#         }
-#     }
-#     try:
-#         response = client.put("/v1/app/test_vllm_single_image_25", json=json_create_img_hf)
-#         pretty_print_response(response.json())
-#         assert response.status_code == 200
-#         assert response.json()["service_name"] == "test_vllm_single_image_25"
-
-# #         response = client.get("/v1/info")
-# #         pretty_print_response(response.json())
-# #         assert "test_vllm_single_image_25" in response.json()["info"]["services"]
-
-#         generic_index(client, "test_vllm_single_image_25", json_index_img_hf)
-
-#         json_predict = {"parameters": {"input": {"message": "Quel est le titre du document ?"}}}
-
-#         response = client.post("/v1/predict/test_vllm_single_image_25", json=json_predict)
-#         pretty_print_response(response.json())
-#         assert response.json()["sources"]["context"][0]["distance"] > 0.0
-#         # assert "Rapport" in response.json()["output"]
-
-# #         # json_predict2 = {
-# #         #     "parameters": {"input": {"message": "Quels sont les auteurs ?"}}
-# #         # }
-# #         # response = client.post(
-# #         #     "/v1/predict/test_vllm_single_image_25", json=json_predict2
-# #         # )
-# #         # pretty_print_response(response.json())
-# #         # # assert "LOPEZ" in response.json()["output"]
-# #     finally:
-# #         # delete the service
-# #         response = client.delete("/v1/app/test_vllm_single_image_25")
-# #         assert response.status_code == 200
+@pytest.mark.repository_path("test_vllm_q25")
+@pytest.mark.asyncio
+@pytest.mark.skip(reason="Blocked legacy scenario: Qwen2.5-VL vLLM path is not stable enough for maintained integration coverage.")
+def test_vllm_single_image_25(temp_dir, client):
+    pytest.skip("Blocked legacy scenario: Qwen2.5-VL vLLM path is not stable enough for maintained integration coverage.")
 
 
