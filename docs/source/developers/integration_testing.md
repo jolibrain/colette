@@ -241,4 +241,4 @@ lane (`make test-integration-pipeline`), which does not exercise vLLM directly.
 
 ---
 
-For more details, see [CONTRIBUTING.md](../CONTRIBUTING.md).
+For more details, see [CONTRIBUTING.md](../../../CONTRIBUTING.md).

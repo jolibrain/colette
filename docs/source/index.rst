@@ -20,6 +20,7 @@
 
    developers/setup.md
    developers/deployment.md
+   developers/integration_testing.md
 
 .. toctree::
    :maxdepth: 1
