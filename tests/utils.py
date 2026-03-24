@@ -1,3 +1,4 @@
+import socket
 import shutil
 import time
 from copy import deepcopy
@@ -63,7 +64,7 @@ def wait_for_index_status(
     client,
     sname: str,
     terminal_tokens=("finished",),
-    in_progress_tokens=("queued", "running"),
+    in_progress_tokens=("queued", "running", "started", "indexing"),
     poll_interval_s: float = 0.5,
     timeout_s: float = 180,
 ):
@@ -85,3 +86,31 @@ def wait_for_index_status(
         assert response.status_code == 200
         message = (response.json().get("message") or "").lower()
     return response
+
+
+def wait_for_tcp_service(
+    host: str,
+    port: int,
+    timeout_s: float = 180,
+    poll_interval_s: float = 1.0,
+    process=None,
+):
+    """Wait until a TCP service is reachable or fail on timeout/process exit."""
+    deadline = time.time() + timeout_s
+    last_error = "unknown"
+
+    while time.time() < deadline:
+        if process is not None and process.poll() is not None:
+            raise AssertionError(
+                f"Process exited before service became ready on {host}:{port}. Exit code: {process.returncode}"
+            )
+        try:
+            with socket.create_connection((host, port), timeout=2):
+                return True
+        except OSError as exc:
+            last_error = str(exc)
+            time.sleep(poll_interval_s)
+
+    raise AssertionError(
+        f"Timed out waiting for TCP service on {host}:{port}. Last error: {last_error}"
+    )

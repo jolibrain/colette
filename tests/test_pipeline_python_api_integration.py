@@ -23,17 +23,22 @@ def _is_service_available(host: str, port: int, timeout: int = 2) -> bool:
         return False
 
 
-def _poll_index_finished(api: JSONApi, app_name: str, timeout_s: int = 180) -> str:
+def _poll_index_finished(
+    api: JSONApi,
+    app_name: str,
+    timeout_s: int = 180,
+    poll_interval_s: float = 0.5,
+) -> str:
     """Poll async index status endpoint until finished/error/timeout."""
-    deadline = time.time() + timeout_s
+    deadline = time.monotonic() + timeout_s
     last_message = ""
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
         status_resp = asyncio.run(api.service_index_status(app_name))
         message = (status_resp.message or "").lower()
         last_message = message
         if "finished" in message or "error" in message:
             return message
-        time.sleep(1)
+        time.sleep(poll_interval_s)
     pytest.fail(f"Indexing did not reach terminal state within {timeout_s}s. Last status: {last_message}")
 
 
