@@ -1,15 +1,6 @@
 import pytest
-from fastapi.testclient import TestClient
-
-from colette.httpjsonapi import app
 
 pytestmark = [pytest.mark.integration, pytest.mark.e2e]
-
-
-@pytest.fixture(scope="module")
-def client():
-    with TestClient(app) as client:
-        yield client
 
 
 @pytest.mark.asyncio

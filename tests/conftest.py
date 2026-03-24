@@ -1,5 +1,8 @@
 import os
+import shutil
 import sys
+from pathlib import Path
+
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -23,6 +26,30 @@ def gpu_id() -> int:
     ``make test-e2e GPU_ID=<n>``.
     """
     return 0
+
+
+@pytest.fixture(scope="module")
+def client():
+    """Shared FastAPI test client for integration-style tests."""
+    from fastapi.testclient import TestClient
+    from colette.httpjsonapi import app
+
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def temp_dir(request):
+    """Provide a clean repository path for tests marked with `repository_path`."""
+    marker = request.node.get_closest_marker("repository_path")
+    if marker is None or not marker.args:
+        pytest.fail("temp_dir fixture requires @pytest.mark.repository_path(...)")
+
+    repo_dir = Path(marker.args[0])
+    shutil.rmtree(repo_dir, ignore_errors=True)
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    yield repo_dir
+    shutil.rmtree(repo_dir, ignore_errors=True)
 
 
 # Ensure test imports that use top-level package names (e.g. `backends`) resolve
