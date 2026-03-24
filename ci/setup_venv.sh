@@ -27,11 +27,19 @@ echo "=== CI venv setup ==="
 echo "    workspace : ${WORKSPACE}"
 echo "    venv cache: ${VENV_CACHE}"
 
-if [ ! -x "${VENV_CACHE}/bin/python" ]; then
+needs_full_setup=0
+if [ ! -x "${VENV_CACHE}/bin/python" ] || [ ! -x "${VENV_CACHE}/bin/pip" ]; then
+    needs_full_setup=1
+fi
+
+if [ "${needs_full_setup}" -eq 1 ]; then
     echo ""
-    echo ">>> First-time setup: building full venv (this will take several minutes)"
+    echo ">>> Building full venv (first run or broken cache detected)"
     echo ">>> Requires CUDA drivers and nvcc/nvidia-smi on PATH"
     echo ""
+
+    # Clean corrupted/incomplete cache before recreating.
+    rm -rf "${VENV_CACHE}"
 
     # Detect CUDA version the same way create_venv_colette.sh does
     if command -v nvcc &>/dev/null; then

@@ -175,15 +175,17 @@ pipeline {
   post {
     always {
       // cleanWs cleans the workspace but NOT the venv cache at WORKSPACE/../venv_colette_cache
-      cleanWs(
-        cleanWhenAborted: true,
-        cleanWhenFailure: true,
-        cleanWhenNotBuilt: true,
-        cleanWhenSuccess: true,
-        cleanWhenUnstable: true,
-        cleanupMatrixParent: true,
-        deleteDirs: true,
-      )
+      node('n5') {
+        cleanWs(
+          cleanWhenAborted: true,
+          cleanWhenFailure: true,
+          cleanWhenNotBuilt: true,
+          cleanWhenSuccess: true,
+          cleanWhenUnstable: true,
+          cleanupMatrixParent: true,
+          deleteDirs: true,
+        )
+      }
     }
   }
 }
