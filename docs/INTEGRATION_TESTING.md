@@ -86,12 +86,29 @@ COLETTE_RUN_INTEGRATION=1 pytest tests/ -v
 # Specific test file
 COLETTE_RUN_INTEGRATION=1 pytest tests/test_base.py -v
 
-# With GPU-only tests
-COLETTE_RUN_INTEGRATION=1 pytest tests/ -m gpu -v
+# Run the stable pipeline integration lane only (recommended first)
+make test-integration-pipeline
+# with a custom GPU:
+make test-integration-pipeline GPU_ID=0
+
+# Full e2e suite (GPU required; see Known Issues for vLLM environment notes)
+make test-e2e
 
 # With coverage
 COLETTE_RUN_INTEGRATION=1 pytest tests/ --cov=src/colette --cov-report=html
 ```
+
+### Pipeline LLM Model Override
+
+The pipeline integration tests use `Qwen/Qwen2-VL-2B-Instruct` as the default
+LLM backend but support a runtime override:
+
+```bash
+COLETTE_PIPELINE_HF_MODEL=Qwen/Qwen3-VL-8B-Instruct make test-integration-pipeline
+```
+
+Set this when the default model is not present in `models/` or when testing against
+a different checkpoint.
 
 ## Test Markers
 
@@ -99,8 +116,7 @@ Tests are marked to help organize runs:
 
 - `@pytest.mark.smoke` — Fast, no external deps (always runs)
 - `@pytest.mark.integration` — Requires external services (skip by default, enable with `COLETTE_RUN_INTEGRATION=1`)
-- `@pytest.mark.gpu` — Requires GPU (subset of integration tests)
-- `@pytest.mark.slow` — Slow tests (various categories)
+- `@pytest.mark.e2e` — Broad end-to-end tests with heavier runtime requirements (subset of integration)
 
 Examples:
 ```bash
@@ -110,11 +126,11 @@ pytest tests/ -m smoke
 # Integration only
 COLETTE_RUN_INTEGRATION=1 pytest tests/ -m integration
 
-# GPU tests only
-COLETTE_RUN_INTEGRATION=1 pytest tests/ -m gpu
+# Pipeline integration only (stable, fastest)
+make test-integration-pipeline
 
-# Smoke + GPU (exclude integration non-GPU)
-pytest tests/ -m "smoke or gpu"
+# e2e only
+COLETTE_RUN_INTEGRATION=1 pytest tests/ -m e2e
 ```
 
 ## Common Service Setup
@@ -181,7 +197,16 @@ In CI/CD pipelines:
    ./scripts/preflight_integration.sh --strict || echo "⚠ Services unavailable"
    ```
 
-3. **Integration tests** (optional, requires preflight pass):
+3. **Pipeline integration** (recommended stable lane, requires GPU + services):
+    ```bash
+    if [ $? -eq 0 ]; then
+       make ci-pipeline-integration   # outputs .ci-artifacts/junit-pipeline-integration.xml
+    else
+       echo "Skipping pipeline integration (preflight failed)"
+    fi
+    ```
+
+4. **Full integration / e2e** (optional, broader coverage):
    ```bash
    if [ $? -eq 0 ]; then
      make test-integration
@@ -190,14 +215,29 @@ In CI/CD pipelines:
    fi
    ```
 
+## Known Issues
+
+### vLLM e2e tests: "Cannot re-initialize CUDA in forked subprocess"
+
+Tests in `test_base.py` and `test_base_ci.py` marked `@pytest.mark.e2e` that
+exercise vLLM may fail with this error in certain CUDA environments when pytest
+forks worker processes. This is a runtime limitation, not a code bug. These
+tests are gated behind `COLETTE_RUN_INTEGRATION=1` and are excluded from the
+default smoke and pipeline integration lanes.
+
+**Workaround:** Run affected tests in isolation or use the pipeline integration
+lane (`make test-integration-pipeline`), which does not exercise vLLM directly.
+
 ## Summary
 
 | Task | Command | Requires |
 |------|---------|----------|
 | Quick test & coverage | `make test-smoke && make test-coverage` | None |
-| Full integration | `make test-integration` | Ollama (optional: vLLM, GPU) |
+| Pipeline integration | `make test-integration-pipeline` | GPU + Ollama + local models |
+| Full integration | `make test-integration` | Ollama + GPU |
+| Full e2e suite | `make test-e2e` | GPU + vLLM (see Known Issues) |
+| CI pipeline artifacts | `make ci-pipeline-integration` | GPU + Ollama + local models |
 | Check services | `./scripts/preflight_integration.sh` | None |
-| Run with GPU | `COLETTE_RUN_INTEGRATION=1 pytest tests/ -m gpu` | NVIDIA GPU + CUDA |
 
 ---
 

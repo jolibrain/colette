@@ -91,7 +91,6 @@ def test_pipeline_python_api_create_index_predict(pipeline_context, embedding_mo
 
     # Make data-path deterministic for each app instance.
     index_config = json.loads(json.dumps(pipeline_context["index"]))
-    app_repo = Path(create_config["app"]["repository"])
     index_config["parameters"]["input"]["data"] = [str(Path(__file__).resolve().parents[1] / "tests" / "data_pdf1")]
 
     try:
