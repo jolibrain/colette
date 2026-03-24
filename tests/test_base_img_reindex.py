@@ -1,11 +1,10 @@
 import os
-import time
 from pathlib import Path
 
 import pytest
 from chromadb import PersistentClient
 from chromadb.config import Settings
-from utils import pretty_print_response
+from utils import pretty_print_response, wait_for_index_status
 
 pytestmark = [pytest.mark.integration, pytest.mark.e2e]
 
@@ -90,11 +89,8 @@ def test_create_app_and_index(temp_dir, client):
         pretty_print_response(response.json())
         assert response.status_code == 200
 
-        while "finished" not in response.json()["message"]:
-            time.sleep(0.5)
-            response = client.get("/v1/index/test_create_app_and_index/status")
-            pretty_print_response(response.json())
-            assert response.status_code == 200
+        response = wait_for_index_status(client, "test_create_app_and_index")
+        pretty_print_response(response.json())
 
         response = client.get("/v1/info")
         pretty_print_response(response.json())
@@ -114,15 +110,8 @@ def test_create_app_and_index(temp_dir, client):
         pretty_print_response(response.json())
         assert response.status_code == 200, "App could not be indexed"
 
-        time.sleep(2)
-        response = client.get("/v1/index/test_create_app_and_index/status")
+        response = wait_for_index_status(client, "test_create_app_and_index", poll_interval_s=2)
         pretty_print_response(response.json())
-        assert response.status_code == 200
-        while "finished" not in response.json()["message"]:
-            time.sleep(2)
-            response = client.get("/v1/index/test_create_app_and_index/status")
-            pretty_print_response(response.json())
-            assert response.status_code == 200
 
         persist_dir = app_definition["app"]["repository"] + os.sep + "mm_index"
         cc = PersistentClient(path=persist_dir, settings=Settings(anonymized_telemetry=False))
@@ -210,11 +199,8 @@ def test_create_app_twice(temp_dir, client):
         pretty_print_response(response.json())
         assert response.status_code == 200
 
-        while "finished" not in response.json()["message"]:
-            time.sleep(0.5)
-            response = client.get("/v1/index/test_create_app_twice/status")
-            pretty_print_response(response.json())
-            assert response.status_code == 200
+        response = wait_for_index_status(client, "test_create_app_twice")
+        pretty_print_response(response.json())
 
         persist_dir = app_definition["app"]["repository"] + os.sep + "mm_index"
         cc = PersistentClient(path=persist_dir, settings=Settings(anonymized_telemetry=False))
@@ -240,11 +226,8 @@ def test_create_app_twice(temp_dir, client):
         pretty_print_response(response.json())
         assert response.status_code == 200
 
-        while "finished" not in response.json()["message"]:
-            time.sleep(0.5)
-            response = client.get("/v1/index/test_create_app_twice_true_true/status")
-            pretty_print_response(response.json())
-            assert response.status_code == 200
+        response = wait_for_index_status(client, "test_create_app_twice_true_true")
+        pretty_print_response(response.json())
 
         persist_dir = app_definition["app"]["repository"] + os.sep + "mm_index"
         cc = PersistentClient(path=persist_dir, settings=Settings(anonymized_telemetry=False))
@@ -398,11 +381,8 @@ def test_create_app_and_multiple_index(temp_dir, client):
         response = client.put("/v1/index/test_create_app_and_multiple_index", json=index_definition)
         pretty_print_response(response.json())
         assert response.status_code == 200
-        while "finished" not in response.json()["message"]:
-            time.sleep(0.5)
-            response = client.get("/v1/index/test_create_app_and_multiple_index/status")
-            pretty_print_response(response.json())
-            assert response.status_code == 200
+        response = wait_for_index_status(client, "test_create_app_and_multiple_index")
+        pretty_print_response(response.json())
 
         persist_dir = app_definition["app"]["repository"] + os.sep + "mm_index"
         cc = PersistentClient(path=persist_dir, settings=Settings(anonymized_telemetry=False))
@@ -420,11 +400,8 @@ def test_create_app_and_multiple_index(temp_dir, client):
 
         pretty_print_response(response.json())
         assert response.status_code == 200
-        while "finished" not in response.json()["message"]:
-            time.sleep(0.5)
-            response = client.get("/v1/index/test_create_app_and_multiple_index/status")
-            pretty_print_response(response.json())
-            assert response.status_code == 200
+        response = wait_for_index_status(client, "test_create_app_and_multiple_index")
+        pretty_print_response(response.json())
 
         persist_dir = app_definition["app"]["repository"] + os.sep + "mm_index"
         cc = PersistentClient(path=persist_dir, settings=Settings(anonymized_telemetry=False))
@@ -438,11 +415,8 @@ def test_create_app_and_multiple_index(temp_dir, client):
         pretty_print_response(response.json())
         assert response.status_code == 200, "App could not be indexed"
 
-        while "finished" not in response.json()["message"]:
-            time.sleep(0.5)
-            response = client.get("/v1/index/test_create_app_and_multiple_index/status")
-            pretty_print_response(response.json())
-            assert response.status_code == 200
+        response = wait_for_index_status(client, "test_create_app_and_multiple_index")
+        pretty_print_response(response.json())
 
         persist_dir = app_definition["app"]["repository"] + os.sep + "mm_index"
         cc = PersistentClient(path=persist_dir, settings=Settings(anonymized_telemetry=False))

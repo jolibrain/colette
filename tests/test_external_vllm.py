@@ -1,10 +1,9 @@
 import os
 import signal
 import subprocess
-import time
 
 import pytest
-from utils import pretty_print_response, wait_for_index_status
+from utils import pretty_print_response, wait_for_index_status, wait_for_tcp_service
 
 pytestmark = [pytest.mark.integration, pytest.mark.e2e]
 
@@ -87,6 +86,7 @@ def test_external_vllm_single_image(temp_dir, client):
         }
     }
 
+    pro = None
     try:
         # spawn vllm server for test
         pro = subprocess.Popen(
@@ -107,7 +107,7 @@ def test_external_vllm_single_image(temp_dir, client):
             preexec_fn=os.setsid,
         )
 
-        time.sleep(180)
+        wait_for_tcp_service("127.0.0.1", 8000, timeout_s=240, poll_interval_s=1.0, process=pro)
         # colette
         response = client.put("/v1/app/test_external_vllm_single_image", json=json_create_img_hf)
         pretty_print_response(response.json())
@@ -131,4 +131,5 @@ def test_external_vllm_single_image(temp_dir, client):
         # delete the service
         response = client.delete("/v1/app/test_external_vllm_single_image")
         assert response.status_code == 200
-        os.killpg(os.getpgid(pro.pid), signal.SIGKILL)
+        if pro is not None and pro.poll() is None:
+            os.killpg(os.getpgid(pro.pid), signal.SIGKILL)
