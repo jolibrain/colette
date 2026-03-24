@@ -75,7 +75,24 @@ if [ "${needs_full_setup}" -eq 1 ]; then
     echo ">>> Full venv created."
 else
     echo "    Cached venv found — updating editable install only"
-    "${VENV_CACHE}/bin/pip" install --quiet -e ".[dev,trag]" --no-deps
+
+    # Validate that key test tooling exists in the cached environment.
+    # Older caches may miss dev dependencies (e.g. pytest), which makes CI fail
+    # even though the venv itself exists.
+    missing_dev_deps=0
+    for module in pytest pytest_asyncio pytest_cov; do
+        if ! "${VENV_CACHE}/bin/python" -c "import ${module}" >/dev/null 2>&1; then
+            missing_dev_deps=1
+            break
+        fi
+    done
+
+    if [ "${missing_dev_deps}" -eq 1 ]; then
+        echo "    Dev test dependencies missing in cache; repairing with full extras install"
+        "${VENV_CACHE}/bin/pip" install -e ".[dev,trag]"
+    else
+        "${VENV_CACHE}/bin/pip" install --quiet -e ".[dev,trag]" --no-deps
+    fi
 fi
 
 # Symlink into workspace so the Makefile autodiscovers it
