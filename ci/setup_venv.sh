@@ -88,8 +88,11 @@ else
     done
 
     if [ "${missing_dev_deps}" -eq 1 ]; then
-        echo "    Dev test dependencies missing in cache; repairing with full extras install"
-        "${VENV_CACHE}/bin/pip" install -e ".[dev,trag]"
+        echo "    Dev test dependencies missing in cache; installing minimal pytest tooling"
+        "${VENV_CACHE}/bin/pip" install pytest==8.4.2 pytest-cov==7.0.0 pytest-asyncio==1.2.0
+
+        # Ensure editable package metadata remains synced without pulling heavy deps.
+        "${VENV_CACHE}/bin/pip" install --quiet -e . --no-deps
     else
         "${VENV_CACHE}/bin/pip" install --quiet -e ".[dev,trag]" --no-deps
     fi
