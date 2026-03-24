@@ -1,0 +1,48 @@
+name: PR Optional Integration
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      gpu_id:
+        description: "GPU device id to expose"
+        required: false
+        default: "1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-integration-optional-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration-stable:
+    name: integration-stable
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-integration'))
+    runs-on: [self-hosted, linux, gpu]
+    timeout-minutes: 90
+    env:
+      GPU_ID: ${{ github.event.inputs.gpu_id || '1' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run stable integration subset
+        run: make ci-integration-stable GPU_ID=${GPU_ID}
+
+      - name: Upload stable integration JUnit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-integration-stable
+          path: .ci-artifacts/junit-integration-stable.xml
+          if-no-files-found: ignore

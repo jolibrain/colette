@@ -1,5 +1,21 @@
 ## Contributing Guidelines
 
+### CI Matrix And Merge Rules
+
+We split CI into fast required checks and deeper optional coverage:
+
+- Required for PR merge: `PR Smoke / smoke`
+- Optional protected PR check: `PR Optional Integration / integration-stable` (triggered with PR label `run-integration` or manual dispatch)
+- Nightly/manual deep validation: `Nightly GPU Matrix` (`ci-integration`, `ci-pipeline-integration`, `ci-e2e`)
+
+Recommended branch protection setup:
+
+- Require status check: `PR Smoke / smoke`
+- Do not require `PR Optional Integration / integration-stable`
+- Do not require `Nightly GPU Matrix` jobs
+
+This gives fast PR feedback while keeping realistic deeper GPU validation available.
+
 ### Code Formatting
 
 We use [ruff](https://github.com/charliermarsh/ruff) for linting and formatting our code. Before committing any changes, please ensure that your code is formatted correctly by running the appropriate commands.

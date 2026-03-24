@@ -1,0 +1,53 @@
+name: Nightly GPU Matrix
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+    inputs:
+      gpu_id:
+        description: "GPU device id to expose"
+        required: false
+        default: "1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-gpu-matrix-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  full-matrix:
+    name: ${{ matrix.target }}
+    runs-on: [self-hosted, linux, gpu]
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - ci-integration
+          - ci-pipeline-integration
+          - ci-e2e
+    env:
+      GPU_ID: ${{ github.event.inputs.gpu_id || '1' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run ${{ matrix.target }}
+        run: make ${{ matrix.target }} GPU_ID=${GPU_ID}
+
+      - name: Upload JUnit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-${{ matrix.target }}
+          path: .ci-artifacts/*.xml
+          if-no-files-found: ignore

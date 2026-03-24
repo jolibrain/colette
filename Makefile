@@ -2,6 +2,7 @@ PYTHON ?= $(if $(wildcard venv_colette/bin/python),venv_colette/bin/python,pytho
 PYTEST ?= $(PYTHON) -m pytest
 RUFF ?= $(PYTHON) -m ruff
 SMOKE_TESTS ?= tests/test_base_ci.py::test_info tests/test_embedding_loader.py tests/test_embedding_integration.py tests/test_services_smoke.py tests/test_http_openwebui_smoke.py tests/test_cli_smoke.py tests/test_jsonapi_helpers_smoke.py tests/test_kvstore_smoke.py tests/test_logger_smoke.py tests/test_jsonapi_service_smoke.py tests/test_core_services_smoke.py
+INTEGRATION_STABLE_TESTS ?= tests/test_upload.py tests/test_multiple_creation.py tests/test_logging_payload.py tests/test_base_ci.py::test_llamacpp_hf
 EVALUATION_TESTS ?= tests_optional/evaluation_contract/test_configs_contract.py tests_optional/evaluation_contract/test_hf_single_contract.py
 COV_MIN ?= 35
 COV_TARGET ?= src/colette
@@ -12,10 +13,11 @@ GPU_ENV = CUDA_VISIBLE_DEVICES=$(GPU_ID) COLETTE_GPU_ID=$(GPU_ID)
 JUNIT_SMOKE ?= $(CI_ARTIFACTS_DIR)/junit-smoke.xml
 JUNIT_COVERAGE ?= $(CI_ARTIFACTS_DIR)/junit-coverage.xml
 JUNIT_INTEGRATION ?= $(CI_ARTIFACTS_DIR)/junit-integration.xml
+JUNIT_INTEGRATION_STABLE ?= $(CI_ARTIFACTS_DIR)/junit-integration-stable.xml
 JUNIT_PIPELINE_INTEGRATION ?= $(CI_ARTIFACTS_DIR)/junit-pipeline-integration.xml
 COVERAGE_XML ?= $(CI_ARTIFACTS_DIR)/coverage.xml
 
-.PHONY: style lint format-check lint-check test-smoke test-coverage test-integration test-integration-pipeline test-e2e test-evaluation ci-smoke ci-coverage ci-integration ci-pipeline-integration
+.PHONY: style lint format-check lint-check test-smoke test-coverage test-integration test-integration-stable test-integration-pipeline test-e2e test-evaluation ci-smoke ci-coverage ci-integration ci-integration-stable ci-pipeline-integration
 
 style:
 	$(RUFF) format .
@@ -38,6 +40,9 @@ test-coverage:
 test-integration:
 	COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/ -m "integration and not e2e" -v --tb=short
 
+test-integration-stable:
+	$(GPU_ENV) COLETTE_RUN_INTEGRATION=1 $(PYTEST) $(INTEGRATION_STABLE_TESTS) -m integration -v --tb=short
+
 test-integration-pipeline:
 	$(GPU_ENV) COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/test_pipeline_python_api_integration.py -m integration -v --tb=short
 
@@ -58,6 +63,10 @@ ci-coverage:
 ci-integration:
 	mkdir -p $(CI_ARTIFACTS_DIR)
 	$(GPU_ENV) COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/ -m "integration and not e2e" -v --tb=short --junitxml=$(JUNIT_INTEGRATION)
+
+ci-integration-stable:
+	mkdir -p $(CI_ARTIFACTS_DIR)
+	$(GPU_ENV) COLETTE_RUN_INTEGRATION=1 $(PYTEST) $(INTEGRATION_STABLE_TESTS) -m integration -v --tb=short --junitxml=$(JUNIT_INTEGRATION_STABLE)
 
 ci-pipeline-integration:
 	mkdir -p $(CI_ARTIFACTS_DIR)
