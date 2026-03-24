@@ -23,7 +23,7 @@ pipeline {
   stages {
     stage('Setup') {
       agent {
-        node { label 'linux && gpu' }
+        node { label 'linux && gpu && n5' }
       }
       steps {
         // Creates the persistent venv on first run (~5-10 min); reuses it on subsequent runs.
@@ -33,7 +33,7 @@ pipeline {
 
     stage('PR Smoke') {
       agent {
-        node { label 'linux && gpu' }
+        node { label 'linux && gpu && n5' }
       }
       steps {
         sh '''
@@ -54,7 +54,7 @@ pipeline {
         expression { return params.RUN_INTEGRATION_STABLE }
       }
       agent {
-        node { label 'linux && gpu' }
+        node { label 'linux && gpu && n5' }
       }
       steps {
         withCredentials([string(credentialsId: 'hf', variable: 'HF_TOKEN')]) {
@@ -87,7 +87,7 @@ pipeline {
       parallel {
         stage('Integration') {
           agent {
-            node { label 'linux && gpu' }
+            node { label 'linux && gpu && n5' }
           }
           steps {
             withCredentials([string(credentialsId: 'hf', variable: 'HF_TOKEN')]) {
@@ -115,7 +115,7 @@ pipeline {
 
         stage('Pipeline Integration') {
           agent {
-            node { label 'linux && gpu' }
+            node { label 'linux && gpu && n5' }
           }
           steps {
             withCredentials([string(credentialsId: 'hf', variable: 'HF_TOKEN')]) {
@@ -143,7 +143,7 @@ pipeline {
 
         stage('E2E') {
           agent {
-            node { label 'linux && gpu' }
+            node { label 'linux && gpu && n5' }
           }
           steps {
             withCredentials([string(credentialsId: 'hf', variable: 'HF_TOKEN')]) {
