@@ -11,9 +11,10 @@ GPU_ENV = CUDA_VISIBLE_DEVICES=$(GPU_ID) COLETTE_GPU_ID=$(GPU_ID)
 JUNIT_SMOKE ?= $(CI_ARTIFACTS_DIR)/junit-smoke.xml
 JUNIT_COVERAGE ?= $(CI_ARTIFACTS_DIR)/junit-coverage.xml
 JUNIT_INTEGRATION ?= $(CI_ARTIFACTS_DIR)/junit-integration.xml
+JUNIT_PIPELINE_INTEGRATION ?= $(CI_ARTIFACTS_DIR)/junit-pipeline-integration.xml
 COVERAGE_XML ?= $(CI_ARTIFACTS_DIR)/coverage.xml
 
-.PHONY: style lint format-check lint-check test-smoke test-coverage test-integration test-e2e ci-smoke ci-coverage ci-integration
+.PHONY: style lint format-check lint-check test-smoke test-coverage test-integration test-integration-pipeline test-e2e ci-smoke ci-coverage ci-integration ci-pipeline-integration
 
 style:
 	$(RUFF) format .
@@ -36,6 +37,9 @@ test-coverage:
 test-integration:
 	COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/ -m "integration and not e2e" -v --tb=short
 
+test-integration-pipeline:
+	$(GPU_ENV) COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/test_pipeline_python_api_integration.py -m integration -v --tb=short
+
 test-e2e:
 	$(GPU_ENV) COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/ -m e2e -v --tb=short
 
@@ -50,6 +54,10 @@ ci-coverage:
 ci-integration:
 	mkdir -p $(CI_ARTIFACTS_DIR)
 	$(GPU_ENV) COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/ -m "integration and not e2e" -v --tb=short --junitxml=$(JUNIT_INTEGRATION)
+
+ci-pipeline-integration:
+	mkdir -p $(CI_ARTIFACTS_DIR)
+	$(GPU_ENV) COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/test_pipeline_python_api_integration.py -m integration -v --tb=short --junitxml=$(JUNIT_PIPELINE_INTEGRATION)
 
 ci-e2e:
 	mkdir -p $(CI_ARTIFACTS_DIR)
