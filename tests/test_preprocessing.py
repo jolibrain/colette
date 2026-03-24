@@ -16,7 +16,7 @@ sys.path.append(col_dir)
 from backends.hf.layout_detector import LayoutDetector # noqa
 from backends.hf.preprocessing import DocumentProcessor, ImageProcessor # noqa
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.e2e]
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)

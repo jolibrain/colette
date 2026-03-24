@@ -20,8 +20,6 @@ from httpjsonapi import app  # noqa
 evaluation = pytest.importorskip("evaluation")
 run_evaluation = evaluation.run_evaluation
 
-pytestmark = pytest.mark.integration
-
 models_repo = os.getenv("MODELS_REPO", 'models')
 
 client = TestClient(app)

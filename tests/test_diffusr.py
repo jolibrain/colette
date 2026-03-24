@@ -7,7 +7,7 @@ from utils import pretty_print_response
 
 from colette.httpjsonapi import app  # noqa
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.e2e]
 
 models_repo = os.getenv("MODELS_REPO", "models")
 

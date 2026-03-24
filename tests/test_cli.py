@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 
 from colette.colette_cli import cli  # noqa
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.e2e]
 
 # Define paths
 BASE_DIR = Path(__file__).parent

@@ -4,16 +4,15 @@ import shutil
 import time
 
 import pytest
-import pytest_asyncio
 from fastapi.testclient import TestClient
 from utils import compare_dicts, pretty_print_response
 
 from colette.httpjsonapi import app
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.e2e]
 
 
-@pytest_asyncio.fixture(scope="module")
+@pytest.fixture(scope="module")
 def client():
     with TestClient(app) as client:
         yield client
