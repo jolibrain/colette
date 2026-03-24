@@ -4,15 +4,15 @@
 
 We split CI into fast required checks and deeper optional coverage:
 
-- Required for PR merge: `PR Smoke / smoke`
-- Optional protected PR check: `PR Optional Integration / integration-stable` (triggered with PR label `run-integration` or manual dispatch)
-- Nightly/manual deep validation: `Nightly GPU Matrix` (`ci-integration`, `ci-pipeline-integration`, `ci-e2e`)
+- Required for PR merge: Jenkins `PR Smoke` lane (`make ci-smoke`)
+- Optional protected PR check: Jenkins `integration-stable` lane (`make ci-integration-stable`)
+- Nightly/manual deep validation: Jenkins GPU matrix lane (`make ci-integration`, `make ci-pipeline-integration`, `make ci-e2e`)
 
 Recommended branch protection setup:
 
-- Require status check: `PR Smoke / smoke`
-- Do not require `PR Optional Integration / integration-stable`
-- Do not require `Nightly GPU Matrix` jobs
+- Require status check from Jenkins for PR smoke
+- Do not require optional integration-stable status
+- Do not require nightly GPU matrix statuses
 
 This gives fast PR feedback while keeping realistic deeper GPU validation available.
 
