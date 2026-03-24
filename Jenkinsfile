@@ -23,8 +23,21 @@ pipeline {
         node { label 'linux && gpu && n5' }
       }
       steps {
-        // Creates the persistent venv on first run (~5-10 min); reuses it on subsequent runs.
-        sh 'bash ci/setup_venv.sh'
+        // Creates/repairs the smoke cache on first run; reused on subsequent smoke builds.
+        sh 'bash ci/setup_venv.sh smoke'
+      }
+    }
+
+    stage('Setup Full') {
+      when {
+        expression { return params.RUN_INTEGRATION_STABLE || params.RUN_NIGHTLY_MATRIX }
+      }
+      agent {
+        node { label 'linux && gpu && n5' }
+      }
+      steps {
+        // Creates/repairs the full integration cache only when deeper lanes are requested.
+        sh 'bash ci/setup_venv.sh full'
       }
     }
 
@@ -35,7 +48,7 @@ pipeline {
       steps {
         sh '''
           set -e
-          VENV_CACHE_PATH="$(realpath "${WORKSPACE:-$PWD}/..")/venv_colette_cache"
+          VENV_CACHE_PATH="$(realpath "${WORKSPACE:-$PWD}/..")/venv_colette_smoke_cache"
           ln -sfn "${VENV_CACHE_PATH}" venv_colette
           echo "Using venv cache: ${VENV_CACHE_PATH}"
           make ci-smoke
@@ -60,7 +73,7 @@ pipeline {
           lock(resource: null, label: "${NODE_NAME}-gpu", variable: 'LOCKED_GPU', quantity: 1) {
             sh '''
               set -e
-              VENV_CACHE_PATH="$(realpath "${WORKSPACE:-$PWD}/..")/venv_colette_cache"
+              VENV_CACHE_PATH="$(realpath "${WORKSPACE:-$PWD}/..")/venv_colette_full_cache"
               ln -sfn "${VENV_CACHE_PATH}" venv_colette
               echo "Using venv cache: ${VENV_CACHE_PATH}"
               export CUDA_VISIBLE_DEVICES=$(echo ${LOCKED_GPU} | sed -n -e "s/[^,]* GPU \\([^[0-9,]]\\)*/\\1/gp")
@@ -95,7 +108,7 @@ pipeline {
               lock(resource: null, label: "${NODE_NAME}-gpu", variable: 'LOCKED_GPU', quantity: 1) {
                 sh '''
                   set -e
-                  VENV_CACHE_PATH="$(realpath "${WORKSPACE:-$PWD}/..")/venv_colette_cache"
+                  VENV_CACHE_PATH="$(realpath "${WORKSPACE:-$PWD}/..")/venv_colette_full_cache"
                   ln -sfn "${VENV_CACHE_PATH}" venv_colette
                   echo "Using venv cache: ${VENV_CACHE_PATH}"
                   export CUDA_VISIBLE_DEVICES=$(echo ${LOCKED_GPU} | sed -n -e "s/[^,]* GPU \\([^[0-9,]]\\)*/\\1/gp")
@@ -125,7 +138,7 @@ pipeline {
               lock(resource: null, label: "${NODE_NAME}-gpu", variable: 'LOCKED_GPU', quantity: 1) {
                 sh '''
                   set -e
-                  VENV_CACHE_PATH="$(realpath "${WORKSPACE:-$PWD}/..")/venv_colette_cache"
+                  VENV_CACHE_PATH="$(realpath "${WORKSPACE:-$PWD}/..")/venv_colette_full_cache"
                   ln -sfn "${VENV_CACHE_PATH}" venv_colette
                   echo "Using venv cache: ${VENV_CACHE_PATH}"
                   export CUDA_VISIBLE_DEVICES=$(echo ${LOCKED_GPU} | sed -n -e "s/[^,]* GPU \\([^[0-9,]]\\)*/\\1/gp")
@@ -155,7 +168,7 @@ pipeline {
               lock(resource: null, label: "${NODE_NAME}-gpu", variable: 'LOCKED_GPU', quantity: 1) {
                 sh '''
                   set -e
-                  VENV_CACHE_PATH="$(realpath "${WORKSPACE:-$PWD}/..")/venv_colette_cache"
+                  VENV_CACHE_PATH="$(realpath "${WORKSPACE:-$PWD}/..")/venv_colette_full_cache"
                   ln -sfn "${VENV_CACHE_PATH}" venv_colette
                   echo "Using venv cache: ${VENV_CACHE_PATH}"
                   export CUDA_VISIBLE_DEVICES=$(echo ${LOCKED_GPU} | sed -n -e "s/[^,]* GPU \\([^[0-9,]]\\)*/\\1/gp")
@@ -181,7 +194,8 @@ pipeline {
 
   post {
     always {
-      // cleanWs cleans the workspace but NOT the venv cache at WORKSPACE/../venv_colette_cache
+      // cleanWs cleans workspace only. Caches are persisted one level up:
+      //   ../venv_colette_smoke_cache and ../venv_colette_full_cache
       node('n5') {
         cleanWs(
           cleanWhenAborted: true,

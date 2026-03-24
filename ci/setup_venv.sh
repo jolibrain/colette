@@ -21,10 +21,20 @@
 set -euo pipefail
 
 WORKSPACE="${WORKSPACE:-$(pwd)}"
-VENV_CACHE="$(realpath "${WORKSPACE}/..")/venv_colette_cache"
+PROFILE="${1:-smoke}"
+
+if [ "${PROFILE}" = "smoke" ]; then
+    VENV_CACHE="$(realpath "${WORKSPACE}/..")/venv_colette_smoke_cache"
+elif [ "${PROFILE}" = "full" ]; then
+    VENV_CACHE="$(realpath "${WORKSPACE}/..")/venv_colette_full_cache"
+else
+    echo "ERROR: unknown profile '${PROFILE}'. Expected 'smoke' or 'full'." >&2
+    exit 1
+fi
 
 echo "=== CI venv setup ==="
 echo "    workspace : ${WORKSPACE}"
+echo "    profile   : ${PROFILE}"
 echo "    venv cache: ${VENV_CACHE}"
 
 needs_full_setup=0
@@ -65,16 +75,52 @@ if [ "${needs_full_setup}" -eq 1 ]; then
         "${VENV_CACHE}/bin/pip" install torch torchvision torchaudio --index-url "${torch_index_url}"
     fi
 
-    "${VENV_CACHE}/bin/pip" install --quiet -e ".[dev,trag]"
-    "${VENV_CACHE}/bin/pip" uninstall -y flash-attn 2>/dev/null || true
-    # flash-attn wheels/build may lag behind newest torch/CUDA combos.
-    # Keep CI moving if this optional acceleration package cannot be installed.
-    if ! "${VENV_CACHE}/bin/pip" install flash-attn==2.5.6 --no-build-isolation; then
-        echo "    WARNING: flash-attn==2.5.6 install failed; continuing without flash-attn"
+    if [ "${PROFILE}" = "smoke" ]; then
+        echo "    Installing smoke profile dependencies"
+        "${VENV_CACHE}/bin/pip" install \
+            pytest==8.4.2 \
+            pytest-cov==7.0.0 \
+            pytest-asyncio==1.2.0 \
+            click==8.3.0 \
+            chromadb==1.1.0 \
+            fastapi==0.118.0 \
+            pydantic==2.11.9 \
+            uvicorn==0.37.0 \
+            h5py \
+            faiss-gpu-cu12==1.12.0 \
+            pypandoc_binary==1.15 \
+            transformers==4.57.0 \
+            qwen_vl_utils==0.0.14 \
+            ujson==5.11.0 \
+            GitPython==3.1.45 \
+            pillow \
+            tqdm \
+            typer \
+            vllm==0.11.0
+        "${VENV_CACHE}/bin/pip" install --quiet -e . --no-deps
+        echo ">>> Smoke venv created."
+    else
+        "${VENV_CACHE}/bin/pip" install --quiet -e ".[dev,trag]"
+        "${VENV_CACHE}/bin/pip" uninstall -y flash-attn 2>/dev/null || true
+        # flash-attn wheels/build may lag behind newest torch/CUDA combos.
+        # Keep CI moving if this optional acceleration package cannot be installed.
+        if ! "${VENV_CACHE}/bin/pip" install flash-attn==2.5.6 --no-build-isolation; then
+            echo "    WARNING: flash-attn==2.5.6 install failed; continuing without flash-attn"
+        fi
+        echo ">>> Full venv created."
     fi
-    echo ">>> Full venv created."
 else
     echo "    Cached venv found — updating editable install only"
+
+    if [ "${PROFILE}" = "full" ]; then
+        # Keep full profile stable and separate from smoke profile incremental repairs.
+        # Assume first full bootstrap already installed heavy dependencies.
+        "${VENV_CACHE}/bin/pip" install --quiet -e ".[dev,trag]" --no-deps
+        ln -sfn "${VENV_CACHE}" "${WORKSPACE}/venv_colette"
+        echo "    Python: $("${VENV_CACHE}/bin/python" --version)"
+        echo "=== venv ready ==="
+        exit 0
+    fi
 
     # Validate that key test/runtime tooling exists in the cached environment.
     # Older caches may miss dependencies, which makes smoke collection fail.
