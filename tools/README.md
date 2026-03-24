@@ -38,6 +38,8 @@ Once your reference file is ready, launch the evaluation using the following com
 python tools/evaluation.py --app-dir path/to/app/directory --qa path/to/questions_answers_file.json
 ```
 
+Optional regression checks for this tooling are intentionally excluded from the default `pytest tests` suite. Run `make test-evaluation` when you want to validate the evaluation contract locally. That target expects the extra dependencies required by `tools/evaluation.py`, including `bert_score`.
+
 This command creates a new timestamped directory containing three files:
 
 `app_basename_llm.json`: LLM performance metrics (including Rouge and BERT scores)
