@@ -1,34 +1,18 @@
 import json
 import os
 import shutil
-import time
 
 import pytest
-from fastapi.testclient import TestClient
-from utils import compare_dicts, pretty_print_response
-
-from colette.httpjsonapi import app
+from utils import compare_dicts, pretty_print_response, wait_for_index_status
 
 pytestmark = [pytest.mark.integration, pytest.mark.e2e]
-
-
-@pytest.fixture(scope="module")
-def client():
-    with TestClient(app) as client:
-        yield client
 
 
 def generic_index(client, sname, index_json):
     response = client.put(f"/v1/index/{sname}", json=index_json)
     assert response.status_code == 200
-    response = client.get(f"/v1/index/{sname}/status")
+    response = wait_for_index_status(client, sname, poll_interval_s=2)
     pretty_print_response(response.json())
-    assert response.status_code == 200
-
-    while "running" in response.json()["message"]:
-        time.sleep(2)
-        response = client.get(f"/v1/index/{sname}/status")
-        pretty_print_response(response.json())
     return response
 
 

@@ -1,6 +1,5 @@
 import json
 import os
-import shutil
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -25,17 +24,6 @@ run_evaluation = evaluation.run_evaluation
 models_repo = os.getenv("MODELS_REPO", 'models')
 
 client = TestClient(app)
-
-
-@pytest.fixture
-def temp_dir(request):
-    """Fixture to create and clean up a temporary directory."""
-    temp_dir = Path(request.node.get_closest_marker("repository_path").args[0])
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    yield temp_dir
-    shutil.rmtree(temp_dir)
-
-
 # Define test configurations (JSON config file path + QA list)
 test_configs = [
     # (

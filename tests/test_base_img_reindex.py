@@ -1,37 +1,15 @@
 import os
-import shutil
 import time
 from pathlib import Path
 
 import pytest
 from chromadb import PersistentClient
 from chromadb.config import Settings
-from fastapi.testclient import TestClient
 from utils import pretty_print_response
-
-from colette.httpjsonapi import app
 
 pytestmark = [pytest.mark.integration, pytest.mark.e2e]
 
 models_repo = os.getenv("MODELS_REPO", "models")
-
-
-@pytest.fixture(scope="module")
-def client():
-    with TestClient(app) as client:
-        yield client
-
-
-# client = TestClient(app)
-
-
-@pytest.fixture
-def temp_dir(request):
-    # Get the repository path from the test function's parameters
-    temp_dir = Path(request.node.get_closest_marker("repository_path").args[0])
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    yield temp_dir
-    shutil.rmtree(temp_dir)
 
 
 @pytest.mark.repository_path(Path("test_create_app_and_index"))

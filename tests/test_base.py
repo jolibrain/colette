@@ -1,14 +1,9 @@
 import copy
 import multiprocessing as mp
 import os
-import shutil
 import sys
-import time
 import pytest
-
-from fastapi.testclient import TestClient
-
-from colette.httpjsonapi import app  # noqa
+from utils import ensure_repo_deleted, ensure_service_deleted, wait_for_index_status
 
 pytestmark = [pytest.mark.integration, pytest.mark.e2e]
 
@@ -67,35 +62,6 @@ json_predict_prompt = {
         }
     },
 }
-
-@pytest.fixture(scope="module")
-def client():
-    with TestClient(app) as client:
-        yield client
-
-
-def ensure_service_deleted(client, sname):
-    try:
-        client.delete(f"/v1/app/{sname}")
-    except Exception:
-        pass
-
-
-def ensure_repo_deleted(repo_path):
-    shutil.rmtree(repo_path, ignore_errors=True)
-
-
-def wait_for_index(client, sname):
-    response = client.get(f"/v1/index/{sname}/status")
-    assert response.status_code == 200
-    message = response.json()["message"].lower()
-    while "queued" in message or "running" in message:
-        time.sleep(0.5)
-        response = client.get(f"/v1/index/{sname}/status")
-        assert response.status_code == 200
-        message = response.json()["message"].lower()
-    return response
-
 
 def require_vllm_runtime():
     """vLLM e2e is opt-in and can fail under fork-based multiprocessing with CUDA."""
@@ -301,7 +267,7 @@ class TestRagLangchainTxt:
 
             response = client.put(f"/v1/index/{sname}", json=json_index_ollama)
             assert response.status_code == 200
-            response = wait_for_index(client, sname)
+            response = wait_for_index_status(client, sname)
             assert "finished" in response.json()["message"]
 
             response = client.post(f"/v1/predict/{sname}", json=json_predict)
@@ -378,7 +344,7 @@ class TestRagLangchainTxt:
 
             response = client.put(f"/v1/index/{sname}", json=json_index_llamacpp_gpt4all_all)
             assert response.status_code == 200
-            response = wait_for_index(client, sname)
+            response = wait_for_index_status(client, sname)
             assert "finished" in response.json()["message"]
 
             json_predict = {
@@ -456,7 +422,7 @@ class TestRagLangchainTxt:
 
             response = client.put(f"/v1/index/{sname}", json=json_index_llamacpp_hf_all)
             assert response.status_code == 200
-            response = wait_for_index(client, sname)
+            response = wait_for_index_status(client, sname)
             assert "finished" in response.json()["message"]
 
             json_predict = {
@@ -527,7 +493,7 @@ class TestRagLangchainTxt:
 
             response = client.put(f"/v1/index/{sname}", json=json_index_llamacpp_e5)
             assert response.status_code == 200
-            response = wait_for_index(client, sname)
+            response = wait_for_index_status(client, sname)
             assert "finished" in response.json()["message"]
 
             json_predict = {
@@ -612,7 +578,7 @@ class TestRagLangchainTxt:
 
             response = client.put(f"/v1/index/{sname}", json=json_index_vllm)
             assert response.status_code == 200
-            response = wait_for_index(client, sname)
+            response = wait_for_index_status(client, sname)
             assert "finished" in response.json()["message"] or "error" in response.json()["message"]
 
             json_predict = {

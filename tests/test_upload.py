@@ -1,26 +1,15 @@
 import json
 import os
-import shutil
-import time
 from pathlib import Path
 from pprint import pprint
 
 import pytest
-from fastapi.testclient import TestClient
-from utils import pretty_print_response
-
-from colette.httpjsonapi import app
+from utils import ensure_service_deleted, pretty_print_response, wait_for_index_status
 from colette.kvstore import ImageStorageFactory
 
 pytestmark = [pytest.mark.integration, pytest.mark.e2e]
 
 models_repo = os.getenv("MODELS_REPO", "models")
-
-
-@pytest.fixture(scope="module")
-def client():
-    with TestClient(app) as client:
-        yield client
 
 
 def count_files_recursively(directory):
@@ -34,13 +23,7 @@ def generic_index(client, sname, index_json):
     response = client.put(f"/v1/index/{sname}", json=index_json)
     pretty_print_response(response.json())
     assert response.status_code == 200
-    response = client.get(f"/v1/index/{sname}/status")
-    assert response.status_code == 200
-
-    while "running" in response.json()["message"]:
-        time.sleep(2)
-        response = client.get(f"/v1/index/{sname}/status")
-    return response
+    return wait_for_index_status(client, sname, poll_interval_s=2)
 
 
 def generic_upload(client, sname, ad_index, files):
@@ -48,32 +31,7 @@ def generic_upload(client, sname, ad_index, files):
     response = client.put(f"/v1/upload/{sname}", data={"ad": ad_json_str}, files=files)
     pretty_print_response(response.json())
     assert response.status_code == 200
-    response = client.get(f"/v1/index/{sname}/status")
-    assert response.status_code == 200
-
-    while "running" in response.json()["message"]:
-        time.sleep(2)
-        response = client.get(f"/v1/index/{sname}/status")
-    return response
-
-
-def ensure_service_deleted(client, sname):
-    """Best-effort cleanup to avoid cross-test leakage."""
-    try:
-        client.delete(f"/v1/app/{sname}")
-    except Exception:
-        pass
-
-
-@pytest.fixture
-def temp_dir(request):
-    # Get the repository path from the test function's parameters
-    temp_dir = Path(request.node.get_closest_marker("repository_path").args[0])
-    # Ensure a clean writable repository for every test run.
-    shutil.rmtree(temp_dir, ignore_errors=True)
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    yield temp_dir
-    shutil.rmtree(temp_dir, ignore_errors=True)
+    return wait_for_index_status(client, sname, poll_interval_s=2)
 
 
 @pytest.mark.repository_path("test_create_without_upload")

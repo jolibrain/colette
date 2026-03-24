@@ -1,23 +1,12 @@
 import os
-import shutil
 import signal
 import subprocess
 import time
-from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-from utils import pretty_print_response
-
-from colette.httpjsonapi import app
+from utils import pretty_print_response, wait_for_index_status
 
 pytestmark = [pytest.mark.integration, pytest.mark.e2e]
-
-
-@pytest.fixture(scope="module")
-def client():
-    with TestClient(app) as client:
-        yield client
 
 
 models_repo = os.getenv("MODELS_REPO", "models")
@@ -30,20 +19,9 @@ def generic_index(client, sname, index_json):
     pretty_print_response(response.json())
     assert response.status_code == 200
 
-    while "running" in response.json()["message"]:
-        time.sleep(2)
-        response = client.get(f"/v1/index/{sname}/status")
-        pretty_print_response(response.json())
+    response = wait_for_index_status(client, sname, poll_interval_s=2)
+    pretty_print_response(response.json())
     return response
-
-
-@pytest.fixture
-def temp_dir(request):
-    # Get the repository path from the test function's parameters
-    temp_dir = Path(request.node.get_closest_marker("repository_path").args[0])
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    yield temp_dir
-    shutil.rmtree(temp_dir)
 
 
 @pytest.mark.repository_path("test_vllm_external")

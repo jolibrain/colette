@@ -1,14 +1,8 @@
 import os
 import multiprocessing as mp
-import shutil
-import time
-from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-from utils import pretty_print_response
-
-from colette.httpjsonapi import app
+from utils import ensure_service_deleted, pretty_print_response, wait_for_index_status
 
 models_repo = os.getenv("MODELS_REPO", "models")
 VLLM_E2E_ENABLED = os.getenv("COLETTE_ENABLE_VLLM_E2E") == "1"
@@ -71,33 +65,6 @@ json_predict_prompt = {
         }
     },
 }
-
-
-@pytest.fixture(scope="module")
-def client():
-    with TestClient(app) as client:
-        yield client
-
-
-# testing
-# client = TestClient(app)
-
-
-@pytest.fixture
-def temp_dir(request):
-    # Get the repository path from the test function's parameters
-    temp_dir = Path(request.node.get_closest_marker("repository_path").args[0])
-    shutil.rmtree(temp_dir, ignore_errors=True)
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    yield temp_dir
-    shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-def ensure_service_deleted(client, sname):
-    try:
-        client.delete(f"/v1/app/{sname}")
-    except Exception:
-        pass
 
 
 def require_vllm_runtime():
@@ -326,11 +293,8 @@ def test_llamacpp_hf(temp_dir, client):
         response = client.put(f"/v1/index/{sname}", json=json_index_llamacpp_hf_all)
         pretty_print_response(response.json())
         assert response.status_code == 200
-        while "finished" not in response.json()["message"]:
-            time.sleep(0.5)
-            response = client.get(f"/v1/index/{sname}/status")
-            pretty_print_response(response.json())
-            assert response.status_code == 200
+        response = wait_for_index_status(client, sname)
+        pretty_print_response(response.json())
 
         json_predict = {
             "app": {"repository": sname},
@@ -395,11 +359,8 @@ def test_llamacpp_hf_e5(temp_dir, client):
         response = client.put(f"/v1/index/{sname}", json=json_index_llamacpp_e5)
         pretty_print_response(response.json())
         assert response.status_code == 200
-        while "finished" not in response.json()["message"]:
-            time.sleep(0.5)
-            response = client.get(f"/v1/index/{sname}/status")
-            pretty_print_response(response.json())
-            assert response.status_code == 200
+        response = wait_for_index_status(client, sname)
+        pretty_print_response(response.json())
 
         json_predict = {
             "app": {"repository": "test_llamacpp_hf_e5"},
@@ -477,11 +438,8 @@ def test_vllm(temp_dir, client):
         response = client.put(f"/v1/index/{sname}", json=json_index_vllm)
         pretty_print_response(response.json())
         assert response.status_code == 200
-        while "finished" not in response.json()["message"]:
-            time.sleep(0.5)
-            response = client.get(f"/v1/index/{sname}/status")
-            pretty_print_response(response.json())
-            assert response.status_code == 200
+        response = wait_for_index_status(client, sname)
+        pretty_print_response(response.json())
 
         response = client.delete(f"/v1/app/{sname}")
         assert response.status_code == 200
@@ -491,21 +449,19 @@ def test_vllm(temp_dir, client):
         response = client.put(f"/v1/index/{sname}", json=json_index_vllm)
         pretty_print_response(response.json())
         assert response.status_code == 200
-        while "error" not in response.json()["message"]:
-            time.sleep(0.5)
-            response = client.get(f"/v1/index/{sname}/status")
-            pretty_print_response(response.json())
-            assert response.status_code == 200
+        response = wait_for_index_status(
+            client,
+            sname,
+            terminal_tokens=("error",),
+        )
+        pretty_print_response(response.json())
 
         json_index_vllm["parameters"]["input"]["rag"]["reindex"] = False
         response = client.put(f"/v1/index/{sname}", json=json_index_vllm)
         pretty_print_response(response.json())
         assert response.status_code == 200
-        while "finished" not in response.json()["message"]:
-            time.sleep(0.5)
-            response = client.get(f"/v1/index/{sname}/status")
-            pretty_print_response(response.json())
-            assert response.status_code == 200
+        response = wait_for_index_status(client, sname)
+        pretty_print_response(response.json())
 
         json_predict = {
             "app": {"repository": sname},
