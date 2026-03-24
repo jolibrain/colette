@@ -89,15 +89,18 @@ else
     done
 
     # Runtime deps needed for smoke-test collection/import paths.
-    for module in pydantic fastapi typer PIL chromadb transformers qwen_vl_utils tqdm; do
+    for module in pydantic fastapi typer PIL chromadb transformers qwen_vl_utils tqdm h5py; do
         if ! "${VENV_CACHE}/bin/python" -c "import ${module}" >/dev/null 2>&1; then
             missing_runtime_deps=1
             break
         fi
     done
 
-    # torch is handled separately to support CUDA-index install.
+    # torch and vllm are handled separately to support CUDA-index install.
     if ! "${VENV_CACHE}/bin/python" -c "import torch" >/dev/null 2>&1; then
+        missing_runtime_deps=1
+    fi
+    if ! "${VENV_CACHE}/bin/python" -c "import vllm" >/dev/null 2>&1; then
         missing_runtime_deps=1
     fi
 
@@ -119,6 +122,7 @@ else
             fastapi==0.118.0 \
             pydantic==2.11.9 \
             uvicorn==0.37.0 \
+            h5py \
             transformers==4.57.0 \
             qwen_vl_utils==0.0.14 \
             ujson==5.11.0 \
@@ -142,6 +146,11 @@ else
             if ! "${VENV_CACHE}/bin/pip" install torch==2.7.0 torchvision torchaudio --index-url "${torch_index_url}"; then
                 "${VENV_CACHE}/bin/pip" install torch torchvision torchaudio --index-url "${torch_index_url}"
             fi
+        fi
+
+        # vLLM is imported by rag_img at module load time during smoke test collection.
+        if ! "${VENV_CACHE}/bin/python" -c "import vllm" >/dev/null 2>&1; then
+            "${VENV_CACHE}/bin/pip" install vllm==0.11.0
         fi
 
         # Ensure editable package metadata remains synced without pulling heavy deps.
