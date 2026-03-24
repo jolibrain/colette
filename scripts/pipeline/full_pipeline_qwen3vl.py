@@ -4,11 +4,13 @@ Run a minimal end-to-end pipeline using the colette Python API.
 
 Usage (from repo root):
   export PYTHONPATH=$PWD/src
-  python -u tests/test_full_pipeline_qwen3vl.py
+    python -u scripts/pipeline/full_pipeline_qwen3vl.py
 
 This is a conservative smoke test for the Qwen3 VL embedding pipeline.
 It forces the index config to use `Qwen/Qwen3-VL-Embedding-2B` and will
 print errors instead of raising, so it is safe for exploratory runs.
+
+Note: this is a utility diagnostic script and is not collected by pytest.
 """
 import json
 import os
@@ -22,8 +24,6 @@ from io import BytesIO
 from datetime import datetime
 from PIL import Image
 
-import pytest
-
 try:
     import psutil
 except Exception:
@@ -34,12 +34,14 @@ from colette.apidata import APIData
 
 
 def main():
-    root = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     print("Colette repo root:", root)
     t0 = time.time()
 
     # setup debug logger
-    log_path = os.path.join(root, 'tests', 'pipeline_debug.log')
+    logs_dir = os.path.join(root, "scripts", "pipeline", "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    log_path = os.path.join(logs_dir, "pipeline_debug_qwen3vl.log")
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s %(levelname)s %(message)s',
@@ -170,7 +172,7 @@ def main():
     except Exception:
         logger.info('(no textual output)')
 
-    out_dir = os.path.join(root, 'tests', 'pipeline_output')
+    out_dir = os.path.join(root, "scripts", "pipeline", "output")
     os.makedirs(out_dir, exist_ok=True)
     logger.info('\nSaving image sources to %s', out_dir)
     try:
