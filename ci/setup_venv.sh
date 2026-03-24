@@ -76,10 +76,11 @@ if [ "${needs_full_setup}" -eq 1 ]; then
 else
     echo "    Cached venv found — updating editable install only"
 
-    # Validate that key test tooling exists in the cached environment.
-    # Older caches may miss dev dependencies (e.g. pytest), which makes CI fail
-    # even though the venv itself exists.
+    # Validate that key test/runtime tooling exists in the cached environment.
+    # Older caches may miss dependencies, which makes smoke collection fail.
     missing_dev_deps=0
+    missing_runtime_deps=0
+
     for module in pytest pytest_asyncio pytest_cov; do
         if ! "${VENV_CACHE}/bin/python" -c "import ${module}" >/dev/null 2>&1; then
             missing_dev_deps=1
@@ -87,13 +88,67 @@ else
         fi
     done
 
+    # Runtime deps needed for smoke-test collection/import paths.
+    for module in pydantic fastapi typer PIL chromadb transformers qwen_vl_utils tqdm; do
+        if ! "${VENV_CACHE}/bin/python" -c "import ${module}" >/dev/null 2>&1; then
+            missing_runtime_deps=1
+            break
+        fi
+    done
+
+    # torch is handled separately to support CUDA-index install.
+    if ! "${VENV_CACHE}/bin/python" -c "import torch" >/dev/null 2>&1; then
+        missing_runtime_deps=1
+    fi
+
     if [ "${missing_dev_deps}" -eq 1 ]; then
         echo "    Dev test dependencies missing in cache; installing minimal pytest tooling"
         "${VENV_CACHE}/bin/pip" install pytest==8.4.2 pytest-cov==7.0.0 pytest-asyncio==1.2.0
 
         # Ensure editable package metadata remains synced without pulling heavy deps.
         "${VENV_CACHE}/bin/pip" install --quiet -e . --no-deps
-    else
+    fi
+
+    if [ "${missing_runtime_deps}" -eq 1 ]; then
+        echo "    Runtime dependencies missing in cache; installing smoke runtime bundle"
+
+        # Install non-torch runtime dependencies required by smoke imports.
+        "${VENV_CACHE}/bin/pip" install \
+            click==8.3.0 \
+            chromadb==1.1.0 \
+            fastapi==0.118.0 \
+            pydantic==2.11.9 \
+            uvicorn==0.37.0 \
+            transformers==4.57.0 \
+            qwen_vl_utils==0.0.14 \
+            ujson==5.11.0 \
+            GitPython==3.1.45 \
+            pillow \
+            tqdm \
+            typer
+
+        # Install torch stack from CUDA-specific index if needed.
+        if ! "${VENV_CACHE}/bin/python" -c "import torch" >/dev/null 2>&1; then
+            if command -v nvcc &>/dev/null; then
+                cuda_version=$(nvcc --version | grep "release" | sed 's/.*release \([0-9]*\.[0-9]*\).*/\1/')
+            elif command -v nvidia-smi &>/dev/null; then
+                cuda_version=$(nvidia-smi | grep "CUDA Version" | sed 's/.*CUDA Version: \([0-9]*\.[0-9]*\).*/\1/')
+            else
+                echo "ERROR: CUDA not found. Cannot install torch runtime dependencies." >&2
+                exit 1
+            fi
+            cuda_short=$(echo "${cuda_version}" | tr -d '.')
+            torch_index_url="https://download.pytorch.org/whl/cu${cuda_short}"
+            if ! "${VENV_CACHE}/bin/pip" install torch==2.7.0 torchvision torchaudio --index-url "${torch_index_url}"; then
+                "${VENV_CACHE}/bin/pip" install torch torchvision torchaudio --index-url "${torch_index_url}"
+            fi
+        fi
+
+        # Ensure editable package metadata remains synced without pulling heavy deps.
+        "${VENV_CACHE}/bin/pip" install --quiet -e . --no-deps
+    fi
+
+    if [ "${missing_dev_deps}" -eq 0 ] && [ "${missing_runtime_deps}" -eq 0 ]; then
         "${VENV_CACHE}/bin/pip" install --quiet -e ".[dev,trag]" --no-deps
     fi
 fi
