@@ -100,195 +100,20 @@ def test_hf_multiple_images(temp_dir, client):
 
 ##############################################
 # build the service with hf backend with multiple_images with smolvlm
-# @pytest.mark.repository_path("test_hf_multiple_images_smolvlm")
-# def test_hf_multiple_images_smolvlm(temp_dir):
-#     json_create_img_hf = {
-#         "app": {
-#             "repository": str(temp_dir),
-#             "models_repository": models_repo,
-#             "verbose": "debug",
-#         },
-#         "parameters": {
-#             "input": {
-#                 "lib": "hf",
-#                 "preprocessing": {
-#                     "files": ["all"],
-#                     "save_output": True,
-#                 },
-#                 "rag": {
-#                     "indexdb_lib": "chromadb",
-#                     "embedding_lib": "huggingface",
-#                     "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
-#                     "reindex": True,
-#                     "index_protection": False,
-#                     "top_k": 2,
-#                     "gpu_id": 0,
-#                     "ragm": {"layout_detection": False},
-#                 },
-#                 "template": {
-#                     "template_prompt": "Tu es un assistant de réponse à des questions."
-#                     " Question: {question} Réponse: ",
-#                     "template_prompt_variables": ["question"],
-#                 },
-#                 "data": ["tests/data_img2"],
-#             },
-#             "llm": {
-#                 "source": "HuggingFaceTB/SmolVLM-Instruct",
-#                 "gpu_ids": [0],
-#                 "image_width": 640,
-#                 "image_height": 960,
-#                 "inference": {"lib": "huggingface"},
-#             },
-#         },
-#     }
-#     try:
-#         ad_json = json.dumps(json_create_img_hf)
-#         response = client.put(
-#             "/v1/app/test_hf_multiple_images_smolvlm",
-#             data={"ad": ad_json},
-#         )
-#         pretty_print_response(response.json())
-#         assert response.status_code == 200
-#         assert response.json()["service_name"] == "test_hf_multiple_images_smolvlm"
-
-#         response = client.get("/v1/info")
-#         pretty_print_response(response.json())
-#         assert "test_hf_multiple_images_smolvlm" in response.json()["info"]["services"]
-
-#         json_predict = {
-#             "parameters": {"input": {"message": "Quel est le titre du document ?"}}
-#         }
-#         response = client.post(
-#             "/v1/predict/test_hf_multiple_images_smolvlm", json=json_predict
-#         )
-#         pretty_print_response(response.json())
-#         assert (
-#             "Rapport" in response.json()["output"]
-#             or "RAPPORT" in response.json()["output"]
-#         )
-
-#         json_predict2 = {
-#             "parameters": {"input": {"message": "Quels sont les députés ?"}}
-#         }
-#         response = client.post(
-#             "/v1/predict/test_hf_multiple_images_smolvlm", json=json_predict2
-#         )
-#         pretty_print_response(response.json())
-#         assert "LOPEZ" in response.json()["output"]
-
-#         json_predict3 = {
-#             "parameters": {
-#                 "input": {
-#                     "message": "Quel est le pourcentage d'investissement en Space Transportation ?"
-#                 }
-#             }
-#         }
-#         response = client.post(
-#             "/v1/predict/test_hf_multiple_images_smolvlm", json=json_predict3
-#         )
-#         pretty_print_response(response.json())
-#         # assert "17%" in response.json()["output"]
-#     finally:
-#         # delete the service
-#         response = client.delete("/v1/app/test_hf_multiple_images_smolvlm")
-#         assert response.status_code == 200
+@pytest.mark.repository_path("test_hf_multiple_images_smolvlm")
+@pytest.mark.asyncio
+@pytest.mark.skip(reason="Blocked legacy scenario: SmolVLM multi-image integration is not maintained in the current model/runtime matrix.")
+def test_hf_multiple_images_smolvlm(temp_dir, client):
+    pytest.skip("Blocked legacy scenario: SmolVLM multi-image integration is not maintained in the current model/runtime matrix.")
 
 
 ##############################################
 # build the service with hf backend with chunks
-# @pytest.mark.repository_path("test_hf_multiple_images_chunks")
-# def test_hf_multiple_images_chunks(temp_dir):
-#     json_create_img_hf = {
-#         "app": {
-#             "repository": str(temp_dir),
-#             "models_repository": models_repo,
-#             "verbose": "debug",
-#         },
-#         "parameters": {
-#             "input": {
-#                 "lib": "hf",
-#                 "preprocessing": {
-#                     "files": ["all"],
-#                     "save_output": True,
-#                 },
-#                 "rag": {
-#                     "indexdb_lib": "chromadb",
-#                     "embedding_lib": "huggingface",
-#                     "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
-#                     "chunk_num": 3,
-#                     "chunk_overlap": 20,
-#                     "reindex": True,
-#                     "index_protection": False,
-#                     "top_k": 4,
-#                     "gpu_id": 0,
-#                     "ragm": {
-#                         "layout_detection": False,
-#                         "index_overview": False
-#                     },
-#                 },
-#                 "template": {
-#                     "template_prompt": "Tu es un assistant de réponse à des questions."
-#                     " Question: {question} Réponse: ",
-#                     "template_prompt_variables": ["question"],
-#                 },
-#                 "data": ["tests/data_img2"],
-#             },
-#             "llm": {
-#                 "source": "Qwen/Qwen2-VL-2B-Instruct",
-#                 "gpu_ids": [0],
-#                 "image_width": 640,
-#                 "image_height": 320,
-#                 "inference": {"lib": "huggingface"},
-#             },
-#         },
-#     }
-#     try:
-#         ad_json = json.dumps(json_create_img_hf)
-#         response = client.put(
-#             "/v1/app/test_hf_multiple_images_chunks",
-#             data={"ad": ad_json},
-#         )
-#         pretty_print_response(response.json())
-#         assert response.status_code == 200
-#         assert response.json()["service_name"] == "test_hf_multiple_images_chunks"
-#         response = client.get("/v1/info")
-#         pretty_print_response(response.json())
-#         assert "test_hf_multiple_images_chunks" in response.json()["info"]["services"]
-
-#         json_predict = {
-#             "parameters": {"input": {"message": "Quel est le titre du document ?"}}
-#         }
-#         response = client.post(
-#             "/v1/predict/test_hf_multiple_images_chunks", json=json_predict
-#         )
-#         pretty_print_response(response.json())
-#         # assert "Rapport" in response.json()["output"]
-
-#         json_predict2 = {
-#             "parameters": {"input": {"message": "Quels sont les députés ?"}}
-#         }
-#         response = client.post(
-#             "/v1/predict/test_hf_multiple_images_chunks", json=json_predict2
-#         )
-#         pretty_print_response(response.json())
-#         assert "LOPEZ" in response.json()["output"]
-
-#         json_predict3 = {
-#             "parameters": {
-#                 "input": {
-#                     "message": "Quel est le pourcentage d'investissement en Space Transportation ?"
-#                 }
-#             }
-#         }
-#         response = client.post(
-#             "/v1/predict/test_hf_multiple_images_chunks", json=json_predict3
-#         )
-#         pretty_print_response(response.json())
-#         assert "17%" in response.json()["output"]  # 17% should be good here
-#     finally:
-#         # delete the service
-#         response = client.delete("/v1/app/test_hf_multiple_images_chunks")
-#         assert response.status_code == 200
+@pytest.mark.repository_path("test_hf_multiple_images_chunks")
+@pytest.mark.asyncio
+@pytest.mark.skip(reason="Blocked legacy scenario: chunked multi-image assertions are unstable and need redesign before re-enabling.")
+def test_hf_multiple_images_chunks(temp_dir, client):
+    pytest.skip("Blocked legacy scenario: chunked multi-image assertions are unstable and need redesign before re-enabling.")
 
 
 ##############################################
@@ -390,192 +215,20 @@ def test_hf_multiple_images_crops(temp_dir, client):
 
 ##############################################
 # build the service with hf backend with stitched crops
-# @pytest.mark.repository_path("test_hf_multiple_images_stitched_crops")
-# def test_hf_multiple_images_stitched_crops(temp_dir):
-#     json_create_img_hf = {
-#         "app": {
-#             "repository": str(temp_dir),
-#             "models_repository": models_repo,
-#             "verbose": "debug",
-#         },
-#         "parameters": {
-#             "input": {
-#                 "lib": "hf",
-#                 "preprocessing": {
-#                     "files": ["all"],
-#                     "save_output": True,
-#                 },
-#                 "rag": {
-#                     "indexdb_lib": "chromadb",
-#                     "embedding_lib": "huggingface",
-#                     "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
-#                     "reindex": True,
-#                     "index_protection": False,
-#                     "top_k": 4,
-#                     "gpu_id": 0,
-#                     "ragm": {
-#                         "layout_detection": True,
-#                         "index_overview": False,
-#                     },
-#                 },
-#                 "template": {
-#                     "template_prompt": "Tu es un assistant de réponse à des questions."
-#                      " Question: {question} Réponse: ",
-#                     "template_prompt_variables": ["question"],
-#                 },
-#                 "data": ["tests/data_img2"],
-#             },
-#             "llm": {
-#                 "source": "google/gemma-3-4b-it",
-#                 "gpu_ids": [0],
-#                 "stitch_crops": True,
-#                 "inference": {"lib": "huggingface"},
-#             },
-#         },
-#     }
-#     try:
-#         ad_json = json.dumps(json_create_img_hf)
-#         response = client.put(
-#             "/v1/app/test_hf_multiple_images_stitched_crops",
-#             data={"ad": ad_json},
-#         )
-#         pretty_print_response(response.json())
-#         assert response.status_code == 200
-#         assert (
-#             response.json()["service_name"] == "test_hf_multiple_images_stitched_crops"
-#         )
-
-#         response = client.get("/v1/info")
-#         pretty_print_response(response.json())
-#         assert (
-#             "test_hf_multiple_images_stitched_crops"
-#             in response.json()["info"]["services"]
-#         )
-
-#         json_predict = {
-#             "parameters": {"input": {"message": "Quel est le titre du document ?"}}
-#         }
-#         response = client.post(
-#             "/v1/predict/test_hf_multiple_images_stitched_crops", json=json_predict
-#         )
-#         pretty_print_response(response.json())
-#         # assert "Rapport" in response.json()["output"]
-
-#         json_predict2 = {
-#             "parameters": {"input": {"message": "Quels sont les députés ?"}}
-#         }
-#         response = client.post(
-#             "/v1/predict/test_hf_multiple_images_stitched_crops", json=json_predict2
-#         )
-#         pretty_print_response(response.json())
-#         # assert "LOPEZ" in response.json()["output"]
-
-#         json_predict3 = {
-#             "parameters": {
-#                 "input": {
-#                     "message": "Quel est le pourcentage d'investissement en Space Transportation ?"
-#                 }
-#             }
-#         }
-#         response = client.post(
-#             "/v1/predict/test_hf_multiple_images_stitched_crops", json=json_predict3
-#         )
-#         pretty_print_response(response.json())
-#         assert "%" in response.json()["output"]
-#     finally:
-#         # delete the service
-#         response = client.delete("/v1/app/test_hf_multiple_images_stitched_crops")
-#         assert response.status_code == 200
+@pytest.mark.repository_path("test_hf_multiple_images_stitched_crops")
+@pytest.mark.asyncio
+@pytest.mark.skip(reason="Blocked legacy scenario: stitched-crop inference flow is not stable enough for CI assertions.")
+def test_hf_multiple_images_stitched_crops(temp_dir, client):
+    pytest.skip("Blocked legacy scenario: stitched-crop inference flow is not stable enough for CI assertions.")
 
 
 ##############################################
 # build the service with hf backend with pixtral
-# @pytest.mark.repository_path("test_hf_single_image_pixtral")
-# def test_hf_single_image_pixtral(temp_dir):
-#     json_create_img_hf = {
-#         "app": {
-#             "repository": str(temp_dir),
-#             "models_repository": models_repo,
-#             "verbose": "debug",
-#         },
-#         "parameters": {
-#             "input": {
-#                 "lib": "hf",
-#                 "preprocessing": {"files": ["all"], "save_output": True},
-#                 "rag": {
-#                     "indexdb_lib": "chromadb",
-#                     "embedding_lib": "huggingface",
-#                     "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
-#                     "reindex": True,
-#                     "index_protection": False,
-#                     "top_k": 4,
-#                     "gpu_id": 0,
-#                 },
-#                 "template": {
-#                     "template_prompt": "Tu es un assistant de réponse à des questions."
-#                     " Question: {question} Réponse: ",
-#                     "template_prompt_variables": ["question"],
-#                 },
-#                 "data": ["tests/data_img2"],
-#             },
-#             "llm": {
-#                 "source": "mistral-community/pixtral-12b",
-#                 "load_in_8bit": True,
-#                 "gpu_ids": [0],
-#                 "image_width": 640,
-#                 "image_height": 320,
-#                 "inference": {"lib": "huggingface"},
-#             },
-#         },
-#     }
-#     try:
-#         ad_json = json.dumps(json_create_img_hf)
-#         response = client.put(
-#             "/v1/app/test_hf_single_image_pixtral",
-#             data={"ad": ad_json},
-#         )
-#         pretty_print_response(response.json())
-#         assert response.status_code == 200
-#         assert response.json()["service_name"] == "test_hf_single_image_pixtral"
-
-#         response = client.get("/v1/info")
-#         pretty_print_response(response.json())
-#         assert "test_hf_single_image_pixtral" in response.json()["info"]["services"]
-
-#         json_predict = {
-#             "parameters": {"input": {"message": "Quel est le titre du document ?"}}
-#         }
-#         response = client.post(
-#             "/v1/predict/test_hf_single_image_pixtral", json=json_predict
-#         )
-#         pretty_print_response(response.json())
-#         # assert "Rapport" in response.json()["output"]
-
-#         json_predict2 = {
-#             "parameters": {"input": {"message": "Quels sont les députés ?"}}
-#         }
-#         response = client.post(
-#             "/v1/predict/test_hf_single_image_pixtral", json=json_predict2
-#         )
-#         pretty_print_response(response.json())
-#         # assert "LOPEZ" in response.json()["output"]
-
-#         json_predict3 = {
-#             "parameters": {
-#                 "input": {
-#                     "message": "Quel est le pourcentage d'investissement en Space Transportation ?"
-#                 }
-#             }
-#         }
-#         response = client.post(
-#             "/v1/predict/test_hf_single_image_pixtral", json=json_predict3
-#         )
-#         pretty_print_response(response.json())
-#         # assert "17 %" in response.json()["output"]
-#     finally:
-#         # delete the service
-#         response = client.delete("/v1/app/test_hf_single_image_pixtral")
-#         assert response.status_code == 200
+@pytest.mark.repository_path("test_hf_single_image_pixtral")
+@pytest.mark.asyncio
+@pytest.mark.skip(reason="Blocked legacy scenario: Pixtral runtime/bootstrap path is not maintained in the current integration matrix.")
+def test_hf_single_image_pixtral(temp_dir, client):
+    pytest.skip("Blocked legacy scenario: Pixtral runtime/bootstrap path is not maintained in the current integration matrix.")
 
 
 # ##############################################
