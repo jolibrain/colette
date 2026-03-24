@@ -5,11 +5,13 @@ Alibaba-NLP/gme-Qwen2-VL-2B-Instruct embedding to verify compatibility.
 
 Usage (from repo root):
   export PYTHONPATH=$PWD/src
-  python -u tests/test_full_pipeline_emb_gme_qwen2vl.py
+    python -u scripts/pipeline/full_pipeline_emb_gme_qwen2vl.py
 
 This is a conservative smoke test that forces the index config to use
 `Alibaba-NLP/gme-Qwen2-VL-2B-Instruct` and prints errors instead of
 raising, making it safe for exploratory runs.
+
+Note: this is a utility diagnostic script and is not collected by pytest.
 """
 import json
 import os
@@ -23,8 +25,6 @@ from io import BytesIO
 from datetime import datetime
 from PIL import Image
 
-import pytest
-
 try:
     import psutil
 except Exception:
@@ -35,12 +35,14 @@ from colette.apidata import APIData
 
 
 def main():
-    root = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     print("Colette repo root:", root)
     t0 = time.time()
 
     # setup debug logger
-    log_path = os.path.join(root, 'tests', 'pipeline_debug_qwen2vl.log')
+    logs_dir = os.path.join(root, "scripts", "pipeline", "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    log_path = os.path.join(logs_dir, "pipeline_debug_gme_qwen2vl.log")
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s %(levelname)s %(message)s',
@@ -171,7 +173,7 @@ def main():
     except Exception:
         logger.info('(no textual output)')
 
-    out_dir = os.path.join(root, 'tests', 'pipeline_output')
+    out_dir = os.path.join(root, "scripts", "pipeline", "output")
     os.makedirs(out_dir, exist_ok=True)
     logger.info('\nSaving image sources to %s', out_dir)
     try:

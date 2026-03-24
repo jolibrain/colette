@@ -9,6 +9,8 @@ import pytest
 from fastapi.testclient import TestClient
 from utils import pretty_print_response
 
+pytestmark = [pytest.mark.integration, pytest.mark.e2e]
+
 col_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../src")
 sys.path.append(col_dir)
 
