@@ -2,6 +2,7 @@ PYTHON ?= $(if $(wildcard venv_colette/bin/python),venv_colette/bin/python,pytho
 PYTEST ?= $(PYTHON) -m pytest
 RUFF ?= $(PYTHON) -m ruff
 SMOKE_TESTS ?= tests/test_base_ci.py::test_info tests/test_embedding_loader.py tests/test_embedding_integration.py tests/test_services_smoke.py tests/test_http_openwebui_smoke.py tests/test_cli_smoke.py tests/test_jsonapi_helpers_smoke.py tests/test_kvstore_smoke.py tests/test_logger_smoke.py tests/test_jsonapi_service_smoke.py tests/test_core_services_smoke.py
+EVALUATION_TESTS ?= tests_optional/evaluation_contract/test_configs_contract.py tests_optional/evaluation_contract/test_hf_single_contract.py
 COV_MIN ?= 35
 COV_TARGET ?= src/colette
 CI_ARTIFACTS_DIR ?= .ci-artifacts
@@ -14,7 +15,7 @@ JUNIT_INTEGRATION ?= $(CI_ARTIFACTS_DIR)/junit-integration.xml
 JUNIT_PIPELINE_INTEGRATION ?= $(CI_ARTIFACTS_DIR)/junit-pipeline-integration.xml
 COVERAGE_XML ?= $(CI_ARTIFACTS_DIR)/coverage.xml
 
-.PHONY: style lint format-check lint-check test-smoke test-coverage test-integration test-integration-pipeline test-e2e ci-smoke ci-coverage ci-integration ci-pipeline-integration
+.PHONY: style lint format-check lint-check test-smoke test-coverage test-integration test-integration-pipeline test-e2e test-evaluation ci-smoke ci-coverage ci-integration ci-pipeline-integration
 
 style:
 	$(RUFF) format .
@@ -42,6 +43,9 @@ test-integration-pipeline:
 
 test-e2e:
 	$(GPU_ENV) COLETTE_RUN_INTEGRATION=1 $(PYTEST) tests/ -m e2e -v --tb=short
+
+test-evaluation:
+	$(GPU_ENV) COLETTE_RUN_INTEGRATION=1 $(PYTEST) $(EVALUATION_TESTS) -m evaluation -v --tb=short
 
 ci-smoke:
 	mkdir -p $(CI_ARTIFACTS_DIR)
