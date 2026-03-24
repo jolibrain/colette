@@ -53,14 +53,25 @@ if [ "${needs_full_setup}" -eq 1 ]; then
     fi
     cuda_short=$(echo "${cuda_version}" | tr -d '.')
     echo "    CUDA: cu${cuda_short}"
+    torch_index_url="https://download.pytorch.org/whl/cu${cuda_short}"
 
     python3 -m venv "${VENV_CACHE}"
     "${VENV_CACHE}/bin/pip" install --quiet --upgrade pip setuptools wheel
-    "${VENV_CACHE}/bin/pip" install torch==2.7.0 torchvision torchaudio \
-        --index-url "https://download.pytorch.org/whl/cu${cuda_short}"
+
+    # Prefer the known-good torch pin when available; fallback for newer CUDA channels
+    # (e.g. cu130) where 2.7.0 wheels no longer exist.
+    if ! "${VENV_CACHE}/bin/pip" install torch==2.7.0 torchvision torchaudio --index-url "${torch_index_url}"; then
+        echo "    torch==2.7.0 not available for cu${cuda_short}; falling back to latest cu${cuda_short} wheels"
+        "${VENV_CACHE}/bin/pip" install torch torchvision torchaudio --index-url "${torch_index_url}"
+    fi
+
     "${VENV_CACHE}/bin/pip" install --quiet -e ".[dev,trag]"
     "${VENV_CACHE}/bin/pip" uninstall -y flash-attn 2>/dev/null || true
-    "${VENV_CACHE}/bin/pip" install flash-attn==2.5.6 --no-build-isolation
+    # flash-attn wheels/build may lag behind newest torch/CUDA combos.
+    # Keep CI moving if this optional acceleration package cannot be installed.
+    if ! "${VENV_CACHE}/bin/pip" install flash-attn==2.5.6 --no-build-isolation; then
+        echo "    WARNING: flash-attn==2.5.6 install failed; continuing without flash-attn"
+    fi
     echo ">>> Full venv created."
 else
     echo "    Cached venv found — updating editable install only"
