@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# ci/setup_venv.sh
+#
+# Ensures a persistent Python venv is available for CI.
+#
+# The venv is stored ONE DIRECTORY ABOVE the Jenkins workspace so it
+# survives cleanWs() between builds while remaining per-node and per-job:
+#
+#   /var/lib/jenkins/workspace/colette-ci/        <- WORKSPACE (cleaned)
+#   /var/lib/jenkins/workspace/venv_colette_cache <- VENV (persists)
+#
+# A symlink venv_colette -> VENV is created inside the workspace so the
+# Makefile's autodiscovery ($(wildcard venv_colette/bin/python)) works.
+#
+# Usage (from repo root):
+#   bash ci/setup_venv.sh
+#
+# On first run this takes several minutes (torch + flash-attn build).
+# Subsequent runs reuse the cache and just resync the editable install.
+
+set -euo pipefail
+
+WORKSPACE="${WORKSPACE:-$(pwd)}"
+VENV_CACHE="$(realpath "${WORKSPACE}/..")/venv_colette_cache"
+
+echo "=== CI venv setup ==="
+echo "    workspace : ${WORKSPACE}"
+echo "    venv cache: ${VENV_CACHE}"
+
+if [ ! -x "${VENV_CACHE}/bin/python" ]; then
+    echo ""
+    echo ">>> First-time setup: building full venv (this will take several minutes)"
+    echo ">>> Requires CUDA drivers and nvcc/nvidia-smi on PATH"
+    echo ""
+
+    # Detect CUDA version the same way create_venv_colette.sh does
+    if command -v nvcc &>/dev/null; then
+        cuda_version=$(nvcc --version | grep "release" | sed 's/.*release \([0-9]*\.[0-9]*\).*/\1/')
+    elif command -v nvidia-smi &>/dev/null; then
+        cuda_version=$(nvidia-smi | grep "CUDA Version" | sed 's/.*CUDA Version: \([0-9]*\.[0-9]*\).*/\1/')
+    else
+        echo "ERROR: CUDA not found. This node cannot build the colette venv." >&2
+        echo "       Run create_venv_colette.sh manually on this node first." >&2
+        exit 1
+    fi
+    cuda_short=$(echo "${cuda_version}" | tr -d '.')
+    echo "    CUDA: cu${cuda_short}"
+
+    python3 -m venv "${VENV_CACHE}"
+    "${VENV_CACHE}/bin/pip" install --quiet --upgrade pip setuptools wheel
+    "${VENV_CACHE}/bin/pip" install torch==2.7.0 torchvision torchaudio \
+        --index-url "https://download.pytorch.org/whl/cu${cuda_short}"
+    "${VENV_CACHE}/bin/pip" install --quiet -e ".[dev,trag]"
+    "${VENV_CACHE}/bin/pip" uninstall -y flash-attn 2>/dev/null || true
+    "${VENV_CACHE}/bin/pip" install flash-attn==2.5.6 --no-build-isolation
+    echo ">>> Full venv created."
+else
+    echo "    Cached venv found — updating editable install only"
+    "${VENV_CACHE}/bin/pip" install --quiet -e ".[dev,trag]" --no-deps
+fi
+
+# Symlink into workspace so the Makefile autodiscovers it
+ln -sfn "${VENV_CACHE}" "${WORKSPACE}/venv_colette"
+
+echo "    Python: $("${VENV_CACHE}/bin/python" --version)"
+echo "=== venv ready ==="

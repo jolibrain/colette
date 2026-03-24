@@ -14,17 +14,33 @@ pipeline {
   }
 
   environment {
-    PYTHON_BIN = 'venv_colette/bin/python'
     CI_ARTIFACTS_DIR = '.ci-artifacts'
+    // Persistent venv one level above the workspace so cleanWs never removes it.
+    // Example path: /var/lib/jenkins/workspace/venv_colette_cache
+    VENV_CACHE = "${WORKSPACE}/../venv_colette_cache"
   }
 
   stages {
-    stage('PR Smoke') {
+    stage('Setup') {
       agent {
-        node { label 'linux && cpu' }
+        node { label 'linux && gpu' }
       }
       steps {
-        sh 'set -e; make ci-smoke'
+        // Creates the persistent venv on first run (~5-10 min); reuses it on subsequent runs.
+        sh 'bash ci/setup_venv.sh'
+      }
+    }
+
+    stage('PR Smoke') {
+      agent {
+        node { label 'linux && gpu' }
+      }
+      steps {
+        sh '''
+          set -e
+          ln -sfn "${VENV_CACHE}" venv_colette
+          make ci-smoke
+        '''
       }
       post {
         always {
@@ -45,6 +61,7 @@ pipeline {
           lock(resource: null, label: "${NODE_NAME}-gpu", variable: 'LOCKED_GPU', quantity: 1) {
             sh '''
               set -e
+              ln -sfn "${VENV_CACHE}" venv_colette
               export CUDA_VISIBLE_DEVICES=$(echo ${LOCKED_GPU} | sed -n -e "s/[^,]* GPU \\([^[0-9,]]\\)*/\\1/gp")
               [ -n "$CUDA_VISIBLE_DEVICES" ] || export CUDA_VISIBLE_DEVICES=${GPU_ID}
               export COLETTE_GPU_ID=$CUDA_VISIBLE_DEVICES
@@ -77,6 +94,7 @@ pipeline {
               lock(resource: null, label: "${NODE_NAME}-gpu", variable: 'LOCKED_GPU', quantity: 1) {
                 sh '''
                   set -e
+                  ln -sfn "${VENV_CACHE}" venv_colette
                   export CUDA_VISIBLE_DEVICES=$(echo ${LOCKED_GPU} | sed -n -e "s/[^,]* GPU \\([^[0-9,]]\\)*/\\1/gp")
                   [ -n "$CUDA_VISIBLE_DEVICES" ] || export CUDA_VISIBLE_DEVICES=${GPU_ID}
                   export COLETTE_GPU_ID=$CUDA_VISIBLE_DEVICES
@@ -104,6 +122,7 @@ pipeline {
               lock(resource: null, label: "${NODE_NAME}-gpu", variable: 'LOCKED_GPU', quantity: 1) {
                 sh '''
                   set -e
+                  ln -sfn "${VENV_CACHE}" venv_colette
                   export CUDA_VISIBLE_DEVICES=$(echo ${LOCKED_GPU} | sed -n -e "s/[^,]* GPU \\([^[0-9,]]\\)*/\\1/gp")
                   [ -n "$CUDA_VISIBLE_DEVICES" ] || export CUDA_VISIBLE_DEVICES=${GPU_ID}
                   export COLETTE_GPU_ID=$CUDA_VISIBLE_DEVICES
@@ -131,6 +150,7 @@ pipeline {
               lock(resource: null, label: "${NODE_NAME}-gpu", variable: 'LOCKED_GPU', quantity: 1) {
                 sh '''
                   set -e
+                  ln -sfn "${VENV_CACHE}" venv_colette
                   export CUDA_VISIBLE_DEVICES=$(echo ${LOCKED_GPU} | sed -n -e "s/[^,]* GPU \\([^[0-9,]]\\)*/\\1/gp")
                   [ -n "$CUDA_VISIBLE_DEVICES" ] || export CUDA_VISIBLE_DEVICES=${GPU_ID}
                   export COLETTE_GPU_ID=$CUDA_VISIBLE_DEVICES
@@ -154,6 +174,7 @@ pipeline {
 
   post {
     always {
+      // cleanWs cleans the workspace but NOT the venv cache at WORKSPACE/../venv_colette_cache
       cleanWs(
         cleanWhenAborted: true,
         cleanWhenFailure: true,
