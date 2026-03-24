@@ -89,7 +89,7 @@ else
     done
 
     # Runtime deps needed for smoke-test collection/import paths.
-    for module in pydantic fastapi typer PIL chromadb transformers qwen_vl_utils tqdm h5py; do
+    for module in pydantic fastapi typer PIL chromadb transformers qwen_vl_utils tqdm h5py faiss; do
         if ! "${VENV_CACHE}/bin/python" -c "import ${module}" >/dev/null 2>&1; then
             missing_runtime_deps=1
             break
@@ -123,6 +123,7 @@ else
             pydantic==2.11.9 \
             uvicorn==0.37.0 \
             h5py \
+            faiss-gpu-cu12==1.12.0 \
             transformers==4.57.0 \
             qwen_vl_utils==0.0.14 \
             ujson==5.11.0 \
