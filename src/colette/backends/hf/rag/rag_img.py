@@ -447,13 +447,19 @@ class ImageEmbeddingFunction(EmbeddingFunction):
             truncation=True,
             return_tensors="pt",
         ).to("cuda:" + str(self.device))
-        cache_position = torch.arange(0, len(doc_texts))
+        cache_position = torch.arange(0, len(doc_texts)).to("cuda:" + str(self.device))
         # Some embedding models (e.g., Qwen2 VL) require prepare_inputs_for_generation,
         # while other embedding models (e.g., Qwen3 embeddings) can be called directly.
         try:
             doc_inputs = self.model.prepare_inputs_for_generation(
                 **doc_inputs, cache_position=cache_position, use_cache=False
             )
+            # prepare_inputs_for_generation may add CPU tensors (e.g. causal mask);
+            # move all tensor values back to the model device.
+            doc_inputs = {
+                k: v.to("cuda:" + str(self.device)) if isinstance(v, torch.Tensor) else v
+                for k, v in doc_inputs.items()
+            }
         except Exception:
             # model has no prepare_inputs_for_generation; assume doc_inputs is acceptable
             pass
@@ -619,6 +625,7 @@ class RAGImg:
         if self.rag_indexdb_lib == "chromadb":
             self.logger.info(f"# collections: {self.rag_indexdb_client.count_collections()}")
 
+        self.rag_indexdb_collection = None
         self.reload_index_if_any(ad)
 
         # layout detection
@@ -632,9 +639,9 @@ class RAGImg:
         if self.rag_retriever is not None:
             del self.rag_retriever
             self.rag_retriever = None
-        if self.rag_indexdb_collection is not None:
+        if hasattr(self, 'rag_indexdb_collection') and self.rag_indexdb_collection is not None:
             del self.rag_indexdb_collection
-        if self.rag_indexdb_client is not None:
+        if hasattr(self, 'rag_indexdb_client') and self.rag_indexdb_client is not None:
             del self.rag_indexdb_client
 
     def reload_index_if_any(self, ad):
