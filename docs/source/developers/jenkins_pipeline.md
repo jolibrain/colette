@@ -58,6 +58,21 @@ Behavior:
 The smoke requirements file includes key import-time providers used by smoke tests
 (for example `python-doctr` for `doctr.models` imports).
 
+## Deterministic Full Environment
+
+Full setup is handled by `ci/setup_venv.sh full` and `ci/requirements-full.txt`.
+
+Behavior:
+
+1. Builds cache when missing or broken.
+2. Computes SHA256 of `ci/requirements-full.txt`.
+3. Rebuilds the full cache when the requirements hash changes.
+4. Rebuilds the full cache if core tooling such as `pytest` is missing.
+5. Installs the editable package with `--no-deps` after the pinned full requirements are installed.
+6. Attempts `flash-attn==2.5.6` separately with `--no-build-isolation`, but does not fail the pipeline if that optional acceleration package cannot be built.
+
+This avoids reusing stale integration caches and prevents `flash-attn` from failing early through pip build isolation during the main full-profile install.
+
 ## Jenkins Parameters
 
 - `GPU_ID` (string): fallback GPU index for `CUDA_VISIBLE_DEVICES`.
@@ -186,6 +201,17 @@ If CUDA/torch installation fails during setup:
 
 1. Verify `nvcc` or `nvidia-smi` is available on the Jenkins node.
 2. Confirm node labels still match a GPU-capable runner.
+
+If `Integration Stable` or nightly lanes fail with missing tooling such as `pytest`:
+
+1. Confirm `Setup Full` ran on the same build.
+2. Check whether `ci/requirements-full.txt` changed; the full cache should rebuild automatically when its hash changes.
+3. If the cache predates the deterministic full setup, rerun once on the latest branch head or delete `../venv_colette_full_cache` to force a clean rebuild.
+
+If `flash-attn` fails during full setup:
+
+1. Treat it as non-blocking unless a test explicitly requires it.
+2. The pipeline installs it separately on purpose so the main integration environment can still come up without it.
 
 If a cache is corrupted:
 
