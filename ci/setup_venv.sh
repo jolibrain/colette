@@ -138,15 +138,35 @@ if [ "${needs_full_setup}" -eq 1 ]; then
         "${VENV_CACHE}/bin/pip" install -r "${FULL_REQ_FILE}"
         "${VENV_CACHE}/bin/pip" install --quiet -e . --no-deps
         sha256sum "${FULL_REQ_FILE}" | awk '{print $1}' > "${VENV_CACHE}/.full_requirements.sha256"
-        # flash-attn wheels/build may lag behind newest torch/CUDA combos.
-        # Keep CI moving if this optional acceleration package cannot be installed,
-        # unless this lane explicitly requires it.
-        if ! "${VENV_CACHE}/bin/pip" install flash-attn==2.5.6 --no-build-isolation; then
+
+        # Avoid expensive flash-attn build attempts when torch and host CUDA are clearly mismatched.
+        torch_cuda_version=$("${VENV_CACHE}/bin/python" -c 'import torch; print(torch.version.cuda or "")')
+        can_try_flash_attn=1
+        if [ -z "${torch_cuda_version}" ]; then
+            can_try_flash_attn=0
+            msg="torch has no CUDA runtime (torch.version.cuda is empty)"
+        elif [ "${torch_cuda_version}" != "${cuda_version}" ]; then
+            can_try_flash_attn=0
+            msg="host CUDA ${cuda_version} != torch CUDA ${torch_cuda_version}"
+        fi
+
+        if [ "${can_try_flash_attn}" -eq 1 ]; then
+            # flash-attn wheels/build may lag behind newest torch/CUDA combos.
+            # Keep CI moving if this optional acceleration package cannot be installed,
+            # unless this lane explicitly requires it.
+            if ! "${VENV_CACHE}/bin/pip" install flash-attn==2.5.6 --no-build-isolation; then
+                if [ "${REQUIRE_FLASH_ATTN}" = "1" ]; then
+                    echo "ERROR: flash-attn==2.5.6 install failed but COLETTE_REQUIRE_FLASH_ATTN=1" >&2
+                    exit 1
+                fi
+                echo "    WARNING: flash-attn==2.5.6 install failed; continuing without flash-attn"
+            fi
+        else
             if [ "${REQUIRE_FLASH_ATTN}" = "1" ]; then
-                echo "ERROR: flash-attn==2.5.6 install failed but COLETTE_REQUIRE_FLASH_ATTN=1" >&2
+                echo "ERROR: ${msg}; cannot satisfy COLETTE_REQUIRE_FLASH_ATTN=1" >&2
                 exit 1
             fi
-            echo "    WARNING: flash-attn==2.5.6 install failed; continuing without flash-attn"
+            echo "    WARNING: skipping flash-attn install (${msg})"
         fi
         echo ">>> Full venv created."
     fi
