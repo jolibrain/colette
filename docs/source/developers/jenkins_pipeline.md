@@ -52,7 +52,11 @@ Behavior:
 1. Builds cache when missing or broken.
 2. Computes SHA256 of `ci/requirements-smoke.txt`.
 3. Rebuilds the smoke cache when the requirements hash changes.
-4. Keeps runtime dependencies deterministic instead of ad-hoc missing-module installs.
+4. Runs `ci/verify_smoke_imports.py` to import all smoke test files before pytest starts.
+5. Keeps runtime dependencies deterministic instead of ad-hoc missing-module installs.
+
+The smoke requirements file includes key import-time providers used by smoke tests
+(for example `python-doctr` for `doctr.models` imports).
 
 ## Jenkins Parameters
 
@@ -175,7 +179,8 @@ Each lane writes a dedicated JUnit XML file under `.ci-artifacts/`:
 If smoke lane fails during imports:
 
 1. Confirm `ci/requirements-smoke.txt` includes the needed package.
-2. Re-run build; the hash change forces a smoke cache rebuild.
+2. Check preflight output from `ci/verify_smoke_imports.py` for the full missing-module list.
+3. Re-run build; the hash change forces a smoke cache rebuild.
 
 If CUDA/torch installation fails during setup:
 
