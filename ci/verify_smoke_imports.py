@@ -44,6 +44,16 @@ def main() -> int:
     args = parser.parse_args()
 
     workspace = Path(args.workspace).resolve()
+
+    # Match pytest collection import context for test-local helpers.
+    # Several smoke tests import from tests/utils.py as `import utils`.
+    repo_src = workspace / "src"
+    tests_dir = workspace / "tests"
+    for p in (workspace, repo_src, tests_dir):
+        p_str = str(p)
+        if p.exists() and p_str not in sys.path:
+            sys.path.insert(0, p_str)
+
     missing_modules: set[str] = set()
     failures: list[str] = []
 
