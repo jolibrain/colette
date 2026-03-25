@@ -1,19 +1,15 @@
 import os
-import importlib.util
 from typing import Union
 
 import torch
 from transformers import ColPaliForRetrieval, ColPaliProcessor
 
+from ..hf.attention import resolve_attn_implementation
 from .collection import Collection
 from .infra.config import ColBERTConfig
 from .infra.run import Run
 from .modeling.checkpoint import Checkpoint
 from .search.index_storage import IndexScorer
-
-
-def resolve_attn_implementation():
-    return "flash_attention_2" if importlib.util.find_spec("flash_attn") is not None else "eager"
 
 TextQueries = Union[str, "list[str]", "dict[int, str]"]
 

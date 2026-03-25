@@ -11,6 +11,7 @@ pipeline {
     string(name: 'GPU_ID', defaultValue: '1', description: 'GPU index to expose in CUDA_VISIBLE_DEVICES')
     booleanParam(name: 'RUN_INTEGRATION_STABLE', defaultValue: false, description: 'Run optional protected integration-stable lane')
     booleanParam(name: 'RUN_NIGHTLY_MATRIX', defaultValue: false, description: 'Run full GPU matrix (integration, pipeline, e2e)')
+    booleanParam(name: 'REQUIRE_FLASH_ATTN', defaultValue: false, description: 'Require flash-attn in full-profile lanes; use only on a pre-provisioned runner')
   }
 
   environment {
@@ -37,7 +38,9 @@ pipeline {
       }
       steps {
         // Creates/repairs the full integration cache only when deeper lanes are requested.
-        sh 'bash ci/setup_venv.sh full'
+        withEnv(["COLETTE_REQUIRE_FLASH_ATTN=${params.REQUIRE_FLASH_ATTN ? '1' : '0'}"]) {
+          sh 'bash ci/setup_venv.sh full'
+        }
       }
     }
 
@@ -80,6 +83,7 @@ pipeline {
               [ -n "$CUDA_VISIBLE_DEVICES" ] || export CUDA_VISIBLE_DEVICES=${GPU_ID}
               export COLETTE_GPU_ID=$CUDA_VISIBLE_DEVICES
               export COLETTE_RUN_INTEGRATION=1
+              export COLETTE_REQUIRE_FLASH_ATTN=${REQUIRE_FLASH_ATTN}
               export HF_TOKEN=${HF_TOKEN}
               nvidia-smi
               make ci-integration-stable GPU_ID=$CUDA_VISIBLE_DEVICES
@@ -115,6 +119,7 @@ pipeline {
                   [ -n "$CUDA_VISIBLE_DEVICES" ] || export CUDA_VISIBLE_DEVICES=${GPU_ID}
                   export COLETTE_GPU_ID=$CUDA_VISIBLE_DEVICES
                   export COLETTE_RUN_INTEGRATION=1
+                  export COLETTE_REQUIRE_FLASH_ATTN=${REQUIRE_FLASH_ATTN}
                   export HF_TOKEN=${HF_TOKEN}
                   nvidia-smi
                   make ci-integration GPU_ID=$CUDA_VISIBLE_DEVICES
@@ -145,6 +150,7 @@ pipeline {
                   [ -n "$CUDA_VISIBLE_DEVICES" ] || export CUDA_VISIBLE_DEVICES=${GPU_ID}
                   export COLETTE_GPU_ID=$CUDA_VISIBLE_DEVICES
                   export COLETTE_RUN_INTEGRATION=1
+                  export COLETTE_REQUIRE_FLASH_ATTN=${REQUIRE_FLASH_ATTN}
                   export HF_TOKEN=${HF_TOKEN}
                   nvidia-smi
                   make ci-pipeline-integration GPU_ID=$CUDA_VISIBLE_DEVICES
@@ -175,6 +181,7 @@ pipeline {
                   [ -n "$CUDA_VISIBLE_DEVICES" ] || export CUDA_VISIBLE_DEVICES=${GPU_ID}
                   export COLETTE_GPU_ID=$CUDA_VISIBLE_DEVICES
                   export COLETTE_RUN_INTEGRATION=1
+                  export COLETTE_REQUIRE_FLASH_ATTN=${REQUIRE_FLASH_ATTN}
                   export HF_TOKEN=${HF_TOKEN}
                   nvidia-smi
                   make ci-e2e GPU_ID=$CUDA_VISIBLE_DEVICES

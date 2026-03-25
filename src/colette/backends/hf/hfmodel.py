@@ -1,5 +1,4 @@
 import base64
-import importlib.util
 from io import BytesIO
 from threading import Thread
 
@@ -25,12 +24,9 @@ from vllm import SamplingParams
 from colette.apidata import LLMModelObj
 from colette.llmmodel import LLMModel, LLMModelBadParamException
 
+from .attention import resolve_attn_implementation
 from .model_cache import ModelCache
 from .vllm_client import VllmClient
-
-
-def resolve_attn_implementation():
-    return "flash_attention_2" if importlib.util.find_spec("flash_attn") is not None else "eager"
 
 
 def stitch_images_vertically(image_list):

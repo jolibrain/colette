@@ -24,6 +24,7 @@ WORKSPACE="${WORKSPACE:-$(pwd)}"
 PROFILE="${1:-smoke}"
 SMOKE_REQ_FILE="${WORKSPACE}/ci/requirements-smoke.txt"
 FULL_REQ_FILE="${WORKSPACE}/ci/requirements-full.txt"
+REQUIRE_FLASH_ATTN="${COLETTE_REQUIRE_FLASH_ATTN:-0}"
 
 if [ "${PROFILE}" = "smoke" ]; then
     VENV_CACHE="$(realpath "${WORKSPACE}/..")/venv_colette_smoke_cache"
@@ -38,6 +39,7 @@ echo "=== CI venv setup ==="
 echo "    workspace : ${WORKSPACE}"
 echo "    profile   : ${PROFILE}"
 echo "    venv cache: ${VENV_CACHE}"
+echo "    require flash-attn: ${REQUIRE_FLASH_ATTN}"
 
 needs_full_setup=0
 setup_reason=""
@@ -84,6 +86,11 @@ elif [ "${PROFILE}" = "full" ]; then
     if [ "${needs_full_setup}" -eq 0 ] && ! "${VENV_CACHE}/bin/python" -c "import pytest" >/dev/null 2>&1; then
         needs_full_setup=1
         setup_reason="pytest missing from full cache"
+    fi
+
+    if [ "${REQUIRE_FLASH_ATTN}" = "1" ] && [ "${needs_full_setup}" -eq 0 ] && ! "${VENV_CACHE}/bin/python" -c "import flash_attn" >/dev/null 2>&1; then
+        needs_full_setup=1
+        setup_reason="flash_attn required but missing from full cache"
     fi
 fi
 
@@ -132,8 +139,13 @@ if [ "${needs_full_setup}" -eq 1 ]; then
         "${VENV_CACHE}/bin/pip" install --quiet -e . --no-deps
         sha256sum "${FULL_REQ_FILE}" | awk '{print $1}' > "${VENV_CACHE}/.full_requirements.sha256"
         # flash-attn wheels/build may lag behind newest torch/CUDA combos.
-        # Keep CI moving if this optional acceleration package cannot be installed.
+        # Keep CI moving if this optional acceleration package cannot be installed,
+        # unless this lane explicitly requires it.
         if ! "${VENV_CACHE}/bin/pip" install flash-attn==2.5.6 --no-build-isolation; then
+            if [ "${REQUIRE_FLASH_ATTN}" = "1" ]; then
+                echo "ERROR: flash-attn==2.5.6 install failed but COLETTE_REQUIRE_FLASH_ATTN=1" >&2
+                exit 1
+            fi
             echo "    WARNING: flash-attn==2.5.6 install failed; continuing without flash-attn"
         fi
         echo ">>> Full venv created."

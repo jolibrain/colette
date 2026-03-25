@@ -2,20 +2,16 @@ import os
 import tarfile
 import time
 import urllib
-import importlib.util
 
 import torch
 from transformers import ColPaliForRetrieval, ColPaliProcessor
 
+from ..hf.attention import resolve_attn_implementation
 from .indexing.collection_encoder import CollectionEncoder
 from .infra.config.config import ColBERTConfig
 from .infra.run import Run
 from .modeling.checkpoint import Checkpoint
 from .utils.utils import batch
-
-
-def resolve_attn_implementation():
-    return "flash_attention_2" if importlib.util.find_spec("flash_attn") is not None else "eager"
 
 
 class Embedder:

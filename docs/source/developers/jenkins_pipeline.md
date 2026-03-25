@@ -78,6 +78,7 @@ This avoids reusing stale integration caches and prevents `flash-attn` from fail
 - `GPU_ID` (string): fallback GPU index for `CUDA_VISIBLE_DEVICES`.
 - `RUN_INTEGRATION_STABLE` (bool): enables the protected integration-stable lane.
 - `RUN_NIGHTLY_MATRIX` (bool): enables full nightly-style GPU matrix.
+- `REQUIRE_FLASH_ATTN` (bool): requires `flash_attn` in full-profile lanes; use only on a runner where that package is already known to build/install correctly.
 
 ## Credentials
 
@@ -142,6 +143,7 @@ What this validates:
 
 - Stable, high-signal integration paths used as a protected optional gate.
 - Real integration behavior with `COLETTE_RUN_INTEGRATION=1` and GPU environment variables.
+- Default behavior intentionally does not require `flash-attn`; model loaders fall back to `eager` attention when needed.
 
 ### Nightly Matrix: Integration (`make ci-integration`)
 
@@ -179,6 +181,19 @@ What this validates:
 - Deepest runtime workflows and end-to-end behavior.
 - Scenarios expected to be the most environment-sensitive and longest-running.
 
+### Flash-Attn Split
+
+Recommended split:
+
+- `PR Smoke`: never requires `flash-attn`.
+- `Integration Stable`: should normally run with `REQUIRE_FLASH_ATTN=false` so it validates functional correctness without depending on a fragile CUDA extension build.
+- Nightly or dedicated hardware-validation runs: may set `REQUIRE_FLASH_ATTN=true` on a pre-provisioned runner to verify the accelerated path explicitly.
+
+When `REQUIRE_FLASH_ATTN=true`:
+
+- `ci/setup_venv.sh full` will fail if `flash-attn` cannot be installed.
+- runtime model initialization will fail fast if `flash_attn` is unavailable instead of silently falling back to `eager`.
+
 ### JUnit Artifacts
 
 Each lane writes a dedicated JUnit XML file under `.ci-artifacts/`:
@@ -212,6 +227,7 @@ If `flash-attn` fails during full setup:
 
 1. Treat it as non-blocking unless a test explicitly requires it.
 2. The pipeline installs it separately on purpose so the main integration environment can still come up without it.
+3. If you want the accelerated path to be mandatory, rerun on a pre-provisioned runner with `REQUIRE_FLASH_ATTN=true`.
 
 If a cache is corrupted:
 

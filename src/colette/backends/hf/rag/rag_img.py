@@ -1,6 +1,5 @@
 import base64
 import hashlib
-import importlib.util
 import json
 import logging
 from io import BytesIO
@@ -28,6 +27,7 @@ from colette.backends.coldb import ColDB
 from colette.inputconnector import InputConnectorBadParamException
 
 from ..layout_detector import LayoutDetector
+from ..attention import resolve_attn_implementation
 from ..model_cache import ModelCache
 from ..preprocessing import DocumentProcessor, ImageProcessor
 
@@ -64,10 +64,6 @@ def transform_pil_image_to_base64(image):
 
 
 chromadb.api.types.is_image = is_image
-
-
-def resolve_attn_implementation():
-    return "flash_attention_2" if importlib.util.find_spec("flash_attn") is not None else "eager"
 
 
 def get_md5sum(file_path, kvstore):
