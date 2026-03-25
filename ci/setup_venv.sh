@@ -25,6 +25,11 @@ PROFILE="${1:-smoke}"
 SMOKE_REQ_FILE="${WORKSPACE}/ci/requirements-smoke.txt"
 FULL_REQ_FILE="${WORKSPACE}/ci/requirements-full.txt"
 REQUIRE_FLASH_ATTN="${COLETTE_REQUIRE_FLASH_ATTN:-0}"
+TORCH_VERSION="${COLETTE_TORCH_VERSION:-2.8.0}"
+TORCHVISION_VERSION="${COLETTE_TORCHVISION_VERSION:-0.23.0}"
+TORCHAUDIO_VERSION="${COLETTE_TORCHAUDIO_VERSION:-2.8.0}"
+TORCH_CHANNEL="${COLETTE_TORCH_CHANNEL:-cu128}"
+FLASH_ATTN_VERSION="${COLETTE_FLASH_ATTN_VERSION:-2.5.6}"
 
 if [ "${PROFILE}" = "smoke" ]; then
     VENV_CACHE="$(realpath "${WORKSPACE}/..")/venv_colette_smoke_cache"
@@ -40,6 +45,8 @@ echo "    workspace : ${WORKSPACE}"
 echo "    profile   : ${PROFILE}"
 echo "    venv cache: ${VENV_CACHE}"
 echo "    require flash-attn: ${REQUIRE_FLASH_ATTN}"
+echo "    torch bundle: torch==${TORCH_VERSION} torchvision==${TORCHVISION_VERSION} torchaudio==${TORCHAUDIO_VERSION} (${TORCH_CHANNEL})"
+echo "    flash-attn: ${FLASH_ATTN_VERSION}"
 
 needs_full_setup=0
 setup_reason=""
@@ -103,29 +110,41 @@ if [ "${needs_full_setup}" -eq 1 ]; then
     # Clean corrupted/incomplete cache before recreating.
     rm -rf "${VENV_CACHE}"
 
-    # Detect CUDA version the same way create_venv_colette.sh does
+    driver_cuda_version=""
+    build_cuda_version=""
     if command -v nvcc &>/dev/null; then
-        cuda_version=$(nvcc --version | grep "release" | sed 's/.*release \([0-9]*\.[0-9]*\).*/\1/')
-    elif command -v nvidia-smi &>/dev/null; then
-        cuda_version=$(nvidia-smi | grep "CUDA Version" | sed 's/.*CUDA Version: \([0-9]*\.[0-9]*\).*/\1/')
-    else
+        build_cuda_version=$(nvcc --version | grep "release" | sed 's/.*release \([0-9]*\.[0-9]*\).*/\1/')
+    fi
+    if command -v nvidia-smi &>/dev/null; then
+        driver_cuda_version=$(nvidia-smi | grep "CUDA Version" | sed 's/.*CUDA Version: \([0-9]*\.[0-9]*\).*/\1/')
+    fi
+    if [ -z "${build_cuda_version}" ] && [ -z "${driver_cuda_version}" ]; then
         echo "ERROR: CUDA not found. This node cannot build the colette venv." >&2
         echo "       Run create_venv_colette.sh manually on this node first." >&2
         exit 1
     fi
-    cuda_short=$(echo "${cuda_version}" | tr -d '.')
-    echo "    CUDA: cu${cuda_short}"
-    torch_index_url="https://download.pytorch.org/whl/cu${cuda_short}"
+    if [ -n "${driver_cuda_version}" ]; then
+        echo "    CUDA driver support: ${driver_cuda_version}"
+    fi
+    if [ -n "${build_cuda_version}" ]; then
+        echo "    CUDA build toolkit : ${build_cuda_version}"
+    else
+        echo "    CUDA build toolkit : not found (nvcc unavailable)"
+    fi
+    torch_index_url="https://download.pytorch.org/whl/${TORCH_CHANNEL}"
 
     python3 -m venv "${VENV_CACHE}"
     "${VENV_CACHE}/bin/pip" install --quiet --upgrade pip setuptools wheel
 
-    # Prefer the known-good torch pin when available; fallback for newer CUDA channels
-    # (e.g. cu130) where 2.7.0 wheels no longer exist.
-    if ! "${VENV_CACHE}/bin/pip" install torch==2.7.0 torchvision torchaudio --index-url "${torch_index_url}"; then
-        echo "    torch==2.7.0 not available for cu${cuda_short}; falling back to latest cu${cuda_short} wheels"
-        "${VENV_CACHE}/bin/pip" install torch torchvision torchaudio --index-url "${torch_index_url}"
-    fi
+    "${VENV_CACHE}/bin/pip" install \
+        "torch==${TORCH_VERSION}" \
+        "torchvision==${TORCHVISION_VERSION}" \
+        "torchaudio==${TORCHAUDIO_VERSION}" \
+        --index-url "${torch_index_url}"
+    installed_torch_version=$("${VENV_CACHE}/bin/python" -c 'import torch; print(torch.__version__)')
+    installed_torch_cuda=$("${VENV_CACHE}/bin/python" -c 'import torch; print(torch.version.cuda or "")')
+    echo "    installed torch     : ${installed_torch_version}"
+    echo "    torch CUDA runtime  : ${installed_torch_cuda:-<none>}"
 
     if [ "${PROFILE}" = "smoke" ]; then
         echo "    Installing smoke profile dependencies from ${SMOKE_REQ_FILE}"
@@ -138,30 +157,36 @@ if [ "${needs_full_setup}" -eq 1 ]; then
         "${VENV_CACHE}/bin/pip" install -r "${FULL_REQ_FILE}"
         "${VENV_CACHE}/bin/pip" install --quiet -e . --no-deps
         sha256sum "${FULL_REQ_FILE}" | awk '{print $1}' > "${VENV_CACHE}/.full_requirements.sha256"
-
-        # Avoid expensive flash-attn build attempts when torch and host CUDA are clearly mismatched.
         torch_cuda_version=$("${VENV_CACHE}/bin/python" -c 'import torch; print(torch.version.cuda or "")')
+        echo "    flash-attn compatibility check"
+        echo "      require flash-attn : ${REQUIRE_FLASH_ATTN}"
+        echo "      nvcc CUDA          : ${build_cuda_version:-<none>}"
+        echo "      driver CUDA        : ${driver_cuda_version:-<none>}"
+        echo "      torch CUDA         : ${torch_cuda_version:-<none>}"
+        echo "      flash-attn version : ${FLASH_ATTN_VERSION}"
         can_try_flash_attn=1
         if [ -z "${torch_cuda_version}" ]; then
             can_try_flash_attn=0
             msg="torch has no CUDA runtime (torch.version.cuda is empty)"
-        elif [ "${torch_cuda_version}" != "${cuda_version}" ]; then
+        elif [ -z "${build_cuda_version}" ]; then
             can_try_flash_attn=0
-            msg="host CUDA ${cuda_version} != torch CUDA ${torch_cuda_version}"
+            msg="nvcc is unavailable; flash-attn ${FLASH_ATTN_VERSION} would require a source build"
+        elif [ "${torch_cuda_version}" != "${build_cuda_version}" ]; then
+            can_try_flash_attn=0
+            msg="nvcc CUDA ${build_cuda_version} != torch CUDA ${torch_cuda_version}"
         fi
 
         if [ "${can_try_flash_attn}" -eq 1 ]; then
-            # flash-attn wheels/build may lag behind newest torch/CUDA combos.
-            # Keep CI moving if this optional acceleration package cannot be installed,
-            # unless this lane explicitly requires it.
-            if ! "${VENV_CACHE}/bin/pip" install flash-attn==2.5.6 --no-build-isolation; then
+            echo "    flash-attn decision  : attempt install"
+            if ! "${VENV_CACHE}/bin/pip" install "flash-attn==${FLASH_ATTN_VERSION}" --no-build-isolation; then
                 if [ "${REQUIRE_FLASH_ATTN}" = "1" ]; then
-                    echo "ERROR: flash-attn==2.5.6 install failed but COLETTE_REQUIRE_FLASH_ATTN=1" >&2
+                    echo "ERROR: flash-attn==${FLASH_ATTN_VERSION} install failed but COLETTE_REQUIRE_FLASH_ATTN=1" >&2
                     exit 1
                 fi
-                echo "    WARNING: flash-attn==2.5.6 install failed; continuing without flash-attn"
+                echo "    WARNING: flash-attn==${FLASH_ATTN_VERSION} install failed; continuing without flash-attn"
             fi
         else
+            echo "    flash-attn decision  : skip install"
             if [ "${REQUIRE_FLASH_ATTN}" = "1" ]; then
                 echo "ERROR: ${msg}; cannot satisfy COLETTE_REQUIRE_FLASH_ATTN=1" >&2
                 exit 1
