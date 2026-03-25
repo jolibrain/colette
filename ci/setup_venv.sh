@@ -22,6 +22,7 @@ set -euo pipefail
 
 WORKSPACE="${WORKSPACE:-$(pwd)}"
 PROFILE="${1:-smoke}"
+SMOKE_REQ_FILE="${WORKSPACE}/ci/requirements-smoke.txt"
 
 if [ "${PROFILE}" = "smoke" ]; then
     VENV_CACHE="$(realpath "${WORKSPACE}/..")/venv_colette_smoke_cache"
@@ -38,13 +39,34 @@ echo "    profile   : ${PROFILE}"
 echo "    venv cache: ${VENV_CACHE}"
 
 needs_full_setup=0
+setup_reason=""
 if [ ! -x "${VENV_CACHE}/bin/python" ] || [ ! -x "${VENV_CACHE}/bin/pip" ]; then
     needs_full_setup=1
+    setup_reason="missing python/pip in cache"
+fi
+
+if [ "${PROFILE}" = "smoke" ]; then
+    if [ ! -f "${SMOKE_REQ_FILE}" ]; then
+        echo "ERROR: missing smoke requirements file: ${SMOKE_REQ_FILE}" >&2
+        exit 1
+    fi
+
+    req_hash_file="${VENV_CACHE}/.smoke_requirements.sha256"
+    current_hash=$(sha256sum "${SMOKE_REQ_FILE}" | awk '{print $1}')
+    cached_hash=""
+    if [ -f "${req_hash_file}" ]; then
+        cached_hash=$(cat "${req_hash_file}" 2>/dev/null || true)
+    fi
+
+    if [ "${needs_full_setup}" -eq 0 ] && [ "${cached_hash}" != "${current_hash}" ]; then
+        needs_full_setup=1
+        setup_reason="smoke requirements hash changed"
+    fi
 fi
 
 if [ "${needs_full_setup}" -eq 1 ]; then
     echo ""
-    echo ">>> Building full venv (first run or broken cache detected)"
+    echo ">>> Building venv (reason: ${setup_reason:-first run or broken cache detected})"
     echo ">>> Requires CUDA drivers and nvcc/nvidia-smi on PATH"
     echo ""
 
@@ -76,28 +98,10 @@ if [ "${needs_full_setup}" -eq 1 ]; then
     fi
 
     if [ "${PROFILE}" = "smoke" ]; then
-        echo "    Installing smoke profile dependencies"
-        "${VENV_CACHE}/bin/pip" install \
-            pytest==8.4.2 \
-            pytest-cov==7.0.0 \
-            pytest-asyncio==1.2.0 \
-            click==8.3.0 \
-            chromadb==1.1.0 \
-            fastapi==0.118.0 \
-            pydantic==2.11.9 \
-            uvicorn==0.37.0 \
-            h5py \
-            faiss-gpu-cu12==1.12.0 \
-            pypandoc_binary==1.15 \
-            transformers==4.57.0 \
-            qwen_vl_utils==0.0.14 \
-            ujson==5.11.0 \
-            GitPython==3.1.45 \
-            pillow \
-            tqdm \
-            typer \
-            vllm==0.11.0
+        echo "    Installing smoke profile dependencies from ${SMOKE_REQ_FILE}"
+        "${VENV_CACHE}/bin/pip" install -r "${SMOKE_REQ_FILE}"
         "${VENV_CACHE}/bin/pip" install --quiet -e . --no-deps
+        sha256sum "${SMOKE_REQ_FILE}" | awk '{print $1}' > "${VENV_CACHE}/.smoke_requirements.sha256"
         echo ">>> Smoke venv created."
     else
         "${VENV_CACHE}/bin/pip" install --quiet -e ".[dev,trag]"
@@ -122,93 +126,9 @@ else
         exit 0
     fi
 
-    # Validate that key test/runtime tooling exists in the cached environment.
-    # Older caches may miss dependencies, which makes smoke collection fail.
-    missing_dev_deps=0
-    missing_runtime_deps=0
-
-    for module in pytest pytest_asyncio pytest_cov; do
-        if ! "${VENV_CACHE}/bin/python" -c "import ${module}" >/dev/null 2>&1; then
-            missing_dev_deps=1
-            break
-        fi
-    done
-
-    # Runtime deps needed for smoke-test collection/import paths.
-    for module in pydantic fastapi typer PIL chromadb transformers qwen_vl_utils tqdm h5py faiss pypandoc pypdfium2; do
-        if ! "${VENV_CACHE}/bin/python" -c "import ${module}" >/dev/null 2>&1; then
-            missing_runtime_deps=1
-            break
-        fi
-    done
-
-    # torch and vllm are handled separately to support CUDA-index install.
-    if ! "${VENV_CACHE}/bin/python" -c "import torch" >/dev/null 2>&1; then
-        missing_runtime_deps=1
-    fi
-    if ! "${VENV_CACHE}/bin/python" -c "import vllm" >/dev/null 2>&1; then
-        missing_runtime_deps=1
-    fi
-
-    if [ "${missing_dev_deps}" -eq 1 ]; then
-        echo "    Dev test dependencies missing in cache; installing minimal pytest tooling"
-        "${VENV_CACHE}/bin/pip" install pytest==8.4.2 pytest-cov==7.0.0 pytest-asyncio==1.2.0
-
-        # Ensure editable package metadata remains synced without pulling heavy deps.
-        "${VENV_CACHE}/bin/pip" install --quiet -e . --no-deps
-    fi
-
-    if [ "${missing_runtime_deps}" -eq 1 ]; then
-        echo "    Runtime dependencies missing in cache; installing smoke runtime bundle"
-
-        # Install non-torch runtime dependencies required by smoke imports.
-        "${VENV_CACHE}/bin/pip" install \
-            click==8.3.0 \
-            chromadb==1.1.0 \
-            fastapi==0.118.0 \
-            pydantic==2.11.9 \
-            uvicorn==0.37.0 \
-            h5py \
-            faiss-gpu-cu12==1.12.0 \
-            pypandoc_binary==1.15 \
-            pypdfium2 \
-            transformers==4.57.0 \
-            qwen_vl_utils==0.0.14 \
-            ujson==5.11.0 \
-            GitPython==3.1.45 \
-            pillow \
-            tqdm \
-            typer
-
-        # Install torch stack from CUDA-specific index if needed.
-        if ! "${VENV_CACHE}/bin/python" -c "import torch" >/dev/null 2>&1; then
-            if command -v nvcc &>/dev/null; then
-                cuda_version=$(nvcc --version | grep "release" | sed 's/.*release \([0-9]*\.[0-9]*\).*/\1/')
-            elif command -v nvidia-smi &>/dev/null; then
-                cuda_version=$(nvidia-smi | grep "CUDA Version" | sed 's/.*CUDA Version: \([0-9]*\.[0-9]*\).*/\1/')
-            else
-                echo "ERROR: CUDA not found. Cannot install torch runtime dependencies." >&2
-                exit 1
-            fi
-            cuda_short=$(echo "${cuda_version}" | tr -d '.')
-            torch_index_url="https://download.pytorch.org/whl/cu${cuda_short}"
-            if ! "${VENV_CACHE}/bin/pip" install torch==2.7.0 torchvision torchaudio --index-url "${torch_index_url}"; then
-                "${VENV_CACHE}/bin/pip" install torch torchvision torchaudio --index-url "${torch_index_url}"
-            fi
-        fi
-
-        # vLLM is imported by rag_img at module load time during smoke test collection.
-        if ! "${VENV_CACHE}/bin/python" -c "import vllm" >/dev/null 2>&1; then
-            "${VENV_CACHE}/bin/pip" install vllm==0.11.0
-        fi
-
-        # Ensure editable package metadata remains synced without pulling heavy deps.
-        "${VENV_CACHE}/bin/pip" install --quiet -e . --no-deps
-    fi
-
-    if [ "${missing_dev_deps}" -eq 0 ] && [ "${missing_runtime_deps}" -eq 0 ]; then
-        "${VENV_CACHE}/bin/pip" install --quiet -e ".[dev,trag]" --no-deps
-    fi
+    # Smoke profile is deterministic from requirements-smoke.txt and hash tracking.
+    # Keep editable metadata synced without mutating dependency versions.
+    "${VENV_CACHE}/bin/pip" install --quiet -e . --no-deps
 fi
 
 # Symlink into workspace so the Makefile autodiscovers it
