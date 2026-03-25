@@ -1,4 +1,5 @@
 import base64
+import importlib.util
 from io import BytesIO
 from threading import Thread
 
@@ -26,6 +27,10 @@ from colette.llmmodel import LLMModel, LLMModelBadParamException
 
 from .model_cache import ModelCache
 from .vllm_client import VllmClient
+
+
+def resolve_attn_implementation():
+    return "flash_attention_2" if importlib.util.find_spec("flash_attn") is not None else "eager"
 
 
 def stitch_images_vertically(image_list):
@@ -99,6 +104,7 @@ class HFModel(LLMModel):
 
         # - define self.llm, used by hflib for inference
         if self.llm_lib == "huggingface":
+            attn_implementation = resolve_attn_implementation()
             self.logger.debug(
                 "Using HuggingFace model: "
                 + self.llm_source
@@ -111,7 +117,7 @@ class HFModel(LLMModel):
                     torch_dtype=torch.float16,
                     quantization_config=bandb_config,
                     cache_dir=self.models_repository,
-                    attn_implementation="flash_attention_2",
+                    attn_implementation=attn_implementation,
                 ).eval()
                 min_pixels = 1 * 28 * 28
                 max_pixels = 2560 * 28 * 28
@@ -173,7 +179,7 @@ class HFModel(LLMModel):
                     self.llm_source,
                     torch_dtype=torch.float16,
                     cache_dir=self.models_repository,
-                    attn_implementation="flash_attention_2",
+                    attn_implementation=attn_implementation,
                 )
                 self.processor = AutoProcessor.from_pretrained(
                     self.llm_source,
@@ -184,7 +190,7 @@ class HFModel(LLMModel):
                     self.llm_source,
                     torch_dtype="auto",
                     device_map=self.device,
-                    attn_implementation="flash_attention_2",
+                    attn_implementation=attn_implementation,
                     cache_dir=self.models_repository,
                 )
                 self.llm_type = "nanonets"

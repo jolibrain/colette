@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import importlib.util
 import json
 import logging
 from io import BytesIO
@@ -63,6 +64,10 @@ def transform_pil_image_to_base64(image):
 
 
 chromadb.api.types.is_image = is_image
+
+
+def resolve_attn_implementation():
+    return "flash_attention_2" if importlib.util.find_spec("flash_attn") is not None else "eager"
 
 
 def get_md5sum(file_path, kvstore):
@@ -263,13 +268,14 @@ class ImageEmbeddingFunction(EmbeddingFunction):
                 # Qwen2 VL-specific class when detected, otherwise fall back to a generic
                 # AutoModel (the Qwen3 embedding model should expose hidden states).
                 try:
+                    attn_implementation = resolve_attn_implementation()
 
                     if self.rag_embedding_model.startswith("Alibaba-NLP/gme-Qwen2-VL"):
 
                         self.model = (
                             Qwen2VLForConditionalGeneration.from_pretrained(
                                 self.rag_embedding_model,
-                                attn_implementation="flash_attention_2",
+                                attn_implementation=attn_implementation,
                                 torch_dtype=torch.bfloat16,
                                 cache_dir=str(models_repository),
                             )

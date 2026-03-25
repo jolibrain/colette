@@ -58,6 +58,7 @@ trag = [
     "langchain-community==0.3.30",
     "langchain-chroma==0.2.6",
     "langchain-huggingface==0.3.1",
+    "sentence-transformers==5.3.0",
     "langchain-openai==0.3.33",
     "langchain-ollama==0.3.8",
     "langchain-unstructured==0.1.6",

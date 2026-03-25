@@ -2,6 +2,7 @@ import os
 import tarfile
 import time
 import urllib
+import importlib.util
 
 import torch
 from transformers import ColPaliForRetrieval, ColPaliProcessor
@@ -11,6 +12,10 @@ from .infra.config.config import ColBERTConfig
 from .infra.run import Run
 from .modeling.checkpoint import Checkpoint
 from .utils.utils import batch
+
+
+def resolve_attn_implementation():
+    return "flash_attention_2" if importlib.util.find_spec("flash_attn") is not None else "eager"
 
 
 class Embedder:
@@ -125,11 +130,12 @@ class Embedder:
                     self.processor = ColIdefics3Processor.from_pretrained(
                         self.embedding_model, cache_dir=self.model_path
                     )
+                    attn_implementation = resolve_attn_implementation()
                     self.model = ColIdefics3.from_pretrained(
                         self.embedding_model,
                         torch_dtype=torch.bfloat16,
                         device_map=self.device_str,
-                        attn_implementation="flash_attention_2",  # or eager
+                        attn_implementation=attn_implementation,
                         cache_dir=self.model_path,
                     ).eval()
 
