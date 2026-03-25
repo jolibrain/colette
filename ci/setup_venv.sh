@@ -131,6 +131,11 @@ else
     "${VENV_CACHE}/bin/pip" install --quiet -e . --no-deps
 fi
 
+if [ "${PROFILE}" = "smoke" ]; then
+    echo "    Running smoke import preflight"
+    "${VENV_CACHE}/bin/python" "${WORKSPACE}/ci/verify_smoke_imports.py" --workspace "${WORKSPACE}"
+fi
+
 # Symlink into workspace so the Makefile autodiscovers it
 ln -sfn "${VENV_CACHE}" "${WORKSPACE}/venv_colette"
 
