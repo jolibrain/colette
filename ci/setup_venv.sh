@@ -63,6 +63,28 @@ if [ "${PROFILE}" = "smoke" ]; then
         needs_full_setup=1
         setup_reason="smoke requirements hash changed"
     fi
+elif [ "${PROFILE}" = "full" ]; then
+    if [ ! -f "${FULL_REQ_FILE}" ]; then
+        echo "ERROR: missing full requirements file: ${FULL_REQ_FILE}" >&2
+        exit 1
+    fi
+
+    req_hash_file="${VENV_CACHE}/.full_requirements.sha256"
+    current_hash=$(sha256sum "${FULL_REQ_FILE}" | awk '{print $1}')
+    cached_hash=""
+    if [ -f "${req_hash_file}" ]; then
+        cached_hash=$(cat "${req_hash_file}" 2>/dev/null || true)
+    fi
+
+    if [ "${needs_full_setup}" -eq 0 ] && [ "${cached_hash}" != "${current_hash}" ]; then
+        needs_full_setup=1
+        setup_reason="full requirements hash changed"
+    fi
+
+    if [ "${needs_full_setup}" -eq 0 ] && ! "${VENV_CACHE}/bin/python" -c "import pytest" >/dev/null 2>&1; then
+        needs_full_setup=1
+        setup_reason="pytest missing from full cache"
+    fi
 fi
 
 if [ "${needs_full_setup}" -eq 1 ]; then
@@ -105,13 +127,10 @@ if [ "${needs_full_setup}" -eq 1 ]; then
         sha256sum "${SMOKE_REQ_FILE}" | awk '{print $1}' > "${VENV_CACHE}/.smoke_requirements.sha256"
         echo ">>> Smoke venv created."
     else
-        if [ ! -f "${FULL_REQ_FILE}" ]; then
-            echo "ERROR: missing full requirements file: ${FULL_REQ_FILE}" >&2
-            exit 1
-        fi
         echo "    Installing full profile dependencies from ${FULL_REQ_FILE}"
         "${VENV_CACHE}/bin/pip" install -r "${FULL_REQ_FILE}"
         "${VENV_CACHE}/bin/pip" install --quiet -e . --no-deps
+        sha256sum "${FULL_REQ_FILE}" | awk '{print $1}' > "${VENV_CACHE}/.full_requirements.sha256"
         # flash-attn wheels/build may lag behind newest torch/CUDA combos.
         # Keep CI moving if this optional acceleration package cannot be installed.
         if ! "${VENV_CACHE}/bin/pip" install flash-attn==2.5.6 --no-build-isolation; then
