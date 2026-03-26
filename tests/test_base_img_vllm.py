@@ -1,10 +1,21 @@
+import multiprocessing as mp
+import os
+
 import pytest
 
 from base_img_helpers import generic_index, models_repo, pretty_print_response
 
 pytestmark = [pytest.mark.integration, pytest.mark.e2e]
 
+
+@pytest.mark.repository_path("test_vllm_single_image")
 def test_vllm_single_image(temp_dir, client):
+    if os.getenv("COLETTE_ENABLE_VLLM_E2E") != "1":
+        pytest.skip("set COLETTE_ENABLE_VLLM_E2E=1 to run vLLM e2e tests")
+    start_method = mp.get_start_method(allow_none=True) or "fork"
+    if start_method != "spawn":
+        pytest.skip(f"vLLM e2e requires multiprocessing start method 'spawn' (got '{start_method}')")
+
     json_create_img_hf = {
         "app": {
             "repository": str(temp_dir),
