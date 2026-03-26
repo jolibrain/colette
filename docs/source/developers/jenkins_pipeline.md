@@ -181,6 +181,15 @@ What this validates:
 - Deepest runtime workflows and end-to-end behavior.
 - Scenarios expected to be the most environment-sensitive and longest-running.
 
+Operational notes for this lane:
+
+- Some e2e tests are intentionally opt-in and skip by default in CI unless enabled explicitly:
+	- `COLETTE_ENABLE_VLLM_E2E=1`
+	- `COLETTE_ENABLE_EXTERNAL_VLLM_E2E=1`
+	- `COLETTE_ENABLE_PREPROCESSING_ALL_E2E=1` (high RAM usage path)
+- `tests/test_cli.py` uses `src/colette/config/vrag_default_lite.json` to keep GPU memory within CI constraints.
+- `Makefile` prepends `venv_colette/bin` into `PATH` via `GPU_ENV` so PyTorch C++ extension builds resolve the correct `ninja` binary from the venv.
+
 ### Flash-Attn Split
 
 Recommended split:
@@ -216,6 +225,12 @@ If CUDA/torch installation fails during setup:
 
 1. Verify `nvcc` or `nvidia-smi` is available on the Jenkins node.
 2. Confirm node labels still match a GPU-capable runner.
+
+If e2e ColDB tests fail with `Ninja is required to load C++ extensions`:
+
+1. Verify `venv_colette/bin/ninja --version` succeeds on the runner.
+2. Verify `PATH` resolves `ninja` from `venv_colette/bin` before `/usr/local/bin`.
+3. Re-run `make ci-e2e`; `GPU_ENV` should already prepend the venv bin path.
 
 If `Integration Stable` or nightly lanes fail with missing tooling such as `pytest`:
 
