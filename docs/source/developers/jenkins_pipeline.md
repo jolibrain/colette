@@ -213,6 +213,56 @@ Each lane writes a dedicated JUnit XML file under `.ci-artifacts/`:
 - `junit-pipeline-integration.xml`
 - `junit-e2e.xml`
 
+## CI Test File Quick Reference
+
+This section gives a short, practical description of what each CI test file validates.
+
+### PR Smoke Files
+
+- `tests/test_base_ci.py`: baseline API/service availability and minimal backend wiring checks.
+- `tests/test_embedding_loader.py`: embedding model loader resolution and initialization behavior.
+- `tests/test_embedding_integration.py`: embedding generation contract and integration-level embedding flows.
+- `tests/test_services_smoke.py`: core service lifecycle smoke checks (create/info/delete style flows).
+- `tests/test_http_openwebui_smoke.py`: HTTP/OpenWebUI adapter routes and response-shape smoke checks.
+- `tests/test_cli_smoke.py`: CLI argument parsing and top-level command smoke behavior.
+- `tests/test_jsonapi_helpers_smoke.py`: JSON API helper utilities and response helper contracts.
+- `tests/test_kvstore_smoke.py`: key-value store read/write/update behavior used by services.
+- `tests/test_logger_smoke.py`: logger setup/formatting and logging-path sanity checks.
+- `tests/test_jsonapi_service_smoke.py`: JSON API service-level smoke paths and error handling.
+- `tests/test_core_services_smoke.py`: abstract/core service primitives and base orchestration contracts.
+
+### Integration Stable Files
+
+- `tests/test_upload.py`: upload-enabled app creation and document ingestion integration flows.
+- `tests/test_multiple_creation.py`: repeated service creation and duplicate-name behavior.
+- `tests/test_logging_payload.py`: structured logging payload correctness during integration calls.
+- `tests/test_base_ci.py::test_llamacpp_hf`: lightweight llama.cpp + HF embedding integration path.
+
+### Pipeline Integration File
+
+- `tests/test_pipeline_python_api_integration.py`: Python API contract flow (`create -> index -> status -> predict -> delete`), including invalid-index input validation.
+
+### E2E File Families
+
+- `tests/test_base_img_coldb.py`: image RAG with ColDB index backend and query retrieval checks.
+- `tests/test_base_img_hf_single.py`: single-image HF end-to-end inference and response checks.
+- `tests/test_base_img_hf_multi.py`: multi-image HF scenarios (including maintained and legacy-gated paths).
+- `tests/test_base_img_hf_shared.py`: shared-model reuse behavior across app instances.
+- `tests/test_base_img_reindex.py`: reindex/idempotency/index-protection workflows.
+- `tests/test_base_img_vllm.py`: vLLM image e2e path (opt-in, environment-dependent).
+- `tests/test_base_text_info.py`: text backend service metadata/info behavior.
+- `tests/test_base_text_llamacpp.py`: llama.cpp text RAG/inference end-to-end behavior.
+- `tests/test_base_text_ollama.py`: Ollama-backed text RAG/inference integration behavior.
+- `tests/test_base_text_vllm.py`: vLLM text e2e path (opt-in).
+- `tests/test_cli.py`: full CLI `index`/`chat` integration behavior.
+- `tests/test_colbert.py`: ColBERT indexing/search/reload flows and BM25 option coverage.
+- `tests/test_diffusr.py`: diffusr preprocessing/inference integration path.
+- `tests/test_external_vllm.py`: external vLLM server integration path (opt-in).
+- `tests/test_preprocessing.py`: document conversion/chunking/cropping preprocessing contracts.
+- `tests/test_logging_payload.py`: payload logging checks under e2e execution.
+- `tests/test_multiple_creation.py`: repeated creation semantics under e2e conditions.
+- `tests/test_upload.py`: upload path validation in full e2e runtime context.
+
 ## Troubleshooting
 
 If smoke lane fails during imports:
