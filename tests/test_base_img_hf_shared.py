@@ -6,6 +6,8 @@ from base_img_helpers import generic_index, models_repo, pretty_print_response
 
 pytestmark = [pytest.mark.integration, pytest.mark.e2e]
 
+
+@pytest.mark.repository_path("test_hf_shared_models")
 def test_hf_shared_models(temp_dir, client):
     json_create_img_hf = {
         "app": {

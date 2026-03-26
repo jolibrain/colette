@@ -21,6 +21,7 @@
    developers/setup.md
    developers/deployment.md
    developers/integration_testing.md
+   developers/jenkins_pipeline.md
 
 .. toctree::
    :maxdepth: 1

@@ -1,5 +1,21 @@
 ## Contributing Guidelines
 
+### CI Matrix And Merge Rules
+
+We split CI into fast required checks and deeper optional coverage:
+
+- Required for PR merge: Jenkins `PR Smoke` lane (`make ci-smoke`)
+- Optional protected PR check: Jenkins `integration-stable` lane (`make ci-integration-stable`)
+- Nightly/manual deep validation: Jenkins GPU matrix lane (`make ci-integration`, `make ci-pipeline-integration`, `make ci-e2e`)
+
+Recommended branch protection setup:
+
+- Require status check from Jenkins for PR smoke
+- Do not require optional integration-stable status
+- Do not require nightly GPU matrix statuses
+
+This gives fast PR feedback while keeping realistic deeper GPU validation available.
+
 ### Code Formatting
 
 We use [ruff](https://github.com/charliermarsh/ruff) for linting and formatting our code. Before committing any changes, please ensure that your code is formatted correctly by running the appropriate commands.

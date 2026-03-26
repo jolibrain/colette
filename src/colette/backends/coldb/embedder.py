@@ -6,6 +6,7 @@ import urllib
 import torch
 from transformers import ColPaliForRetrieval, ColPaliProcessor
 
+from ..hf.attention import resolve_attn_implementation
 from .indexing.collection_encoder import CollectionEncoder
 from .infra.config.config import ColBERTConfig
 from .infra.run import Run
@@ -125,11 +126,12 @@ class Embedder:
                     self.processor = ColIdefics3Processor.from_pretrained(
                         self.embedding_model, cache_dir=self.model_path
                     )
+                    attn_implementation = resolve_attn_implementation()
                     self.model = ColIdefics3.from_pretrained(
                         self.embedding_model,
                         torch_dtype=torch.bfloat16,
                         device_map=self.device_str,
-                        attn_implementation="flash_attention_2",  # or eager
+                        attn_implementation=attn_implementation,
                         cache_dir=self.model_path,
                     ).eval()
 

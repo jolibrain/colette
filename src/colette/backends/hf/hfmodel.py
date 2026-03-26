@@ -24,6 +24,7 @@ from vllm import SamplingParams
 from colette.apidata import LLMModelObj
 from colette.llmmodel import LLMModel, LLMModelBadParamException
 
+from .attention import resolve_attn_implementation
 from .model_cache import ModelCache
 from .vllm_client import VllmClient
 
@@ -99,6 +100,7 @@ class HFModel(LLMModel):
 
         # - define self.llm, used by hflib for inference
         if self.llm_lib == "huggingface":
+            attn_implementation = resolve_attn_implementation()
             self.logger.debug(
                 "Using HuggingFace model: "
                 + self.llm_source
@@ -111,7 +113,7 @@ class HFModel(LLMModel):
                     torch_dtype=torch.float16,
                     quantization_config=bandb_config,
                     cache_dir=self.models_repository,
-                    attn_implementation="flash_attention_2",
+                    attn_implementation=attn_implementation,
                 ).eval()
                 min_pixels = 1 * 28 * 28
                 max_pixels = 2560 * 28 * 28
@@ -173,7 +175,7 @@ class HFModel(LLMModel):
                     self.llm_source,
                     torch_dtype=torch.float16,
                     cache_dir=self.models_repository,
-                    attn_implementation="flash_attention_2",
+                    attn_implementation=attn_implementation,
                 )
                 self.processor = AutoProcessor.from_pretrained(
                     self.llm_source,
@@ -184,7 +186,7 @@ class HFModel(LLMModel):
                     self.llm_source,
                     torch_dtype="auto",
                     device_map=self.device,
-                    attn_implementation="flash_attention_2",
+                    attn_implementation=attn_implementation,
                     cache_dir=self.models_repository,
                 )
                 self.llm_type = "nanonets"
@@ -202,7 +204,8 @@ class HFModel(LLMModel):
                 self.vllm_load_format = "auto"
             self.llm = VLLM(
                 model=self.llm_source,
-                download_dir=self.models_repository,
+                # vLLM's LoadConfig expects a plain string path.
+                download_dir=str(self.models_repository),
                 load_format=self.vllm_load_format,
                 quantization=self.vllm_quantization,
                 gpu_memory_utilization=self.vllm_memory_utilization,

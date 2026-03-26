@@ -45,6 +45,7 @@ async def test_colbert():
     ad.parameters.input.rag.indexdb_lib = "coldb"
     ad.parameters.input.rag.embedding_lib = "colbert"
     ad.parameters.input.rag.embedding_model = "colbertv2.0"
+    ad.parameters.input.rag.gpu_id = 0
     ad_index.parameters.input.rag.gpu_id = 0
     ad.parameters.input.rag.num_partitions = 2
     ad.parameters.input.template = TemplatePromptObj()
@@ -63,7 +64,7 @@ async def test_colbert():
     try:
         api.service_create("test_colbert", ad)
 
-        response = await api.service_index("test_colbert", ad_index)
+        response = api.service_index("test_colbert", ad_index)
         while "finished" not in response.message:
             time.sleep(0.5)
             response = await api.service_index_status("test_colbert")
@@ -74,24 +75,24 @@ async def test_colbert():
 
         ad.parameters.input.message = "Quel est le nombre d'objets spatiaux de plus de 10cm ?"
 
-        response = await api.service_predict("test_colbert", ad)
+        response = api.service_predict("test_colbert", ad)
         print(f"\npredict response:\n{response.output}\n")
 
         await api.service_delete("test_colbert")
 
         # reread index test
-        await api.service_create("test_colbert", ad)
-        response2 = await api.service_predict("test_colbert", ad)
+        api.service_create("test_colbert", ad)
+        response2 = api.service_predict("test_colbert", ad)
         print(f"\npredict response:\n{response2.output}\n")
         assert response2.output != ""
 
         # BM25 test
         ad.parameters.input.rag.search = True
-        await api.service_create("test_colbert_bm25", ad)
+        api.service_create("test_colbert_bm25", ad)
         assert os.path.exists("colette_colbert/models/colbertv2.0")
         assert os.path.exists("colette_colbert/index/mydb/plan.json")
         assert os.path.exists("colette_colbert/index/mydb/centroids.pt")
-        response = await api.service_predict("test_colbert_bm25", ad)
+        response = api.service_predict("test_colbert_bm25", ad)
         print(f"\npredict response:\n{response.output}\n")
     finally:
         # cleanup

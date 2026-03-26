@@ -26,6 +26,11 @@ def generic_index(client, sname, index_json):
 @pytest.mark.repository_path("test_vllm_external")
 @pytest.mark.asyncio
 def test_external_vllm_single_image(temp_dir, client):
+    if os.getenv("COLETTE_ENABLE_EXTERNAL_VLLM_E2E") != "1":
+        pytest.skip("set COLETTE_ENABLE_EXTERNAL_VLLM_E2E=1 to run external vLLM e2e tests")
+
+    external_vllm_port = 8100
+
     json_create_img_hf = {
         "app": {
             "repository": str(temp_dir),
@@ -63,7 +68,7 @@ def test_external_vllm_single_image(temp_dir, client):
                 "shared": False,
                 "vllm_memory_utilization": 0.45,
                 "external_vllm_server": {
-                    "url": "http://localhost:8000/v1",
+                    "url": f"http://localhost:{external_vllm_port}/v1",
                     "api_key": "token-abc123",
                 },
             },
@@ -103,11 +108,13 @@ def test_external_vllm_single_image(temp_dir, client):
                 "0.5",
                 "--max-model-len",
                 "4096",
+                "--port",
+                str(external_vllm_port),
             ],
             preexec_fn=os.setsid,
         )
 
-        wait_for_tcp_service("127.0.0.1", 8000, timeout_s=240, poll_interval_s=1.0, process=pro)
+        wait_for_tcp_service("127.0.0.1", external_vllm_port, timeout_s=240, poll_interval_s=1.0, process=pro)
         # colette
         response = client.put("/v1/app/test_external_vllm_single_image", json=json_create_img_hf)
         pretty_print_response(response.json())

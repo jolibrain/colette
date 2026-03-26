@@ -57,6 +57,10 @@ env/
 # Test folders
 test_coldbimg/
 test_ollama_norag/
+test_llamacpp_gpt4all_all-MiniLM-L6-v2/
 tests/pipeline_debug.log
 tests/pipeline_output/
 tests/pipeline_debug_qwen2vl.log
+
+# CI artifacts
+.ci-artifacts/

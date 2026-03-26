@@ -1,0 +1,300 @@
+# Jenkins Pipeline
+
+This page documents the local Jenkins CI flow for Colette.
+
+## Pipeline Overview
+
+The pipeline is defined in `Jenkinsfile` and uses `agent none` with stage-level node selection.
+
+Main stages:
+
+1. `Setup`: creates or reuses the smoke virtualenv cache.
+2. `Setup Full` (optional): creates or reuses the full virtualenv cache for deeper lanes.
+3. `PR Smoke`: always runs the fast smoke gate.
+4. `Integration Stable (Optional)`: runs when `RUN_INTEGRATION_STABLE=true`.
+5. `Nightly GPU Matrix` (optional): runs `Integration`, `Pipeline Integration`, and `E2E` in parallel when `RUN_NIGHTLY_MATRIX=true`.
+
+## Node And GPU Targeting
+
+All stages run on:
+
+```text
+linux && gpu && n5
+```
+
+This keeps CI pinned to the intended machine class (for example `neptune05t` carrying the `n5` label).
+
+GPU execution uses a Jenkins lock keyed by node name:
+
+```text
+${NODE_NAME}-gpu
+```
+
+The pipeline exports `CUDA_VISIBLE_DEVICES` from the lock metadata, with fallback to the `GPU_ID` parameter.
+
+## Virtualenv Cache Model
+
+Caches persist one level above the Jenkins workspace:
+
+- `../venv_colette_smoke_cache`
+- `../venv_colette_full_cache`
+
+Inside the workspace, `venv_colette` is a symlink to the selected cache.
+
+`cleanWs()` only cleans the workspace and does not remove these caches.
+
+## Deterministic Smoke Environment
+
+Smoke setup is handled by `ci/setup_venv.sh smoke` and `ci/requirements-smoke.txt`.
+
+Behavior:
+
+1. Builds cache when missing or broken.
+2. Computes SHA256 of `ci/requirements-smoke.txt`.
+3. Rebuilds the smoke cache when the requirements hash changes.
+4. Runs `ci/verify_smoke_imports.py` to import all smoke test files before pytest starts.
+5. Keeps runtime dependencies deterministic instead of ad-hoc missing-module installs.
+
+The smoke requirements file includes key import-time providers used by smoke tests
+(for example `python-doctr` for `doctr.models` imports).
+
+## Deterministic Full Environment
+
+Full setup is handled by `ci/setup_venv.sh full` and `ci/requirements-full.txt`.
+
+Behavior:
+
+1. Builds cache when missing or broken.
+2. Computes SHA256 of `ci/requirements-full.txt`.
+3. Rebuilds the full cache when the requirements hash changes.
+4. Rebuilds the full cache if core tooling such as `pytest` is missing.
+5. Installs the editable package with `--no-deps` after the pinned full requirements are installed.
+6. Attempts `flash-attn==2.5.6` separately with `--no-build-isolation`, but does not fail the pipeline if that optional acceleration package cannot be built.
+
+This avoids reusing stale integration caches and prevents `flash-attn` from failing early through pip build isolation during the main full-profile install.
+
+## Jenkins Parameters
+
+- `GPU_ID` (string): fallback GPU index for `CUDA_VISIBLE_DEVICES`.
+- `RUN_INTEGRATION_STABLE` (bool): enables the protected integration-stable lane.
+- `RUN_NIGHTLY_MATRIX` (bool): enables full nightly-style GPU matrix.
+- `REQUIRE_FLASH_ATTN` (bool): requires `flash_attn` in full-profile lanes; use only on a runner where that package is already known to build/install correctly.
+
+## Credentials
+
+Integration lanes require a Jenkins secret text credential:
+
+- ID: `hf`
+- Env var in pipeline: `HF_TOKEN`
+
+## Make Targets Used By CI
+
+- `make ci-smoke`
+- `make ci-integration-stable`
+- `make ci-integration`
+- `make ci-pipeline-integration`
+- `make ci-e2e`
+
+## What Is Tested In Each Lane
+
+The pipeline intentionally uses layers of confidence, from fast deterministic checks to broader GPU-heavy validation.
+
+### PR Smoke (`make ci-smoke`)
+
+Scope:
+
+- Runs only the curated smoke test list (`SMOKE_TESTS` in `Makefile`), with `-m smoke`.
+- Current smoke list includes:
+	- `tests/test_base_ci.py::test_info`
+	- `tests/test_embedding_loader.py`
+	- `tests/test_embedding_integration.py`
+	- `tests/test_services_smoke.py`
+	- `tests/test_http_openwebui_smoke.py`
+	- `tests/test_cli_smoke.py`
+	- `tests/test_jsonapi_helpers_smoke.py`
+	- `tests/test_kvstore_smoke.py`
+	- `tests/test_logger_smoke.py`
+	- `tests/test_jsonapi_service_smoke.py`
+	- `tests/test_core_services_smoke.py`
+
+What this validates:
+
+- Basic API/service wiring and core helper paths.
+- CLI and JSON API smoke behavior.
+- Import-time stability for the smoke dependency set.
+
+What this does not validate:
+
+- Full integration surface.
+- End-to-end (`e2e`) marker tests.
+- Pipeline contract test for the Python API integration flow.
+
+### Integration Stable (`make ci-integration-stable`)
+
+Scope:
+
+- Runs a pinned subset (`INTEGRATION_STABLE_TESTS`) with `-m integration`:
+	- `tests/test_upload.py`
+	- `tests/test_multiple_creation.py`
+	- `tests/test_logging_payload.py`
+	- `tests/test_base_ci.py::test_llamacpp_hf`
+
+What this validates:
+
+- Stable, high-signal integration paths used as a protected optional gate.
+- Real integration behavior with `COLETTE_RUN_INTEGRATION=1` and GPU environment variables.
+- Default behavior intentionally does not require `flash-attn`; model loaders fall back to `eager` attention when needed.
+
+### Nightly Matrix: Integration (`make ci-integration`)
+
+Scope:
+
+- Runs all tests under `tests/` matching marker expression:
+	- `-m "integration and not e2e"`
+
+What this validates:
+
+- Broad integration behavior beyond the stable subset.
+- Regressions in integration-marked tests that are too heavy for PR default lanes.
+
+### Nightly Matrix: Pipeline Integration (`make ci-pipeline-integration`)
+
+Scope:
+
+- Runs:
+	- `tests/test_pipeline_python_api_integration.py -m integration`
+
+What this validates:
+
+- The Python API pipeline contract end-to-end at the integration level.
+- CI artifact production for this dedicated contract path.
+
+### Nightly Matrix: E2E (`make ci-e2e`)
+
+Scope:
+
+- Runs all tests under `tests/` marked:
+	- `-m e2e`
+
+What this validates:
+
+- Deepest runtime workflows and end-to-end behavior.
+- Scenarios expected to be the most environment-sensitive and longest-running.
+
+Operational notes for this lane:
+
+- Some e2e tests are intentionally opt-in and skip by default in CI unless enabled explicitly:
+	- `COLETTE_ENABLE_VLLM_E2E=1`
+	- `COLETTE_ENABLE_EXTERNAL_VLLM_E2E=1`
+	- `COLETTE_ENABLE_PREPROCESSING_ALL_E2E=1` (high RAM usage path)
+- `tests/test_cli.py` uses `src/colette/config/vrag_default_lite.json` to keep GPU memory within CI constraints.
+- `Makefile` prepends `venv_colette/bin` into `PATH` via `GPU_ENV` so PyTorch C++ extension builds resolve the correct `ninja` binary from the venv.
+
+### Flash-Attn Split
+
+Recommended split:
+
+- `PR Smoke`: never requires `flash-attn`.
+- `Integration Stable`: should normally run with `REQUIRE_FLASH_ATTN=false` so it validates functional correctness without depending on a fragile CUDA extension build.
+- Nightly or dedicated hardware-validation runs: may set `REQUIRE_FLASH_ATTN=true` on a pre-provisioned runner to verify the accelerated path explicitly.
+
+When `REQUIRE_FLASH_ATTN=true`:
+
+- `ci/setup_venv.sh full` will fail if `flash-attn` cannot be installed.
+- runtime model initialization will fail fast if `flash_attn` is unavailable instead of silently falling back to `eager`.
+
+### JUnit Artifacts
+
+Each lane writes a dedicated JUnit XML file under `.ci-artifacts/`:
+
+- `junit-smoke.xml`
+- `junit-integration-stable.xml`
+- `junit-integration.xml`
+- `junit-pipeline-integration.xml`
+- `junit-e2e.xml`
+
+## CI Test File Quick Reference
+
+This section gives a short, practical description of what each CI test file validates.
+
+### PR Smoke Files
+
+- `tests/test_base_ci.py`: baseline API/service availability and minimal backend wiring checks.
+- `tests/test_embedding_loader.py`: embedding model loader resolution and initialization behavior.
+- `tests/test_embedding_integration.py`: embedding generation contract and integration-level embedding flows.
+- `tests/test_services_smoke.py`: core service lifecycle smoke checks (create/info/delete style flows).
+- `tests/test_http_openwebui_smoke.py`: HTTP/OpenWebUI adapter routes and response-shape smoke checks.
+- `tests/test_cli_smoke.py`: CLI argument parsing and top-level command smoke behavior.
+- `tests/test_jsonapi_helpers_smoke.py`: JSON API helper utilities and response helper contracts.
+- `tests/test_kvstore_smoke.py`: key-value store read/write/update behavior used by services.
+- `tests/test_logger_smoke.py`: logger setup/formatting and logging-path sanity checks.
+- `tests/test_jsonapi_service_smoke.py`: JSON API service-level smoke paths and error handling.
+- `tests/test_core_services_smoke.py`: abstract/core service primitives and base orchestration contracts.
+
+### Integration Stable Files
+
+- `tests/test_upload.py`: upload-enabled app creation and document ingestion integration flows.
+- `tests/test_multiple_creation.py`: repeated service creation and duplicate-name behavior.
+- `tests/test_logging_payload.py`: structured logging payload correctness during integration calls.
+- `tests/test_base_ci.py::test_llamacpp_hf`: lightweight llama.cpp + HF embedding integration path.
+
+### Pipeline Integration File
+
+- `tests/test_pipeline_python_api_integration.py`: Python API contract flow (`create -> index -> status -> predict -> delete`), including invalid-index input validation.
+
+### E2E File Families
+
+- `tests/test_base_img_coldb.py`: image RAG with ColDB index backend and query retrieval checks.
+- `tests/test_base_img_hf_single.py`: single-image HF end-to-end inference and response checks.
+- `tests/test_base_img_hf_multi.py`: multi-image HF scenarios (including maintained and legacy-gated paths).
+- `tests/test_base_img_hf_shared.py`: shared-model reuse behavior across app instances.
+- `tests/test_base_img_reindex.py`: reindex/idempotency/index-protection workflows.
+- `tests/test_base_img_vllm.py`: vLLM image e2e path (opt-in, environment-dependent).
+- `tests/test_base_text_info.py`: text backend service metadata/info behavior.
+- `tests/test_base_text_llamacpp.py`: llama.cpp text RAG/inference end-to-end behavior.
+- `tests/test_base_text_ollama.py`: Ollama-backed text RAG/inference integration behavior.
+- `tests/test_base_text_vllm.py`: vLLM text e2e path (opt-in).
+- `tests/test_cli.py`: full CLI `index`/`chat` integration behavior.
+- `tests/test_colbert.py`: ColBERT indexing/search/reload flows and BM25 option coverage.
+- `tests/test_diffusr.py`: diffusr preprocessing/inference integration path.
+- `tests/test_external_vllm.py`: external vLLM server integration path (opt-in).
+- `tests/test_preprocessing.py`: document conversion/chunking/cropping preprocessing contracts.
+- `tests/test_logging_payload.py`: payload logging checks under e2e execution.
+- `tests/test_multiple_creation.py`: repeated creation semantics under e2e conditions.
+- `tests/test_upload.py`: upload path validation in full e2e runtime context.
+
+## Troubleshooting
+
+If smoke lane fails during imports:
+
+1. Confirm `ci/requirements-smoke.txt` includes the needed package.
+2. Check preflight output from `ci/verify_smoke_imports.py` for the full missing-module list.
+3. Re-run build; the hash change forces a smoke cache rebuild.
+
+If CUDA/torch installation fails during setup:
+
+1. Verify `nvcc` or `nvidia-smi` is available on the Jenkins node.
+2. Confirm node labels still match a GPU-capable runner.
+
+If e2e ColDB tests fail with `Ninja is required to load C++ extensions`:
+
+1. Verify `venv_colette/bin/ninja --version` succeeds on the runner.
+2. Verify `PATH` resolves `ninja` from `venv_colette/bin` before `/usr/local/bin`.
+3. Re-run `make ci-e2e`; `GPU_ENV` should already prepend the venv bin path.
+
+If `Integration Stable` or nightly lanes fail with missing tooling such as `pytest`:
+
+1. Confirm `Setup Full` ran on the same build.
+2. Check whether `ci/requirements-full.txt` changed; the full cache should rebuild automatically when its hash changes.
+3. If the cache predates the deterministic full setup, rerun once on the latest branch head or delete `../venv_colette_full_cache` to force a clean rebuild.
+
+If `flash-attn` fails during full setup:
+
+1. Treat it as non-blocking unless a test explicitly requires it.
+2. The pipeline installs it separately on purpose so the main integration environment can still come up without it.
+3. If you want the accelerated path to be mandatory, rerun on a pre-provisioned runner with `REQUIRE_FLASH_ATTN=true`.
+
+If a cache is corrupted:
+
+1. Delete the corresponding cache directory above workspace.
+2. Re-run pipeline to trigger clean recreation.
