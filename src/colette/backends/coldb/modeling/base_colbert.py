@@ -20,7 +20,7 @@ class BaseColBERT(torch.nn.Module):
             ColBERTConfig.load_from_checkpoint(name_or_path), colbert_config
         )
         self.name = self.colbert_config.model_name or name_or_path
-        if gpu_id is not None:
+        if gpu_id is not None and int(gpu_id) >= 0:
             device_ = torch.device("cuda:" + str(gpu_id))
         else:
             device_ = torch.device("cpu")

@@ -147,7 +147,9 @@ class JSONApi(APIStrategy):
     def __init__(self):
         super().__init__()
         self.indexing_status = {}
-        self.indexing_queue = None  # created fresh per-lifespan in start_indexing_loop()
+        # Keep a default queue for direct JSONApi() usage in tests/tools,
+        # then recreate it per FastAPI lifespan to avoid cross-loop binding.
+        self.indexing_queue = asyncio.Queue()
 
     def start_indexing_loop(self):
         self.indexing_queue = asyncio.Queue()

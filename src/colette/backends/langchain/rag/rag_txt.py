@@ -84,7 +84,7 @@ class RAGTxt:
             # self.rag_reindex = ad.rag.reindex
             # self.rag_index_protection = ad.rag.index_protection
             self.rag_top_k = ad.rag.top_k
-            # self.rag_gpu_id = ad.rag.gpu_id
+            self.rag_gpu_id = 0 if ad.rag.gpu_id is None else ad.rag.gpu_id
             self.rag_num_partitions = ad.rag.num_partitions
 
             if ad.rag.embedding_model is None:

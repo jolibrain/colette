@@ -9,7 +9,7 @@ COV_TARGET ?= src/colette
 CI_ARTIFACTS_DIR ?= .ci-artifacts
 # GPU to use for e2e / integration tests (override with: make test-e2e GPU_ID=0)
 GPU_ID ?= 1
-GPU_ENV = CUDA_VISIBLE_DEVICES=$(GPU_ID) COLETTE_GPU_ID=$(GPU_ID)
+GPU_ENV = PATH=$(CURDIR)/venv_colette/bin:$(PATH) CUDA_VISIBLE_DEVICES=$(GPU_ID) COLETTE_GPU_ID=$(GPU_ID)
 JUNIT_SMOKE ?= $(CI_ARTIFACTS_DIR)/junit-smoke.xml
 JUNIT_COVERAGE ?= $(CI_ARTIFACTS_DIR)/junit-coverage.xml
 JUNIT_INTEGRATION ?= $(CI_ARTIFACTS_DIR)/junit-integration.xml

@@ -204,7 +204,8 @@ class HFModel(LLMModel):
                 self.vllm_load_format = "auto"
             self.llm = VLLM(
                 model=self.llm_source,
-                download_dir=self.models_repository,
+                # vLLM's LoadConfig expects a plain string path.
+                download_dir=str(self.models_repository),
                 load_format=self.vllm_load_format,
                 quantization=self.vllm_quantization,
                 gpu_memory_utilization=self.vllm_memory_utilization,
