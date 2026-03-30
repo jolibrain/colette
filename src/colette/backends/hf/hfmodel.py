@@ -6,7 +6,6 @@ import PIL
 import torch
 from qwen_vl_utils import process_vision_info
 from transformers import (
-    AutoModelForVision2Seq,
     AutoModelForImageTextToText,
     AutoProcessor,
     AutoTokenizer,
@@ -100,7 +99,7 @@ class HFModel(LLMModel):
 
         # - define self.llm, used by hflib for inference
         if self.llm_lib == "huggingface":
-            attn_implementation = resolve_attn_implementation()
+            attn_implementation = resolve_attn_implementation(self.llm_source)
             self.logger.debug(
                 "Using HuggingFace model: "
                 + self.llm_source
@@ -147,6 +146,24 @@ class HFModel(LLMModel):
                     self.llm_source, min_pixels=min_pixels, max_pixels=max_pixels
                 )
                 self.llm_type = "qwen3-vl"
+            elif "Qwen3.5" in self.llm_source or "Qwen3_5" in self.llm_source:
+                # Qwen3.5 does not support int8 bitsandbytes quantization in this path.
+                if self.load_in_8bit:
+                    self.logger.warning("Disabling load_in_8bit for Qwen3.5 models")
+                    self.load_in_8bit = False
+
+                self.llm = AutoModelForImageTextToText.from_pretrained(
+                    self.llm_source,
+                    torch_dtype="auto",
+                    cache_dir=self.models_repository,
+                    attn_implementation=attn_implementation,
+                ).eval()
+                min_pixels = 1 * 28 * 28
+                max_pixels = 2560 * 28 * 28
+                self.processor = AutoProcessor.from_pretrained(
+                    self.llm_source, min_pixels=min_pixels, max_pixels=max_pixels
+                )
+                self.llm_type = "qwen3-vl"
             elif "gemma-3" in self.llm_source:
                 self.llm = Gemma3ForConditionalGeneration.from_pretrained(
                     self.llm_source,
@@ -171,7 +188,7 @@ class HFModel(LLMModel):
                 )
                 self.llm_type = "pixtral"
             elif "SmolVLM" in self.llm_source:
-                self.llm = AutoModelForVision2Seq.from_pretrained(
+                self.llm = AutoModelForImageTextToText.from_pretrained(
                     self.llm_source,
                     torch_dtype=torch.float16,
                     cache_dir=self.models_repository,
