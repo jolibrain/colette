@@ -10,7 +10,7 @@ h5py
 faiss-gpu-cu12==1.12.0
 pypandoc_binary==1.15
 pypdfium2
-transformers==4.57.0
+transformers==5.3.0
 qwen_vl_utils==0.0.14
 python-doctr==1.0.0
 ujson==5.11.0
