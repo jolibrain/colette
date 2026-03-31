@@ -27,7 +27,7 @@ dependencies = [
     "python-doctr==1.0.0",
     "ujson==5.11.0",
     "GitPython==3.1.45",
-    "transformers==5.3.0",
+    "transformers==4.53.3",
     "flash-attn==2.5.6",
     "diffusers==0.35.1",
     "plotly==6.3.1",

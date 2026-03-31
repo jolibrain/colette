@@ -2,20 +2,11 @@ import importlib.util
 import os
 
 
-def _contains_token(value: str | None, token: str) -> bool:
-    if not value:
-        return False
-    return token.lower() in value.lower()
-
-
 def has_flash_attn() -> bool:
     return importlib.util.find_spec("flash_attn") is not None
 
 
-def resolve_attn_implementation(model_source: str | None = None) -> str:
-    if _contains_token(model_source, "Qwen3.5") or _contains_token(model_source, "Qwen3_5"):
-        return "eager"
-
+def resolve_attn_implementation() -> str:
     if has_flash_attn():
         return "flash_attention_2"
 
