@@ -152,9 +152,12 @@ class HFModel(LLMModel):
                     self.logger.warning("Disabling load_in_8bit for Qwen3.5 models")
                     self.load_in_8bit = False
 
+                # Qwen3.5 uses sdpa (PyTorch native accelerated attention).
+                # flash_attention_2 triggers the varlen kernel which crashes for
+                # multimodal (mrope) inputs on the current transformers+flash-attn stack.
                 self.llm = AutoModelForImageTextToText.from_pretrained(
                     self.llm_source,
-                    torch_dtype="auto",
+                    dtype=torch.bfloat16,
                     cache_dir=self.models_repository,
                     attn_implementation=attn_implementation,
                 ).eval()
@@ -522,6 +525,7 @@ class HFModel(LLMModel):
                         top_k=None,
                         temperature=None,
                         top_p=None,
+                        use_cache=True,
                     )
                     # return a streamer if streaming was requested
                     if streaming:
