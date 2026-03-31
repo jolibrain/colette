@@ -12,7 +12,7 @@ pypandoc_binary==1.15
 pypdfium2
 transformers==5.3.0
 qwen_vl_utils==0.0.14
-python-doctr==1.0.1
+python-doctr==1.0.0
 ujson==5.11.0
 GitPython==3.1.45
 pillow

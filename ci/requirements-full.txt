@@ -7,7 +7,7 @@ vllm==0.11.0
 bitsandbytes==0.48.0
 qwen_vl_utils==0.0.14
 pypandoc_binary==1.15
-python-doctr==1.0.1
+python-doctr==1.0.0
 ujson==5.11.0
 GitPython==3.1.45
 faiss-gpu-cu12==1.12.0
@@ -23,7 +23,7 @@ pytest-cov==7.0.0
 pytest-asyncio==1.2.0
 ruff==0.13.2
 pre-commit==4.3.0
-huggingface_hub[cli]>=1.3.0,<2.0
+huggingface_hub[cli]==0.35.3
 rank_bm25==0.2.2
 unstructured[docx]==0.18.15
 unstructured[pptx]==0.18.15
