@@ -1,4 +1,5 @@
 import concurrent.futures
+import gc
 import logging
 import os
 import os.path
@@ -456,6 +457,22 @@ class RAGTxt:
                         weights=[0.5, 0.5],
                     )
         return self.rag_indexdb
+
+    def delete_embedder(self):
+        """Release embedding/index references held by the text RAG pipeline."""
+        self.rag_retriever = None
+        self.bm25_retriever = None
+        self.rag_indexdb = None
+        self.rag_embedding = None
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+        except Exception:
+            pass
 
     def retrieve(self, rag_question):
         res = self.rag_retriever.invoke(rag_question)

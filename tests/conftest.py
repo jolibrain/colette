@@ -1,6 +1,7 @@
 import os
 import shutil
 import sys
+import gc
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,10 @@ import pytest
 _colette_gpu_id = os.getenv("COLETTE_GPU_ID")
 if _colette_gpu_id is not None and os.getenv("CUDA_VISIBLE_DEVICES") is None:
     os.environ["CUDA_VISIBLE_DEVICES"] = _colette_gpu_id
+
+# Reduce CUDA allocator fragmentation during long e2e runs.
+if os.getenv("PYTORCH_CUDA_ALLOC_CONF") is None:
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 
 @pytest.fixture(scope="session")
@@ -129,4 +134,43 @@ def pytest_sessionstart(session):
     _phys_gpu = os.getenv("CUDA_VISIBLE_DEVICES", "unset (all GPUs visible)")
     print(f"  GPU: CUDA_VISIBLE_DEVICES={_phys_gpu} (override: make test-e2e GPU_ID=<n>)")
     print("=" * 50 + "\n")
+
+
+@pytest.fixture(autouse=True)
+def release_test_resources(request):
+    """Best-effort cleanup to limit cumulative memory usage across e2e tests."""
+    yield
+
+    # Keep cleanup focused on heavy lanes to avoid slowing unit/smoke paths.
+    if "integration" not in request.keywords and "e2e" not in request.keywords:
+        return
+
+    try:
+        from colette.httpjsonapi import http_json_api
+
+        # Force-remove any leftover services even when a test exits early.
+        for sname in list(http_json_api.services.keys()):
+            try:
+                http_json_api.remove_service(sname)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    try:
+        from colette.backends.hf.model_cache import ModelCache
+
+        ModelCache.clear()
+    except Exception:
+        pass
+
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception:
+        pass
 

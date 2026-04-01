@@ -102,3 +102,4 @@ class HFInputConn(InputConnector):
     def delete_inputc(self):
         if self.ragobj:
             self.ragobj.delete_embedder()
+            self.ragobj = None

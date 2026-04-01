@@ -21,8 +21,8 @@
             "data": []
         },
         "llm": {
-            "source": "Qwen/Qwen3-VL-8B-Instruct",
-            "gpu_ids": [0],
+            "source": "Qwen/Qwen3.5-9B",
+            "gpu_ids": [1],
             "image_width": 320,
             "image_height": 480,
             "adjust_aspect_ratio": true,                        

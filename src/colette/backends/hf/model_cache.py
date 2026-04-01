@@ -1,4 +1,5 @@
 import threading
+import gc
 
 
 class ModelCache:
@@ -45,3 +46,12 @@ class ModelCache:
     @classmethod
     def is_in_use(cls, key, c):
         return key in cls._cache and cls._cache[key]["ref_count"] > c
+
+    @classmethod
+    def clear(cls):
+        # Drop cached model references explicitly before clearing the map.
+        # This helps the GC reclaim large model objects promptly between tests.
+        for entry in cls._cache.values():
+            entry["model"] = (None, None, None)
+        cls._cache.clear()
+        gc.collect()

@@ -159,4 +159,9 @@ class LangChainInputConn(InputConnector):
         self.rag_indexdb = self.ragobj.index(ad, self.sorted_data)  # returns an indexdb
 
     def delete_inputc(self):
-        pass
+        if self.ragobj:
+            try:
+                self.ragobj.delete_embedder()
+            except Exception:
+                pass
+            self.ragobj = None

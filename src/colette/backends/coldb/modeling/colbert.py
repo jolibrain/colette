@@ -1,6 +1,7 @@
 import os
 import pathlib
 import string
+import sys
 
 import torch
 from torch.utils.cpp_extension import load
@@ -37,6 +38,13 @@ class ColBERT(BaseColBERT):
     def try_load_torch_extensions(cls, use_gpu):
         # if hasattr(cls, "loaded_extensions") or use_gpu:
         #     return
+
+        # Prefer the active Python environment's binary directory so torch
+        # extension builds resolve the matching `ninja` executable.
+        py_bin_dir = os.path.dirname(sys.executable)
+        path_parts = os.environ.get("PATH", "").split(os.pathsep)
+        if py_bin_dir not in path_parts:
+            os.environ["PATH"] = py_bin_dir + os.pathsep + os.environ.get("PATH", "")
 
         print_message(
             "Loading segmented_maxsim_cpp extension (set COLBERT_LOAD_TORCH_EXTENSION_VERBOSE=True for more info)..."
