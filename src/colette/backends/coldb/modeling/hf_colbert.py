@@ -110,6 +110,9 @@ def class_factory(name_or_path):
         """
 
         _keys_to_ignore_on_load_unexpected = [r"cls"]
+        # Transformers >=5.3 may access all_tied_weights_keys during load finalization.
+        # Some base classes expose only _tied_weights_keys, so provide a stable fallback.
+        all_tied_weights_keys = {}
 
         def __init__(self, config, colbert_config):
             super().__init__(config)
