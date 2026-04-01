@@ -29,7 +29,7 @@ source venv_colette/bin/activate
 
 NOTES: 
 - This process may take a while, as there are many dependencies to install and some of them require compilation.
-- There are scripts available for ARM machines as well. Check [Get Started ARM](get_started_ARM_machine.md) for more details.
+- There are dedicated setup guides for ARM and DGX machines as well. See [Get Started ARM](get_started_ARM_machine.md) and [Get Started DGX](get_started_DGX_machine.md) for platform-specific setup.
 
 ### Index Your Data
 

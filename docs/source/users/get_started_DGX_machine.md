@@ -1,4 +1,4 @@
-# Get Started on ARM Machine
+# Get Started on DGX Machine
 
 ## Prerequisites
 
@@ -6,19 +6,19 @@ Make sure your system meets the following requirements:
 
 * **Python** >= 3.12
 * **CUDA** >= 12.1
-* **GPU**: ≥ 24 GB
-* **RAM**: ≥ 16 GB
-* **Disk space**: ≥ 50 GB
+* **GPU**: >= 24 GB
+* **RAM**: >= 16 GB
+* **Disk space**: >= 50 GB
 
 NOTE: Colette requires a GPU with at least 24GB of VRAM to run the default models. If you have less VRAM, you can try to change the models to lighter ones in the configuration files, but performance may be impacted.
 
 Also the default config file is `vrag_default_lite.json` which is designed to run on 24GB VRAM GPUs. If you have multiples GPUs, you can try `vrag_default.json` which uses larger models and should provide better results and also needs multiple GPUs
 
-## Docker with ARM support
+## Docker with DGX support
 
-Its working in progress to provide a Docker image with ARM support. Meanwhile, you can install from sources as described below.
+You can use the standard Docker workflow from [Get Started](get_started.md). For DGX-specific source setup (CUDA-aware dependency selection), follow the installation steps below.
 
-If you are running on DGX, see [Get Started on DGX Machine](get_started_DGX_machine.md).
+If you are running on ARM, see [Get Started on ARM Machine](get_started_ARM_machine.md).
 
 ## Installation from Source
 
@@ -34,8 +34,8 @@ git clone https://github.com/jolibrain/colette.git
 
 ```bash
 cd colette
-chmod +x create_venv_colette_ARM.sh
-./create_venv_colette_ARM.sh
+chmod +x create_venv_colette_DGX.sh
+./create_venv_colette_DGX.sh
 source venv_colette/bin/activate
 ```
 
