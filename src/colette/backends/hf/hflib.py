@@ -128,6 +128,8 @@ class HFLib(LLMLib):
 
             context.append(source)
         tsources = {"context": context}
+        if docs_source.get("text_context"):
+            tsources["text_context"] = docs_source["text_context"]
 
         # save streamer object for upcoming streaming call
         if streamer:

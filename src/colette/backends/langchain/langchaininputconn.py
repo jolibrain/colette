@@ -1,7 +1,7 @@
 # Langchain as input connector (preprocessing + rag)
 from langchain_core.prompts import PromptTemplate
 
-from colette.apidata import InputConnectorObj, TemplatePromptObj
+from colette.apidata import InputConnectorObj, TemplatePromptObj, merge_rag_config
 from colette.inputconnector import (
     InputConnector,
     InputConnectorBadParamException,
@@ -74,17 +74,9 @@ class LangChainInputConn(InputConnector):
         if self.ragobj is not None:
             if ad._rag_question is not None:
                 # retrieving chunks from retrieved docs
-                # CHANGE: Pass crop_label to retrieve method
-                # Note: For text-based RAG, crop_label filtering may not apply
-                # unless you're using layout detection on documents
-                crop_label = ad.crop_label if hasattr(ad, 'crop_label') else None
-                
-                if crop_label:
-                    # If crop_label is specified, pass it to retrieve
-                    docs = self.ragobj.retrieve(ad._rag_question, crop_label=crop_label)
-                else:
-                    # Standard retrieval without filtering
-                    docs = self.ragobj.retrieve(ad._rag_question)
+                crop_label = ad.parameters.input.crop_label
+                request_rag = merge_rag_config(self.ad.rag, ad.parameters.input.rag)
+                docs = self.ragobj.retrieve(ad._rag_question, crop_label=crop_label, request_rag=request_rag)
 
                 # storing the chunks used for the context
                 for d in docs:
@@ -108,6 +100,10 @@ class LangChainInputConn(InputConnector):
                     # Add label if present in metadata
                     if "label" in d.metadata:
                         doc_dict["label"] = d.metadata["label"]
+                    if "retriever" in d.metadata:
+                        doc_dict["retriever"] = d.metadata["retriever"]
+                    if "score" in d.metadata:
+                        doc_dict["score"] = d.metadata["score"]
                     
                     docs_source["context"].append(doc_dict)
 

@@ -81,6 +81,19 @@ class _DummyClientChatFail(_DummyClient):
         return _DummyResponse(500, text="chat-fail")
 
 
+class _CapturingClient(_DummyClient):
+    last_put_json = None
+    last_post_json = None
+
+    def put(self, url, json=None):
+        self.__class__.last_put_json = json
+        return super().put(url, json=json)
+
+    def post(self, url, json=None):
+        self.__class__.last_post_json = json
+        return super().post(url, json=json)
+
+
 @pytest.mark.smoke
 def test_cli_index_happy_path(monkeypatch, tmp_path):
     config_file = tmp_path / "config.json"
@@ -113,6 +126,57 @@ def test_cli_chat_happy_path(monkeypatch, tmp_path):
     monkeypatch.setattr(colette_cli, "TestClient", _DummyClient)
 
     colette_cli.chat(app_dir=app_dir, msg="hello", crop_label=None, models_dir=tmp_path / "models")
+
+
+@pytest.mark.smoke
+def test_cli_index_passes_retrieval_mode(monkeypatch, tmp_path):
+    config_file = tmp_path / "config.json"
+    index_file = tmp_path / "index.json"
+    data_dir = tmp_path / "data"
+    app_dir = tmp_path / "app"
+
+    data_dir.mkdir()
+    app_dir.mkdir()
+
+    config_file.write_text(json.dumps({"app": {}, "parameters": {"input": {"rag": {}}, "llm": None}}), encoding="utf-8")
+    index_file.write_text(json.dumps({"parameters": {"input": {"data": [], "rag": {}}}}), encoding="utf-8")
+
+    monkeypatch.setattr(colette_cli, "TestClient", _CapturingClient)
+    monkeypatch.setattr(colette_cli.time, "sleep", lambda _x: None)
+
+    colette_cli.index(
+        app_dir=app_dir,
+        data_dir=data_dir,
+        models_dir=tmp_path / "models",
+        config_file=config_file,
+        index_file=index_file,
+        retrieval_mode="hybrid",
+    )
+
+    assert _CapturingClient.last_put_json["parameters"]["input"]["rag"]["retrieval_mode"] == "hybrid"
+
+
+@pytest.mark.smoke
+def test_cli_chat_passes_retrieval_mode(monkeypatch, tmp_path):
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    config_file = app_dir / "config.json"
+    config_file.write_text(
+        json.dumps({"app": {}, "parameters": {"input": {"rag": {}}, "llm": None}}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(colette_cli, "TestClient", _CapturingClient)
+
+    colette_cli.chat(
+        app_dir=app_dir,
+        msg="hello",
+        crop_label="text",
+        models_dir=tmp_path / "models",
+        retrieval_mode="text_search_retrieval",
+    )
+
+    assert _CapturingClient.last_post_json["parameters"]["input"]["rag"]["retrieval_mode"] == "text_search_retrieval"
 
 
 @pytest.mark.smoke

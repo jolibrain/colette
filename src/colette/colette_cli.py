@@ -16,6 +16,10 @@ option_configfile = typer.Option(None, help="Specify the config file")
 option_indexfile = typer.Option(None, help="Specify the index file")
 option_msg = typer.Option(..., help="Specify the user message")
 option_crop_label = typer.Option(None, help="Specify the crop label")
+option_retrieval_mode = typer.Option(
+    None,
+    help="Specify the retrieval mode: embedding_retrieval, text_search_retrieval, or hybrid",
+)
 option_host = typer.Option("0.0.0.0", help="Specify the host")
 option_port = typer.Option(7860, help="Specify the port")
 
@@ -27,6 +31,7 @@ def index(
     models_dir: Path = option_modelsdir,
     config_file: Path = option_configfile,
     index_file: Path = option_indexfile,
+    retrieval_mode: str | None = option_retrieval_mode,
 ):
     """Run the indexing phase."""
     typer.echo(f"Starting the indexing of: {data_dir}")
@@ -67,6 +72,10 @@ def index(
         json_data["app"]["repository"] = str(app_dir)
         json_data["app"]["models_repository"] = str(models_dir)
         index_data["parameters"]["input"]["data"] = [str(data_dir)]
+        if retrieval_mode is not None:
+            index_data.setdefault("parameters", {}).setdefault("input", {}).setdefault("rag", {})[
+                "retrieval_mode"
+            ] = retrieval_mode
 
         # beware : context manager is mandatory in order to trigger lifespan events
         # (here indexing loops)
@@ -109,9 +118,17 @@ def index(
 
 
 @cli.command()
-def chat(app_dir: Path = option_appdir, msg: str = option_msg, crop_label: str = None, models_dir: Path = option_modelsdir):
+def chat(
+    app_dir: Path = option_appdir,
+    msg: str = option_msg,
+    crop_label: str = None,
+    models_dir: Path = option_modelsdir,
+    retrieval_mode: str | None = option_retrieval_mode,
+):
     """Start a chat with the application."""
-    typer.echo(f"Starting chat with {app_dir} using message: {msg} and crop_label: {crop_label}")
+    typer.echo(
+        f"Starting chat with {app_dir} using message: {msg}, crop_label: {crop_label}, retrieval_mode: {retrieval_mode}"
+    )
     try:
         app_dir = app_dir.absolute()
         app_name = app_dir.name
@@ -139,7 +156,10 @@ def chat(app_dir: Path = option_appdir, msg: str = option_msg, crop_label: str =
             typer.echo(f"Initialization failed: {response.text}", err=True)
             raise typer.Exit(code=1)
 
-        chat_payload = dict(parameters=dict(input=dict(message=msg, crop_label=crop_label)))
+        chat_input = dict(message=msg, crop_label=crop_label)
+        if retrieval_mode is not None:
+            chat_input["rag"] = {"retrieval_mode": retrieval_mode}
+        chat_payload = dict(parameters=dict(input=chat_input))
         response = client.post(f"/v1/predict/{app_name}", json=chat_payload)
         if response.status_code != 200:
             typer.echo(f"Chat request failed: {response.text}", err=True)

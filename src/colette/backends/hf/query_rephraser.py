@@ -84,7 +84,7 @@ class QueryRephraser:
 
     def merge_documents(self, docs):
         # print("docs=", docs)
-        merged_docs = {"ids": [[]], "distances": [[]], "metadatas": [[]]}
+        merged_docs = {"ids": [[]], "distances": [[]], "metadatas": [[]], "text_context": []}
         for doc in docs:
             # check whether the document is already in the merged_docs using every id.
             # if already in merged_docs, remove related indices in embeddings, documents, ... and add the new ids only
@@ -101,5 +101,7 @@ class QueryRephraser:
             merged_docs["ids"][0].extend(doc["ids"][0])
             merged_docs["distances"][0].extend(doc["distances"][0])
             merged_docs["metadatas"][0].extend(doc["metadatas"][0])
+            if doc.get("text_context"):
+                merged_docs["text_context"].extend(doc["text_context"])
 
         return merged_docs
