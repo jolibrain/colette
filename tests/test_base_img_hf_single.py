@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from base_img_helpers import generic_index, models_repo, pretty_print_response
@@ -101,6 +103,8 @@ def test_hf_single_image(temp_dir, client):
 @pytest.mark.repository_path("test_hf_single_image_rephrasing")
 @pytest.mark.asyncio
 def test_hf_single_image_rephrasing(temp_dir, client):
+    rephrasing_model = os.getenv("COLETTE_REPHRASING_TEST_MODEL", "Qwen/Qwen2-VL-2B-Instruct")
+
     json_create_img_hf = {
         "app": {
             "repository": str(temp_dir),
@@ -123,10 +127,11 @@ def test_hf_single_image_rephrasing(temp_dir, client):
                 },
             },
             "llm": {
-                "source": "Qwen/Qwen2-VL-7B-Instruct",
+                "source": rephrasing_model,
                 "gpu_ids": [0],
                 "image_width": 640,
                 "image_height": 960,
+                "load_in_8bit": True,
                 "query_rephrasing": True,
                 "inference": {"lib": "huggingface"},
             },
