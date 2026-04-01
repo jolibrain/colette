@@ -101,6 +101,7 @@ colette_cli chat --app-dir app_colette --msg "What are the identified sources of
 
 The example below is also available in `examples/get_start_python_api.py`.
 There is also a Jupyter notebook version in `examples/get_start_python_api.ipynb`.
+For text-search-only examples, see `examples/text_search_demo.py` and `examples/text_search_demo.ipynb`.
 
 ##### Index PDFs and query
 
@@ -141,6 +142,8 @@ with open(index_file, 'r') as f:
 create_config['app']['repository'] = app_dir
 create_config['app']['models_repository'] = models_dir
 index_config['parameters']['input']['data'] = [documents_dir]
+# Index in hybrid mode so embedding + text-search retrieval are both available.
+index_config['parameters']['input']['rag']['retrieval_mode'] = 'hybrid'
 #index_config['parameters']['input']['rag']['reindex'] = False # if True, the RAG will be reindexed
 
 # Create the service
@@ -187,4 +190,27 @@ for item in response.sources['context']:
     image_filename = f"{item['key']}.png"
     image.save(image_filename)
     print(f"Image saved as: {image_filename}")
+
+# Optional: override retrieval mode per request
+query_text_search = {
+    'parameters': {
+        'input': {
+            'message': 'What are the identified sources of errors ?',
+            'rag': {'retrieval_mode': 'text_search_retrieval'}
+        }
+    }
+}
+response_text_search = colette_api.service_predict(app_name, APIData(**query_text_search))
+for hit in response_text_search.sources.get('text_context', []):
+    print(hit['source'], hit.get('page_number'), hit.get('score'))
 ```
+
+### Retrieval modes
+
+`parameters.input.rag.retrieval_mode` supports:
+
+- `embedding_retrieval`
+- `text_search_retrieval`
+- `hybrid`
+
+See [Text Search Engine](text_search_engine.md) for details.

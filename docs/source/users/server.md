@@ -212,3 +212,27 @@ curl -X POST http://localhost:1873/v1/predict/app_colette \
     has_image: (.content | startswith("data:image/"))
   }'
 ```
+
+### Query Colette with text-search retrieval mode
+
+```bash
+curl -X POST http://localhost:1873/v1/predict/app_colette \
+  -H "Content-Type: application/json" \
+  -d '{
+    "app": {"verbose": "info"},
+    "parameters": {
+      "input": {
+        "message": "What are the identified sources of errors ?",
+        "rag": {
+          "retrieval_mode": "text_search_retrieval"
+        }
+      }
+    }
+  }' | jq '.sources.text_context'
+```
+
+When `retrieval_mode` is:
+
+- `embedding_retrieval`: only `.sources.context` is populated
+- `text_search_retrieval`: only `.sources.text_context` is populated
+- `hybrid`: both keys are populated
