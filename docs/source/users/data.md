@@ -4,5 +4,5 @@
 
 - `config.json`: the RAG configuration file, automatically copied at index creation time
 - `kvstore.db`: locate database that contains images and crops from indexed documents, along with some metadata
-- `mm_index`: contains the similarity index
+- `mm_index`: contains the similarity index and the text-search index (`mm_index/text_search_engine`) when enabled
 - `pdfs`: pdf files generated from images of other types of documents (.docx, .pptx, ...)

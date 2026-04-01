@@ -61,6 +61,7 @@ colette_cli chat --app-dir app_colette --msg "What are the identified sources of
 
 The example below is also available in `examples/get_start_python_api.py`.
 There is also a Jupyter notebook version in `examples/get_start_python_api.ipynb`.
+For text-search-only examples, see `examples/text_search_demo.py` and `examples/text_search_demo.ipynb`.
 
 ##### Index PDFs and query
 
