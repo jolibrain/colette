@@ -1,4 +1,4 @@
-from colette.apidata import InputConnectorObj
+from colette.apidata import InputConnectorObj, merge_rag_config
 from colette.inputconnector import InputConnector
 
 from .rag.rag_img import RAGImg
@@ -45,14 +45,16 @@ class HFInputConn(InputConnector):
         :return: message, template_prompt, full_prompt, docs_source
         """
         message = ad.message
+        docs = {"ids": [[]], "distances": [[]], "metadatas": [[]]}
 
         # retrieve docs from RAG
         if self.ragobj is not None:
-            # CHANGE: Pass crop_label to retrieve method
+            request_rag = merge_rag_config(self.ad.rag, ad.rag)
             docs = self.ragobj.retrieve(
-                message, 
+                message,
                 ad.query_depth_mult,
-                crop_label=ad.crop_label  # NEW: Pass crop_label parameter
+                crop_label=ad.crop_label,
+                request_rag=request_rag,
             )
 
         # optional query rephrasing
@@ -63,6 +65,13 @@ class HFInputConn(InputConnector):
             #    message = message + "\n".join(rqueries)
         else:
             rqueries = []
+
+        if docs.get("text_context_prompt"):
+            message = (
+                f"{message}\n\n"
+                "Relevant text context extracted from Tantivy search:\n"
+                f"{docs['text_context_prompt']}"
+            )
 
         # template prompt (not used for retrieval)
         template = ad.template

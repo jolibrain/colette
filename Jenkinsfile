@@ -64,6 +64,26 @@ pipeline {
       }
     }
 
+    stage('PR Coverage') {
+      agent {
+        node { label 'linux && gpu && n5' }
+      }
+      steps {
+        sh '''
+          set -e
+          VENV_CACHE_PATH="$(realpath "${WORKSPACE:-$PWD}/..")/venv_colette_smoke_cache"
+          ln -sfn "${VENV_CACHE_PATH}" venv_colette
+          echo "Using venv cache: ${VENV_CACHE_PATH}"
+          make ci-coverage
+        '''
+      }
+      post {
+        always {
+          archiveArtifacts artifacts: '.ci-artifacts/junit-coverage.xml,.ci-artifacts/coverage.xml', allowEmptyArchive: true
+        }
+      }
+    }
+
     stage('Integration Stable (Optional)') {
       when {
         expression { return params.RUN_INTEGRATION_STABLE }

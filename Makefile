@@ -1,7 +1,7 @@
 PYTHON ?= $(if $(wildcard venv_colette/bin/python),venv_colette/bin/python,python3)
 PYTEST ?= $(PYTHON) -m pytest
 RUFF ?= $(PYTHON) -m ruff
-SMOKE_TESTS ?= tests/test_base_ci.py::test_info tests/test_embedding_loader.py tests/test_embedding_integration.py tests/test_services_smoke.py tests/test_http_openwebui_smoke.py tests/test_cli_smoke.py tests/test_jsonapi_helpers_smoke.py tests/test_kvstore_smoke.py tests/test_logger_smoke.py tests/test_jsonapi_service_smoke.py tests/test_core_services_smoke.py
+SMOKE_TESTS ?= tests/test_base_ci.py::test_info tests/test_embedding_loader.py tests/test_embedding_integration.py tests/test_services_smoke.py tests/test_http_openwebui_smoke.py tests/test_cli_smoke.py tests/test_jsonapi_helpers_smoke.py tests/test_kvstore_smoke.py tests/test_logger_smoke.py tests/test_jsonapi_service_smoke.py tests/test_core_services_smoke.py tests/test_apidata_rag_merge.py tests/test_retrieval_modes.py
 INTEGRATION_STABLE_TESTS ?= tests/test_upload.py tests/test_multiple_creation.py tests/test_logging_payload.py tests/test_base_ci.py::test_llamacpp_hf
 EVALUATION_TESTS ?= tests_optional/evaluation_contract/test_configs_contract.py tests_optional/evaluation_contract/test_hf_single_contract.py
 COV_MIN ?= 35

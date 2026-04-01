@@ -119,9 +119,14 @@ The `parameters` section defines how **data is processed, indexed, and retrieved
     },
     "rag": {
         "indexdb_lib": "chromadb",
+        "retrieval_mode": "embedding_retrieval",
         "embedding_lib": "huggingface",
         "embedding_model": "intfloat/multilingual-e5-small",
         "gpu_id": 0,
+        "text_search_engine_top_k": 4,
+        "text_search_engine_fields": ["content", "source"],
+        "text_search_engine_max_chars_per_doc": 1500,
+        "text_search_engine_max_total_chars": 6000,
         "search": true,
         "reindex": false
     },
@@ -142,9 +147,14 @@ This section controls how Colette **filters and processes files** before they ar
 ###### RAG Configuration (`rag`)
 Controls settings for **retrieval and vector database indexing**:
 - **`indexdb_lib`**: The vector database used (`chromadb`).
+- **`retrieval_mode`**: Retrieval strategy (`embedding_retrieval`, `text_search_retrieval`, `hybrid`).
 - **`embedding_lib`**: The library used to compute text embeddings (`huggingface`).
 - **`embedding_model`**: The embedding model (`intfloat/multilingual-e5-small`).
 - **`gpu_id`**: Specifies which GPU to use (`0` means the first available GPU).
+- **`text_search_engine_top_k`**: Number of text-search hits to fetch.
+- **`text_search_engine_fields`**: Indexed fields queried by the text search engine.
+- **`text_search_engine_max_chars_per_doc`**: Max chars per retrieved text hit added to prompt context.
+- **`text_search_engine_max_total_chars`**: Global char cap added to prompt context from text search hits.
 - **`search`**: If `true`, retrieval is enabled.
 - **`reindex`**: If `false`, existing indexes are used instead of re-processing everything.
 

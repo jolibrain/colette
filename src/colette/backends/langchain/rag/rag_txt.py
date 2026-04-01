@@ -12,6 +12,7 @@ from pathlib import Path
 from chromadb.config import Settings
 from langchain.retrievers import EnsembleRetriever
 from langchain_chroma import Chroma
+from langchain_core.documents import Document
 from langchain_community.document_loaders import JSONLoader, PyMuPDFLoader, TextLoader
 
 # from langchain_community.document_loaders import UnstructuredMarkdownLoader
@@ -24,8 +25,14 @@ from nltk.tokenize import word_tokenize
 from tqdm import tqdm
 from unstructured.cleaners.core import clean, replace_unicode_quotes
 
-from colette.apidata import InputConnectorObj
+from colette.apidata import InputConnectorObj, merge_rag_config
 from colette.backends.coldb import ColDB
+from colette.backends.tantivy import (
+    TantivyIndex,
+    build_text_context,
+    retrieval_mode_uses_text_search_engine,
+    retrieval_mode_uses_embedding_retrieval,
+)
 from colette.inputconnector import (
     InputConnectorBadParamException,
     InputConnectorInternalException,
@@ -65,6 +72,11 @@ class RAGTxt:
             self.rag = True
             self.rag_chunk_size = ad.rag.chunk_size
             self.rag_chunk_overlap = ad.rag.chunk_overlap
+            self.rag_retrieval_mode = ad.rag.retrieval_mode
+            self.rag_text_search_engine_top_k = ad.rag.text_search_engine_top_k
+            self.rag_text_search_engine_fields = ad.rag.text_search_engine_fields
+            self.rag_text_search_engine_max_chars_per_doc = ad.rag.text_search_engine_max_chars_per_doc
+            self.rag_text_search_engine_max_total_chars = ad.rag.text_search_engine_max_total_chars
             if self.rag_chunk_size > 0:
                 self.text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
                     # separators=["\n\n",
@@ -88,7 +100,9 @@ class RAGTxt:
             self.rag_gpu_id = 0 if ad.rag.gpu_id is None else ad.rag.gpu_id
             self.rag_num_partitions = ad.rag.num_partitions
 
-            if ad.rag.embedding_model is None:
+            self.text_search_engine_index = TantivyIndex(self.app_repository / "index" / "text_search_engine", self.logger)
+
+            if retrieval_mode_uses_embedding_retrieval(ad.rag.retrieval_mode) and ad.rag.embedding_model is None:
                 msg = "Missing rag embedding model"
                 self.logger.error(msg)
                 raise InputConnectorBadParamException(msg)
@@ -97,27 +111,30 @@ class RAGTxt:
 
             device = "cpu" if self.cpu else "cuda:" + str(ad.rag.gpu_id)
 
-            self.logger.info(
-                "loading embedding model %s on device %s",
-                self.rag_embedding_model,
-                device,
-            )
-            if self.rag_embedding_lib == "huggingface":
-                model_kwargs = {"device": device}
-                encode_kwargs = {"normalize_embeddings": True}
-
-                self.rag_embedding = HuggingFaceEmbeddings(
-                    model_name=self.rag_embedding_model,
-                    model_kwargs=model_kwargs,
-                    encode_kwargs=encode_kwargs,
-                    cache_folder=str(self.models_repository),
+            if retrieval_mode_uses_embedding_retrieval(ad.rag.retrieval_mode):
+                self.logger.info(
+                    "loading embedding model %s on device %s",
+                    self.rag_embedding_model,
+                    device,
                 )
-            elif self.rag_embedding_lib == "colbert":
-                self.rag_embedding = None
+                if self.rag_embedding_lib == "huggingface":
+                    model_kwargs = {"device": device}
+                    encode_kwargs = {"normalize_embeddings": True}
+
+                    self.rag_embedding = HuggingFaceEmbeddings(
+                        model_name=self.rag_embedding_model,
+                        model_kwargs=model_kwargs,
+                        encode_kwargs=encode_kwargs,
+                        cache_folder=str(self.models_repository),
+                    )
+                elif self.rag_embedding_lib == "colbert":
+                    self.rag_embedding = None
+                else:
+                    msg = "Unknown embedding lib " + ad.rag.embedding_lib
+                    self.logger.error(msg)
+                    raise InputConnectorBadParamException(msg)
             else:
-                msg = "Unknown embedding lib " + ad.rag.embedding_lib
-                self.logger.error(msg)
-                raise InputConnectorBadParamException(msg)
+                self.rag_embedding = None
 
             self.rag_indexdb_lib = ad.rag.indexdb_lib
             if self.rag_indexdb_lib == "chromadb":
@@ -186,6 +203,9 @@ class RAGTxt:
             self.processed_docs.append(fdoc)
 
     def index(self, ad: InputConnectorObj, sorted_data: dict[str, list[str]]):
+        rag_config = merge_rag_config(self.ad.rag, ad.rag)
+        vector_requested = retrieval_mode_uses_embedding_retrieval(rag_config.retrieval_mode)
+        text_search_engine_requested = retrieval_mode_uses_text_search_engine(rag_config.retrieval_mode)
         self.preprocessing_strict = ad.preprocessing.strict
         self.preprocessing_lib = ad.preprocessing.lib
         self.preprocessing_cleaning = ad.preprocessing.cleaning
@@ -247,11 +267,20 @@ class RAGTxt:
             self.dbpath = self.indexpath / "chroma_db"
         self.bm25path = self.indexpath / "bm25.pkl"
 
+        vector_index_exists = False
+        if vector_requested:
+            if self.rag_indexdb_lib == "chromadb":
+                vector_index_exists = os.path.isfile(self.dbpath / "chroma.sqlite3")
+            else:
+                vector_index_exists = os.path.exists(self.indexpath)
+        text_search_engine_index_exists = text_search_engine_requested and self.text_search_engine_index.exists()
+        requested_indexes_exist = (not vector_requested or vector_index_exists) and (not text_search_engine_requested or text_search_engine_index_exists)
+
         if not os.path.isdir(self.indexpath):
             Path(self.indexpath).mkdir(parents=True, exist_ok=True)
             self.logger.debug("created app index dir %s", self.indexpath)
 
-        if self.rag and os.path.isfile(self.dbpath / "chroma.sqlite3") and not ad.rag.reindex:
+        if self.rag and requested_indexes_exist and not rag_config.reindex:
             # skip preprocessing if rag is activated, index exists and no forcing is requested
             pass
         else:
@@ -320,12 +349,12 @@ class RAGTxt:
             # filter out complex metadata
             filtered_docs = filter_complex_metadata(doc_splits)
 
-            if self.rag_retriever is None:
+            if vector_requested and self.rag_retriever is None:
                 # check whether db exists
                 if (
                     (self.rag_indexdb_obj == Chroma and os.path.isfile(self.dbpath / "chroma.sqlite3"))
                     or os.path.isfile(self.indexpath / "chroma.sqlite3")
-                ) and not ad.rag.reindex:
+                ) and not rag_config.reindex:
                     self.logger.info("existing index found at " + str(self.dbpath))
                     if self.rag_indexdb_obj == Chroma:
                         self.rag_indexdb = self.rag_indexdb_obj(
@@ -349,8 +378,8 @@ class RAGTxt:
                     self.logger.info("existing index has successfully loaded")
                 # otherwise index from scratch
                 else:
-                    if ad.rag.reindex:
-                        if os.path.isfile(self.dbpath / "chroma.sqlite3") and ad.rag.index_protection:
+                    if rag_config.reindex:
+                        if os.path.isfile(self.dbpath / "chroma.sqlite3") and rag_config.index_protection:
                             msg = """Index already exists and is protected.
                             If you want to reindex, set reindex to True along
                             with index_protection to False"""
@@ -456,6 +485,40 @@ class RAGTxt:
                         ],
                         weights=[0.5, 0.5],
                     )
+
+            if text_search_engine_requested:
+                if rag_config.reindex and self.text_search_engine_index.exists():
+                    if rag_config.index_protection:
+                        msg = "Index already exists and is protected. To reindex Tantivy, disable index_protection."
+                        self.logger.error(msg)
+                        raise InputConnectorBadParamException(msg)
+                    self.text_search_engine_index.reset()
+
+                tantivy_documents = []
+                for idx, doc in enumerate(filtered_docs):
+                    metadata = dict(doc.metadata)
+                    source = metadata.get("source", "")
+                    page_number = metadata.get("page")
+                    crop_label = metadata.get("crop_label") or metadata.get("label")
+                    start_index = metadata.get("start_index", idx)
+                    content = getattr(doc, "page_content", "")
+                    if not content:
+                        continue
+                    tantivy_documents.append(
+                        {
+                            "doc_id": f"{source}:{page_number}:{start_index}:{idx}",
+                            "source": source,
+                            "page_number": page_number,
+                            "crop_label": crop_label,
+                            "label": metadata.get("label"),
+                            "content": content,
+                        }
+                    )
+
+                self.text_search_engine_index.add_documents(
+                    tantivy_documents,
+                    recreate=rag_config.reindex and not rag_config.update_index,
+                )
         return self.rag_indexdb
 
     def delete_embedder(self):
@@ -474,9 +537,58 @@ class RAGTxt:
         except Exception:
             pass
 
-    def retrieve(self, rag_question):
-        res = self.rag_retriever.invoke(rag_question)
-        return res
+    def retrieve(self, rag_question, crop_label=None, request_rag=None):
+        rag_config = merge_rag_config(self.ad.rag, request_rag)
+
+        retrieved_docs = []
+        if retrieval_mode_uses_embedding_retrieval(rag_config.retrieval_mode):
+            retrieved_docs = self.rag_retriever.invoke(rag_question)
+
+        if retrieval_mode_uses_text_search_engine(rag_config.retrieval_mode):
+            text_hits, _ = build_text_context(
+                self.text_search_engine_index.search(
+                    rag_question,
+                    limit=rag_config.text_search_engine_top_k,
+                    fields=rag_config.text_search_engine_fields,
+                    crop_label=crop_label,
+                ),
+                max_chars_per_doc=rag_config.text_search_engine_max_chars_per_doc,
+                max_total_chars=rag_config.text_search_engine_max_total_chars,
+            )
+            tantivy_docs = []
+            for hit in text_hits:
+                tantivy_docs.append(
+                    Document(
+                        page_content=hit["content"],
+                        metadata={
+                            "source": hit.get("source"),
+                            "page": hit.get("page_number"),
+                            "label": hit.get("crop_label"),
+                            "retriever": "text_search_engine",
+                            "score": hit.get("score"),
+                        },
+                    )
+                )
+            retrieved_docs = self._merge_retrieved_docs(retrieved_docs, tantivy_docs)
+
+        return retrieved_docs
+
+    def _merge_retrieved_docs(self, vector_docs, tantivy_docs):
+        merged_docs = []
+        seen = set()
+        for doc in list(vector_docs) + list(tantivy_docs):
+            metadata = getattr(doc, "metadata", {})
+            key = (
+                metadata.get("source"),
+                metadata.get("page"),
+                metadata.get("start_index"),
+                getattr(doc, "page_content", None),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged_docs.append(doc)
+        return merged_docs
 
     def save_preprocessed_output(self, pdocs: list, outdir: Path):
         # output dir

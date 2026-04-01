@@ -11,6 +11,11 @@
                 "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
                 "gpu_id": 0,
                 "top_k": 4,
+                "retrieval_mode": "embedding_retrieval",
+                "text_search_engine_top_k": 4,
+                "text_search_engine_fields": ["content", "source"],
+                "text_search_engine_max_chars_per_doc": 1500,
+                "text_search_engine_max_total_chars": 6000,
                 "ragm": {
                     "layout_detection": true,
                     "image_width": 512,

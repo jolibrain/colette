@@ -8,6 +8,7 @@ from time import time
 from typing import Any, cast
 
 import chromadb
+import fitz
 import torch
 from chromadb.api.types import (
     Embedding,
@@ -22,8 +23,14 @@ from transformers import AutoProcessor, AutoModel, Qwen2VLForConditionalGenerati
 from colette.backends.hf.qwen3_vl_embedding import Qwen3VLEmbedder
 from vllm import LLM as VLLM
 
-from colette.apidata import InputConnectorObj
+from colette.apidata import InputConnectorObj, RAGObj, merge_rag_config
 from colette.backends.coldb import ColDB
+from colette.backends.tantivy import (
+    TantivyIndex,
+    build_text_context,
+    retrieval_mode_uses_text_search_engine,
+    retrieval_mode_uses_embedding_retrieval,
+)
 from colette.inputconnector import InputConnectorBadParamException
 
 from ..layout_detector import LayoutDetector
@@ -502,6 +509,7 @@ class RAGImgRetriever:
         filter_height,
         app_repository,
         kvstore,
+        text_search_engine_index,
         logger,
     ):
         self.indexlib = indexlib
@@ -515,41 +523,58 @@ class RAGImgRetriever:
         )
         self.app_repository = app_repository
         self.kvstore = kvstore
+        self.text_search_engine_index = text_search_engine_index
         self.logger = logger
         if self.indexlib == "coldb":
             self.colretriever = self.indexdb.as_retriever(search_type="similarity", search_kwargs={"k": self.top_k})
 
-    def invoke(self, question: str, query_depth_mult: int, crop_label: str = None):
+    def invoke(
+        self,
+        question: str,
+        query_depth_mult: int,
+        crop_label: str | list[str] | None = None,
+        retrieval_mode: str = "embedding_retrieval",
+        text_search_engine_top_k: int = 4,
+        text_search_engine_fields: list[str] | None = None,
+    ):
         ##- call on DB
         if query_depth_mult is None:
             query_depth_mult = self.query_depth_mult
 
-        if self.indexlib == "chromadb":
-            # Build where filter for ChromaDB if crop_label is provided
-            where_filter = None
-            if crop_label is not None:
-                # Handle both single string and list of strings
-                if isinstance(crop_label, str):
-                    # Single label: exact match
-                    where_filter = {"crop_label": crop_label}
-                elif isinstance(crop_label, list):
-                    # Multiple labels: use ChromaDB $in operator
-                    where_filter = {"crop_label": {"$in": crop_label}}
-                else:
-                    self.logger.warning("crop_label should be either a string or a list of strings.")
-            
-            docs = self.indexdb.query(
-                query_texts=[question], 
-                n_results=self.top_k * query_depth_mult,
-                where=where_filter  # Apply filter at ChromaDB query level
-            )
-        else:
-            docs = self.colretriever.invoke(question, query_depth_mult)
+        docs = {"ids": [[]], "distances": [[]], "metadatas": [[]]}
+        if retrieval_mode_uses_embedding_retrieval(retrieval_mode):
+            if self.indexlib == "chromadb":
+                where_filter = None
+                if crop_label is not None:
+                    if isinstance(crop_label, str):
+                        where_filter = {"crop_label": crop_label}
+                    elif isinstance(crop_label, list):
+                        where_filter = {"crop_label": {"$in": crop_label}}
+                    else:
+                        self.logger.warning("crop_label should be either a string or a list of strings.")
 
-        self.logger.debug(f"retrieved documents: {json.dumps(docs, indent=2)}")
+                docs = self.indexdb.query(
+                    query_texts=[question],
+                    n_results=self.top_k * query_depth_mult,
+                    where=where_filter,
+                )
+            else:
+                docs = self.colretriever.invoke(question, query_depth_mult)
 
-        ##- filter docs and add images
-        docs = self.filter(docs)
+            self.logger.debug(f"retrieved vector documents: {json.dumps(docs, indent=2)}")
+            docs = self.filter(docs)
+
+        if retrieval_mode_uses_text_search_engine(retrieval_mode):
+            if self.text_search_engine_index is None:
+                self.logger.warning("Text search retrieval requested but no text search engine index is available")
+                docs["text_context"] = []
+            else:
+                docs["text_context"] = self.text_search_engine_index.search(
+                    question,
+                    limit=text_search_engine_top_k,
+                    fields=text_search_engine_fields,
+                    crop_label=crop_label,
+                )
 
         return docs
 
@@ -591,6 +616,11 @@ class RAGImg:
             self.rag_chunk_num = ad.rag.chunk_num
             self.rag_chunk_overlap = ad.rag.chunk_overlap
             self.rag_indexdb_lib = ad.rag.indexdb_lib
+            self.rag_retrieval_mode = ad.rag.retrieval_mode
+            self.rag_text_search_engine_top_k = ad.rag.text_search_engine_top_k
+            self.rag_text_search_engine_fields = ad.rag.text_search_engine_fields
+            self.rag_text_search_engine_max_chars_per_doc = ad.rag.text_search_engine_max_chars_per_doc
+            self.rag_text_search_engine_max_total_chars = ad.rag.text_search_engine_max_total_chars
             self.rag_num_partitions = ad.rag.num_partitions
             self.gpu_id = ad.rag.gpu_id
 
@@ -609,6 +639,7 @@ class RAGImg:
 
         # indexdb
         self.indexpath = self.app_repository / "mm_index"
+        self.text_search_engine_index = TantivyIndex(self.indexpath / "text_search_engine", self.logger)
         # Store embedding configuration for reuse during indexing
         self.rag_embedding_model = ad.rag.embedding_model
         self.rag_embedding_lib = ad.rag.embedding_lib
@@ -645,30 +676,41 @@ class RAGImg:
             del self.rag_indexdb_client
 
     def reload_index_if_any(self, ad):
-        # Decide whether to load an existing index or create a new one.
+        rag_config = self._get_effective_rag_config(ad)
+        vector_requested = retrieval_mode_uses_embedding_retrieval(rag_config.retrieval_mode)
+        text_search_engine_requested = retrieval_mode_uses_text_search_engine(rag_config.retrieval_mode)
+
         self.has_existing_index = False
+        self.has_existing_vector_index = False
+        self.has_existing_text_search_engine_index = self.text_search_engine_index.exists()
         if self.rag_indexdb_lib == "chromadb":
             collection_names = self.rag_indexdb_client.list_collections()
             if collection_names and not isinstance(collection_names[0], str):
                 collection_names = [col.name for col in collection_names]
             self.logger.debug(f"Existing collections: {collection_names}")
-            self.has_existing_index = "mm_db" in collection_names and (self.indexpath / "chroma.sqlite3").exists()
+            self.has_existing_vector_index = (
+                vector_requested and "mm_db" in collection_names and (self.indexpath / "chroma.sqlite3").exists()
+            )
         else:
-            self.has_existing_index = True  # Assuming ColDB always has a persistent index
+            self.has_existing_vector_index = vector_requested and self.indexpath.exists()
+
+        self.has_existing_index = self.has_existing_vector_index or (text_search_engine_requested and self.has_existing_text_search_engine_index)
         self.logger.info(f"has_existing_index: {self.has_existing_index}")
 
-        if self.has_existing_index:
+        if self.has_existing_vector_index:
             # Initialize embedding function if using chromadb
-            if ad.rag.gpu_id == -1:
+            if rag_config.gpu_id == -1:
                 msg = "ad.rag.gpu_id is mandatory when reloading db at service creation or using coldb"
                 self.logger.error(msg)
                 raise InputConnectorBadParamException(msg)
             if self.rag_indexdb_lib == "chromadb":
                 # Use stored embedding_model from service creation, not from partial config
                 # This ensures consistency even when reloading with partial configs
-                if ad.rag.embedding_model is None and self.rag_embedding_model is not None:
-                    ad.rag.embedding_model = self.rag_embedding_model
-                self.rag_embf = ImageEmbeddingFunction(ad, self.models_repository, self.logger)
+                if rag_config.embedding_model is None and self.rag_embedding_model is not None:
+                    rag_config.embedding_model = self.rag_embedding_model
+                merged_ad = ad.model_copy(deep=True)
+                merged_ad.rag = rag_config
+                self.rag_embf = ImageEmbeddingFunction(merged_ad, self.models_repository, self.logger)
             else:
                 self.rag_embf = None
             self.logger.info("Loading existing index")
@@ -685,23 +727,30 @@ class RAGImg:
                     embedding_model=self.rag_embedding_model,
                     collection_name="mm_db",
                     logger=self.logger,
-                    gpu_id=ad.rag.gpu_id,
+                    gpu_id=rag_config.gpu_id,
                     num_partitions=self.rag_num_partitions,
-                    index_bsize=ad.rag.index_bsize,
-                    image_width=ad.rag.ragm.image_width,
-                    image_height=ad.rag.ragm.image_height,
+                    index_bsize=rag_config.index_bsize,
+                    image_width=rag_config.ragm.image_width,
+                    image_height=rag_config.ragm.image_height,
                     kvstore=self.kvstore,
                 )
             self.logger.info("Existing index loaded successfully")
 
+        if text_search_engine_requested and self.has_existing_text_search_engine_index:
+            self.text_search_engine_index.open()
+
     def index(self, ad: InputConnectorObj, sorted_documents: dict[str, list[str]]):
+        rag_config = self._get_effective_rag_config(ad)
+        vector_requested = retrieval_mode_uses_embedding_retrieval(rag_config.retrieval_mode)
+        text_search_engine_requested = retrieval_mode_uses_text_search_engine(rag_config.retrieval_mode)
+
         # Check whether this is an update to an existing index
-        self.gpu_id = ad.rag.gpu_id if ad.rag.gpu_id != -1 else self.gpu_id
+        self.gpu_id = rag_config.gpu_id if rag_config.gpu_id != -1 else self.gpu_id
         self.preproc_dpi = ad.preprocessing.dpi
-        self.rag_update_index = ad.rag.update_index
-        self.rag_reindex = ad.rag.reindex
-        self.rag_index_protection = ad.rag.index_protection
-        self.rag_layout_detector_gpu_id = ad.rag.gpu_id
+        self.rag_update_index = rag_config.update_index
+        self.rag_reindex = rag_config.reindex
+        self.rag_index_protection = rag_config.index_protection
+        self.rag_layout_detector_gpu_id = rag_config.gpu_id
 
         if self.rag_layout_detection:
             self.rag_layout_detector = LayoutDetector(
@@ -730,22 +779,26 @@ class RAGImg:
                     self.logger.error(msg)
                     raise InputConnectorBadParamException(msg)
                 # Delete the existing index if protection is off.
-                if self.rag_indexdb_lib == "chromadb":
+                if vector_requested and self.rag_indexdb_lib == "chromadb" and self.has_existing_vector_index:
                     self.rag_indexdb_client.delete_collection(name="mm_db")
+                if text_search_engine_requested and self.has_existing_text_search_engine_index:
+                    self.text_search_engine_index.reset()
 
             self.logger.info("Creating new index")
-            if self.rag_indexdb_lib == "chromadb":
+            if vector_requested and self.rag_indexdb_lib == "chromadb":
                 # Use stored embedding_model from service creation, not from partial config
                 # This ensures consistency even when indexing with partial configs like vrag_default_index.json
-                if ad.rag.embedding_model is None and self.rag_embedding_model is not None:
-                    ad.rag.embedding_model = self.rag_embedding_model
-                self.rag_embf = ImageEmbeddingFunction(ad, self.models_repository, self.logger)
+                if rag_config.embedding_model is None and self.rag_embedding_model is not None:
+                    rag_config.embedding_model = self.rag_embedding_model
+                merged_ad = ad.model_copy(deep=True)
+                merged_ad.rag = rag_config
+                self.rag_embf = ImageEmbeddingFunction(merged_ad, self.models_repository, self.logger)
                 self.rag_indexdb_collection = self.rag_indexdb_client.create_collection(
                     name="mm_db",
                     embedding_function=self.rag_embf,
                     metadata={"hnsw:space": "cosine"},
                 )
-            else:
+            elif vector_requested:
                 self.rag_embf = None
                 self.rag_indexdb_collection = ColDB(
                     persist_directory=self.indexpath,
@@ -756,19 +809,23 @@ class RAGImg:
                     collection_name="mm_db",
                     logger=self.logger,
                     num_partitions=self.rag_num_partitions,
-                    gpu_id=ad.rag.gpu_id,
-                    index_bsize=ad.rag.index_bsize,
-                    image_width=ad.rag.ragm.image_width,
-                    image_height=ad.rag.ragm.image_height,
+                    gpu_id=rag_config.gpu_id,
+                    index_bsize=rag_config.index_bsize,
+                    image_width=rag_config.ragm.image_width,
+                    image_height=rag_config.ragm.image_height,
                     kvstore=self.kvstore,
                 )
+            else:
+                self.rag_indexdb_collection = None
 
         # save state for for multiple index queries
         self.has_existing_index = True
+        self.has_existing_vector_index = self.has_existing_vector_index or vector_requested
+        self.has_existing_text_search_engine_index = self.has_existing_text_search_engine_index or text_search_engine_requested
 
         if self.rag_update_index:
             files, offset = set(), 0
-            if self.rag_indexdb_lib == "chromadb":
+            if vector_requested and self.rag_indexdb_lib == "chromadb" and self.rag_indexdb_collection is not None:
                 # Get all data from the collection by batch of 10_000
                 while (result := self.rag_indexdb_collection.get(offset=offset, limit=10_000)) and (
                     len(result["ids"]) > 0
@@ -808,6 +865,7 @@ class RAGImg:
 
             doclist = []
             metadatalist = []
+            tantivy_documents = []
             t1 = time()
             for fext, docs in sorted_documents.items():
                 for doc in tqdm(docs, desc="Indexing documents"):
@@ -821,9 +879,29 @@ class RAGImg:
                     processor.transform_documents_to_images([document])
                     self.logger.info(f"\t{len(document['images'])} images extracted")
                     document["npages"] = len(document["images"])
+                    page_texts = self._extract_page_texts(document["source"])
                     # Augment document with crops/chunks
                     image_processor.preprocess_images([document])
                     self.logger.info(f"\t{len(document['parts'])} parts generated")
+
+                    # Text search engine: one document per page (page-level text, not per-crop)
+                    # Indexing per-crop would duplicate the same page text N times and
+                    # return N identical-content hits for a single-page match.
+                    if text_search_engine_requested:
+                        source_str = str(document["source"])
+                        for page_number, page_text in page_texts.items():
+                            page_text_stripped = page_text.strip()
+                            if page_text_stripped:
+                                tantivy_documents.append(
+                                    {
+                                        "doc_id": f"{source_str}:page:{page_number}",
+                                        "source": source_str,
+                                        "page_number": page_number,
+                                        "crop_label": None,
+                                        "label": None,
+                                        "content": page_text_stripped,
+                                    }
+                                )
 
                     # store images in the index & vector store
                     for part in tqdm(document["parts"]):
@@ -834,7 +912,7 @@ class RAGImg:
                             part["img"],
                         )
 
-                        if self.rag_indexdb_lib == "chromadb":
+                        if vector_requested and self.rag_indexdb_lib == "chromadb":
                             # also pass the crop_label to the embedder
                             image_dict = {
                                 "doc": part["img"],
@@ -846,21 +924,33 @@ class RAGImg:
                                 ids=[part["name"].encode("utf-8", "replace").decode()],
                                 metadatas=[metadatas],
                             )
-                        else:
+                        elif vector_requested:
                             doclist.append(part["name"])
                             metadatalist.append(metadatas)
 
-            if self.rag_indexdb_lib == "coldb":
+            if vector_requested and self.rag_indexdb_lib == "coldb":
                 self.rag_indexdb_collection.add_imgs(doclist, metadatalist, "mm_db")
 
-            self.logger.info(f"{self.rag_indexdb_collection.count()} elements in store [{time() - t1:.2f}]")
+            if text_search_engine_requested:
+                self.text_search_engine_index.add_documents(tantivy_documents, recreate=self.rag_reindex and not self.rag_update_index)
+
+            if self.rag_indexdb_collection is not None:
+                self.logger.info(f"{self.rag_indexdb_collection.count()} elements in store [{time() - t1:.2f}]")
+            elif text_search_engine_requested:
+                self.logger.info(f"Text search engine indexing completed [{time() - t1:.2f}]")
 
         # Release layout detector resources
         if self.rag_layout_detection:
             del self.rag_layout_detector.model
 
     # returns docs
-    def retrieve(self, rag_question, query_depth_mult, crop_label: str | list[str] = None):
+    def retrieve(
+        self,
+        rag_question,
+        query_depth_mult,
+        crop_label: str | list[str] = None,
+        request_rag: RAGObj | None = None,
+    ):
         """
         Retrieve relevant documents for a question.
         
@@ -886,10 +976,49 @@ class RAGImg:
                 self.rag_filter_height,
                 self.app_repository,
                 self.kvstore,
+                self.text_search_engine_index,
                 self.logger,
             )
 
-        return self.rag_retriever.invoke(rag_question, query_depth_mult, crop_label)
+        rag_config = self._get_effective_rag_config_for_request(request_rag)
+        docs = self.rag_retriever.invoke(
+            rag_question,
+            query_depth_mult,
+            crop_label,
+            retrieval_mode=rag_config.retrieval_mode,
+            text_search_engine_top_k=rag_config.text_search_engine_top_k,
+            text_search_engine_fields=rag_config.text_search_engine_fields,
+        )
+
+        if retrieval_mode_uses_text_search_engine(rag_config.retrieval_mode):
+            text_hits, text_prompt = build_text_context(
+                docs.get("text_context", []),
+                max_chars_per_doc=rag_config.text_search_engine_max_chars_per_doc,
+                max_total_chars=rag_config.text_search_engine_max_total_chars,
+            )
+            docs["text_context"] = text_hits
+            docs["text_context_prompt"] = text_prompt
+
+        return docs
+
+    def _get_effective_rag_config(self, ad: InputConnectorObj) -> RAGObj:
+        return merge_rag_config(self.ad.rag, ad.rag)
+
+    def _get_effective_rag_config_for_request(self, request_rag: RAGObj | None) -> RAGObj:
+        return merge_rag_config(self.ad.rag, request_rag)
+
+    def _extract_page_texts(self, source: Path | str) -> dict[int, str]:
+        source_path = Path(source)
+        if source_path.suffix.lower() != ".pdf":
+            return {}
+
+        page_texts: dict[int, str] = {}
+        with fitz.open(source_path) as pdf_doc:
+            for page_idx in range(pdf_doc.page_count):
+                page_texts[page_idx + 1] = pdf_doc.load_page(page_idx).get_text("text")
+
+        return page_texts
+
     def delete_embedder(self):
         if self.rag_embf:
             if self.rag_embf.vllm:

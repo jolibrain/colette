@@ -63,6 +63,8 @@ class RAGObj(BaseModel):
 
     indexdb_lib: Literal["chromadb", "coldb"] = "chromadb"
     """ Indexing database library, chromadb or coldb """
+    retrieval_mode: Literal["embedding_retrieval", "text_search_retrieval", "hybrid"] = "embedding_retrieval"
+    """ Retrieval mode: embedding-only, text-search-only, or hybrid in parallel """
     embedding_lib: Literal["huggingface", "colbert", "vllm"] = "huggingface"
     """ Embedding library, use colbert with coldb, huggingface for V-RAG """
     embedding_model: str | None = None
@@ -81,6 +83,14 @@ class RAGObj(BaseModel):
     """ GPU ID to use for RAG embedder """
     search: bool = False
     """ Text-RAG only: whether to add bm25 search engine to similarity-based retrieval """
+    text_search_engine_top_k: int = 4
+    """ Tantivy-only: number of text hits retrieved from the Tantivy index """
+    text_search_engine_fields: list[str] = Field(default_factory=lambda: ["content", "source"])
+    """ Tantivy-only: fields queried during full-text search """
+    text_search_engine_max_chars_per_doc: int = 1500
+    """ Tantivy-only: max number of characters kept per retrieved text hit """
+    text_search_engine_max_total_chars: int = 6000
+    """ Tantivy-only: total character budget contributed by Tantivy to the LLM context """
     reindex: bool = False
     """ Whether to allow full reindexing of an existing RAG """
     index_protection: bool = True
@@ -282,6 +292,20 @@ class APIData(BaseModel):
     """ Main RAG application object """
     parameters: ParametersObj = Field(default_factory=ParametersObj)
     """ Main parameters object """
+
+
+def merge_rag_config(base: RAGObj | None, override: RAGObj | None) -> RAGObj | None:
+    """Merge request-time RAG overrides onto the service-level RAG config."""
+
+    if base is None and override is None:
+        return None
+
+    merged = base.model_dump() if base is not None else {}
+    if override is not None:
+        for field_name in override.model_fields_set:
+            merged[field_name] = getattr(override, field_name)
+
+    return RAGObj(**merged)
 
 
 class InfoObj(BaseModel):

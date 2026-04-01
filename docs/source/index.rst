@@ -13,6 +13,7 @@
    users/server.md
    users/openwebui.md
    users/configuration.md
+   users/text_search_engine.md
    users/data.md
 
 .. toctree::
