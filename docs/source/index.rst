@@ -7,6 +7,8 @@
    :hidden:
 
    users/get_started.md
+   users/get_started_ARM_machine.md
+   users/get_started_DGX_machine.md
    users/ui.md
    users/server.md
    users/openwebui.md

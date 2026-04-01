@@ -77,6 +77,10 @@ source venv_colette/bin/activate
 
 NOTE: This process may take a while, as there are many dependencies to install and some of them require compilation.
 
+For platform-specific source setup, use:
+- `create_venv_colette_ARM.sh` for ARM machines (see [Get Started on ARM Machine](get_started_ARM_machine.md))
+- `create_venv_colette_DGX.sh` for DGX machines (see [Get Started on DGX Machine](get_started_DGX_machine.md))
+
 ##### Index the data
 
 Let's index a PDF slidedeck from docs/pdf
