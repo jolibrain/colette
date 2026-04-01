@@ -6,6 +6,7 @@ Contains and manages the list of running LLM services.
 Each service instanciates an LLM model and associated input and output connectors.
 """
 
+import gc
 from typing import Any
 
 from .apidata import APIData, APIResponse
@@ -40,6 +41,16 @@ class Services:
                 serv.llmmodel.delete_model()
             del serv
             del self.services[sname]
+
+            gc.collect()
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.ipc_collect()
+            except Exception:
+                pass
             return True
         return False
 
