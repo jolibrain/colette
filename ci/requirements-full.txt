@@ -40,3 +40,4 @@ langchain-ollama==0.3.8
 langchain-unstructured==0.1.6
 llama-cpp-python==0.3.1
 pymupdf==1.26.4
+tantivy==0.25.1

@@ -6,6 +6,7 @@ coverage.xml
 pytest-smoke.xml
 htmlcov/
 models--*/
+tmp/
 
 # ENV files
 .env

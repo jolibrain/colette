@@ -9,6 +9,7 @@ uvicorn
 pdfminer.six
 opencv-python
 pymupdf # for unstructured fast mode
+tantivy==0.25.1
 tiktoken
 gpt4all
 chromadb
