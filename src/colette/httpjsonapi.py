@@ -22,7 +22,14 @@ from .jsonapi import (
 VERSION = "v1"
 NAME_PREFIX = "Colette -"
 
-git_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=os.path.dirname(__file__)).decode("ascii").strip()
+try:
+    git_hash = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=os.path.dirname(__file__),
+        stderr=subprocess.DEVNULL,
+    ).decode("ascii").strip()
+except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+    git_hash = "unknown"
 print(f"Colette {VERSION} server - commit={git_hash}", flush=True)
 version_str = f"*commit:* [{git_hash}]\n\n"
 

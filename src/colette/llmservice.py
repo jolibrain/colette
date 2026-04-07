@@ -58,9 +58,18 @@ def createLLMService(BaseLLMLib):
                 file_handler.setFormatter(self.logger.handlers[-1].formatter)
                 self.logger.addHandler(file_handler)
 
-            # store ad in the app repository
-            with open(f"{self.app_repository}/config.json", "w") as f:
-                json.dump(ad.model_dump(), f, indent=4)
+            # Store ad in the app repository.
+            # Skip during chat (reindex=False + index_protection=True) so the
+            # index-time config.json is never overwritten by a different runtime's
+            # paths or retrieval_mode settings.
+            rag_params = ad.parameters.input.rag if ad.parameters and ad.parameters.input else None
+            _is_chat = rag_params is not None and not rag_params.reindex and rag_params.index_protection
+            _config_path = Path(self.app_repository) / "config.json"
+            # Always create config.json when it does not exist yet. During chat,
+            # only skip overwriting an already persisted index-time config.
+            if not (_is_chat and _config_path.exists()):
+                with open(_config_path, "w") as f:
+                    json.dump(ad.model_dump(), f, indent=4)
 
             if self.inputc:
                 self.inputc.app_repository = self.app_repository

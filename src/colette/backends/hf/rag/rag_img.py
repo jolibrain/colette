@@ -260,11 +260,18 @@ class ImageEmbeddingFunction(EmbeddingFunction):
                     enforce_eager=self.vllm_enforce_eager,
                 )
             else:
+                processor_kwargs = {
+                    "min_pixels": min_pixels,
+                    "max_pixels": max_pixels,
+                    "cache_dir": str(models_repository),
+                }
+                # Keep Qwen2-VL processor behavior stable and silence fast-processor migration warning.
+                if "Qwen2-VL" in self.rag_embedding_model:
+                    processor_kwargs["use_fast"] = False
+
                 self.processor = AutoProcessor.from_pretrained(
                     self.rag_embedding_model,
-                    min_pixels=min_pixels,
-                    max_pixels=max_pixels,
-                    cache_dir=str(models_repository),
+                    **processor_kwargs,
                 )
                 # Support both the legacy Alibaba Qwen2-VL and the newer Qwen3-VL-Embedding model.
                 # Try to instantiate a model class that provides embeddings. We prefer the
@@ -543,7 +550,13 @@ class RAGImgRetriever:
 
         docs = {"ids": [[]], "distances": [[]], "metadatas": [[]]}
         if retrieval_mode_uses_embedding_retrieval(retrieval_mode):
-            if self.indexlib == "chromadb":
+            if self.indexdb is None:
+                self.logger.warning(
+                    "Embedding retrieval requested but no vector index is available. "
+                    "Return empty embedding context."
+                )
+                docs = {"ids": [[]], "distances": [[]], "metadatas": [[]]}
+            elif self.indexlib == "chromadb":
                 where_filter = None
                 if crop_label is not None:
                     if isinstance(crop_label, str):
@@ -645,8 +658,12 @@ class RAGImg:
         self.rag_embedding_lib = ad.rag.embedding_lib
         
         if self.rag_indexdb_lib == "chromadb":
-            self.rag_indexdb_client = chromadb.PersistentClient(
-                str(self.indexpath), Settings(anonymized_telemetry=False)
+            self.rag_indexdb_client = chromadb.Client(
+                Settings(
+                    is_persistent=True,
+                    persist_directory=str(self.indexpath),
+                    anonymized_telemetry=False,
+                )
             )
         else:
             self.rag_indexdb_client = None
@@ -673,6 +690,11 @@ class RAGImg:
         if hasattr(self, 'rag_indexdb_collection') and self.rag_indexdb_collection is not None:
             del self.rag_indexdb_collection
         if hasattr(self, 'rag_indexdb_client') and self.rag_indexdb_client is not None:
+            try:
+                if hasattr(self.rag_indexdb_client, "_system") and self.rag_indexdb_client._system is not None:
+                    self.rag_indexdb_client._system.stop()
+            except Exception:
+                pass
             del self.rag_indexdb_client
 
     def reload_index_if_any(self, ad):
@@ -741,6 +763,30 @@ class RAGImg:
 
     def index(self, ad: InputConnectorObj, sorted_documents: dict[str, list[str]]):
         rag_config = self._get_effective_rag_config(ad)
+        # Persist index-time RAG config as the service default for later predict calls.
+        self.ad.rag = rag_config
+        # Write retrieval_mode back to config.json so CLI chat and cross-runtime
+        # runs (e.g. notebook index then container chat) see the same mode.
+        _config_path = self.app_repository / "config.json"
+        if _config_path.exists():
+            try:
+                with open(_config_path) as _f:
+                    _saved_cfg = json.load(_f)
+                _retrieval_mode = (
+                    rag_config.retrieval_mode.value
+                    if hasattr(rag_config.retrieval_mode, "value")
+                    else str(rag_config.retrieval_mode)
+                )
+                _saved_cfg.setdefault("parameters", {}).setdefault("input", {}).setdefault("rag", {})[
+                    "retrieval_mode"
+                ] = _retrieval_mode
+                with open(_config_path, "w") as _f:
+                    json.dump(_saved_cfg, _f, indent=4)
+            except Exception as e:
+                self.logger.warning(
+                    "Failed to persist retrieval_mode to config.json: %s",
+                    e,
+                )  # non-fatal: in-memory state is still correct
         vector_requested = retrieval_mode_uses_embedding_retrieval(rag_config.retrieval_mode)
         text_search_engine_requested = retrieval_mode_uses_text_search_engine(rag_config.retrieval_mode)
 
@@ -768,6 +814,8 @@ class RAGImg:
         if not self.indexpath.exists():
             self.indexpath.mkdir(parents=True, exist_ok=True)
             self.logger.debug("Created app index dir %s", self.indexpath)
+        # Recreate retriever on next request so it picks updated index handles/config.
+        self.rag_retriever = None
 
         if self.has_existing_index and not self.rag_reindex:
             # index reload : already done at service creation
