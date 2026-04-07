@@ -1,0 +1,34 @@
+# VCS
+.git
+.gitignore
+
+# Python envs and caches
+venv_colette/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build/test artifacts
+.coverage
+coverage.xml
+.ci-artifacts/
+
+# Large local runtime data
+models/
+models_rel/
+tests/models/
+app_colette/
+apps/
+tmp/
+
+# Not required in image build context
+docs/
+video/
+*.ipynb
+
+# Local env/config files
+.env
+env_template
