@@ -96,6 +96,15 @@ To start the server and UI using the pre-built Docker images:
 docker compose -f docker-compose-backend-ui.yml --env-file .env up
 ```
 
+To rebuild backend and UI images from local source code before launching:
+
+```bash
+docker compose -f docker-compose-backend-ui-local-container.yml --env-file .env build
+docker compose -f docker-compose-backend-ui-local-container.yml --env-file .env up -d --force-recreate
+```
+
+For full rebuild scenarios (cache strategy, registry tags, CPU flow), see `../developers/container_rebuild.md`.
+
 Once the application is initialized, the UI will be available at [http://localhost:7860](http://localhost:7860).
 
 > ⚠️ **Attention**

@@ -96,6 +96,15 @@ To start the server using the pre-built Docker images:
 docker compose -f docker-compose-backend.yml --env-file .env up
 ```
 
+To rebuild the backend image from local source code before launching:
+
+```bash
+docker compose -f docker-compose-backend-local-container.yml --env-file .env build gpu_server
+docker compose -f docker-compose-backend-local-container.yml --env-file .env up -d --force-recreate
+```
+
+For full rebuild scenarios (cache strategy, registry tags, CPU flow), see `../developers/container_rebuild.md`.
+
 > ⚠️ **Attention**
 > The **first application startup** takes some time, as it downloads the required models from HuggingFace.
 > This may take **several minutes** depending on your internet speed. **Be patient**.
@@ -236,3 +245,9 @@ When `retrieval_mode` is:
 - `embedding_retrieval`: only `.sources.context` is populated
 - `text_search_retrieval`: only `.sources.text_context` is populated
 - `hybrid`: both keys are populated
+
+Operational notes:
+
+- The retrieval mode used at indexing time is persisted in `<app_dir>/config.json`.
+- If a later query does not provide `parameters.input.rag.retrieval_mode`, Colette uses that persisted value.
+- Index once with `hybrid` if you want to switch between embedding and text-search at query time without re-indexing.

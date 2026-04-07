@@ -157,8 +157,13 @@ def chat(
             raise typer.Exit(code=1)
 
         chat_input = dict(message=msg, crop_label=crop_label)
-        if retrieval_mode is not None:
-            chat_input["rag"] = {"retrieval_mode": retrieval_mode}
+        # Use the explicitly requested retrieval_mode if provided.
+        # Otherwise fall back to whatever was persisted in config.json at index time.
+        effective_retrieval_mode = retrieval_mode or (
+            json_data.get("parameters", {}).get("input", {}).get("rag", {}).get("retrieval_mode")
+        )
+        if effective_retrieval_mode:
+            chat_input["rag"] = {"retrieval_mode": effective_retrieval_mode}
         chat_payload = dict(parameters=dict(input=chat_input))
         response = client.post(f"/v1/predict/{app_name}", json=chat_payload)
         if response.status_code != 200:

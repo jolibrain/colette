@@ -141,6 +141,16 @@ class TantivyIndex:
         tantivy_query = index.parse_query(parsed_query, search_fields)
         results = searcher.search(tantivy_query, limit=limit)
 
+        # Fallback for low-recall/strict queries: return top documents so text-only
+        # retrieval modes still provide context instead of an empty result set.
+        if not results.hits and parsed_query != "*":
+            self.logger.warning(
+                "Tantivy returned no hits for query '%s'; falling back to '*'",
+                query,
+            )
+            fallback_query = index.parse_query("*", search_fields)
+            results = searcher.search(fallback_query, limit=limit)
+
         hits: list[dict[str, Any]] = []
         for score, address in results.hits:
             doc = searcher.doc(address)

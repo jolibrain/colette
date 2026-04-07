@@ -27,7 +27,9 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
     texlive-luatex \
     ninja-build \
     libgl1-mesa-glx \
-    libglib2.0-0 && \
+    libglib2.0-0 \
+    libcairo2-dev \
+    pkg-config && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -41,24 +43,11 @@ RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
 RUN mkdir /app
 
 WORKDIR /app
-ADD pyproject.toml .
 ADD . /app
 
-# Upgrade pip and install packaging/wheel
-RUN python3 -m pip install --upgrade pip
-RUN pip install packaging wheel
-
-# Install torch 2.7.0 with CUDA 12.6 support
+ENV MAX_JOBS=4
 RUN --mount=type=cache,mode=0755,target=/root/.cache/pip \
-    pip install torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
-
-# Install other dependencies
-RUN --mount=type=cache,mode=0755,target=/root/.cache/pip \
-    pip3 install -e .[dev,trag]
-
-# Install flash-attn
-RUN pip3 uninstall flash-attn -y
-RUN pip install flash-attn==2.5.6 --no-build-isolation
+    COLETTE_CUDA_SHORT=126 bash scripts/install_python_deps.sh
 
 # Create cache directories
 RUN mkdir -p .cache/torch && export TORCH_HOME=/app/.cache/torch

@@ -20,17 +20,9 @@ fi
 python3 -m venv venv_colette
 source venv_colette/bin/activate
 echo "virtual environment 'venv_colette' activated."
-python -m pip install --upgrade pip setuptools wheel packaging ninja
-echo "Installing torch with CUDA support based on detected CUDA version..."
-python -m pip install torch==2.8.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu${cuda_short}
 
-echo "Installing flash-attn first (single build path)..."
-# Install flash-attn before editable project install to avoid pip rebuilding it twice.
-export MAX_JOBS=${MAX_JOBS:-4}
-python -m pip install flash-attn==2.8.3 --no-build-isolation
-
-echo "Installing other dependencies..."
-python -m pip install -e .[dev,trag]
+echo "Installing dependencies using shared installer..."
+COLETTE_CUDA_SHORT="${cuda_short}" bash scripts/install_python_deps.sh
 
 echo "Running flash-attn compatibility smoke check..."
 python - <<'PY'

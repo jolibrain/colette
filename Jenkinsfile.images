@@ -1,0 +1,214 @@
+pipeline {
+  agent {
+    node { label 'n5' }
+  }
+
+  // Maintainer note:
+  // - Set RUN_INTEGRATION=true to execute containerized integration tests before push.
+  // - Optionally tune INTEGRATION_PYTEST_ARGS (e.g. -q -x) and
+  //   INTEGRATION_TEST_FILES (space-separated /app/tests/... paths).
+
+  options {
+    timestamps()
+    disableConcurrentBuilds(abortPrevious: true)
+    buildDiscarder(logRotator(numToKeepStr: '30'))
+  }
+
+  parameters {
+    booleanParam(name: 'NO_CACHE', defaultValue: false, description: 'Build Docker images with --no-cache')
+    booleanParam(name: 'PUSH_ENABLED', defaultValue: true, description: 'Allow pushing images when branch policy matches')
+    booleanParam(name: 'RUN_INTEGRATION', defaultValue: false, description: 'Run containerized integration tests before push')
+    choice(name: 'SMOKE_MODE', choices: ['quick', 'api'], description: 'Container smoke mode: quick checks or API startup checks')
+    string(name: 'SMOKE_TIMEOUT_SEC', defaultValue: '120', description: 'Timeout in seconds for API smoke mode')
+    string(name: 'INTEGRATION_PYTEST_ARGS', defaultValue: '-q', description: 'pytest args passed to ci/container_integration.sh')
+    string(name: 'INTEGRATION_TEST_FILES', defaultValue: '/app/tests/test_pipeline_python_api_integration.py /app/tests/test_pipeline_tantivy_integration.py', description: 'Space-separated integration test files')
+  }
+
+  environment {
+    REGISTRY = 'docker.jolibrain.com'
+    IMAGE_GPU_BASE = 'colette_gpu'
+    IMAGE_GPU_SERVER = 'colette_gpu_server'
+    IMAGE_UI = 'colette_ui'
+    IMAGE_TAG = ''
+    SHOULD_PUSH = 'false'
+  }
+
+  stages {
+    stage('Prepare Metadata') {
+      steps {
+        script {
+          env.IMAGE_TAG = sh(returnStdout: true, script: 'git rev-parse --short=12 HEAD').trim()
+
+          String branch = env.BRANCH_NAME ?: ''
+          boolean branchAllowed = (branch == 'main' || branch.startsWith('release/'))
+          env.SHOULD_PUSH = (params.PUSH_ENABLED && branchAllowed) ? 'true' : 'false'
+
+          sh '''
+            set -e
+            printf "%s\n" "${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}" > .ci-image-gpu-base
+            printf "%s\n" "${REGISTRY}/${IMAGE_GPU_SERVER}:${IMAGE_TAG}" > .ci-image-gpu-server
+            printf "%s\n" "${REGISTRY}/${IMAGE_UI}:${IMAGE_TAG}" > .ci-image-ui
+          '''
+
+          echo "Branch: ${branch}"
+          echo "Image tag: ${env.IMAGE_TAG}"
+          echo "Push enabled parameter: ${params.PUSH_ENABLED}"
+          echo "Push policy decision: ${env.SHOULD_PUSH}"
+        }
+      }
+    }
+
+    stage('Build GPU Base') {
+      steps {
+        sh '''
+          set -e
+          export TARGET=gpu_base
+          bash ci/build_container_images.sh
+        '''
+      }
+    }
+
+    stage('Build GPU Server') {
+      steps {
+        sh '''
+          set -e
+          export TARGET=gpu_server
+          bash ci/build_container_images.sh
+        '''
+      }
+    }
+
+    stage('Build UI') {
+      steps {
+        sh '''
+          set -e
+          export TARGET=ui
+          bash ci/build_container_images.sh
+        '''
+      }
+    }
+
+    stage('Smoke Test Images') {
+      steps {
+        script {
+          if (params.SMOKE_MODE == 'api') {
+            withCredentials([string(credentialsId: 'hf', variable: 'HF_TOKEN')]) {
+              sh '''
+                set -e
+                export GPU_BASE_IMAGE="${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}"
+                export GPU_SERVER_IMAGE="${REGISTRY}/${IMAGE_GPU_SERVER}:${IMAGE_TAG}"
+                export UI_IMAGE="${REGISTRY}/${IMAGE_UI}:${IMAGE_TAG}"
+                export SMOKE_MODE="${SMOKE_MODE}"
+                export SMOKE_TIMEOUT_SEC="${SMOKE_TIMEOUT_SEC}"
+                bash ci/container_smoke.sh
+              '''
+            }
+          } else {
+            sh '''
+              set -e
+              export GPU_BASE_IMAGE="${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}"
+              export GPU_SERVER_IMAGE="${REGISTRY}/${IMAGE_GPU_SERVER}:${IMAGE_TAG}"
+              export UI_IMAGE="${REGISTRY}/${IMAGE_UI}:${IMAGE_TAG}"
+              export SMOKE_MODE="${SMOKE_MODE}"
+              export SMOKE_TIMEOUT_SEC="${SMOKE_TIMEOUT_SEC}"
+              bash ci/container_smoke.sh
+            '''
+          }
+        }
+      }
+    }
+
+    stage('Integration Test Images') {
+      when {
+        expression { return params.RUN_INTEGRATION }
+      }
+      steps {
+        withCredentials([string(credentialsId: 'hf', variable: 'HF_TOKEN')]) {
+          sh '''
+            set -e
+            export GPU_BASE_IMAGE="${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}"
+            export MODELS_PATH=./models
+            export TESTS_PATH=./tests
+            export PYTEST_ARGS="${INTEGRATION_PYTEST_ARGS}"
+            export TEST_FILES="${INTEGRATION_TEST_FILES}"
+            bash ci/container_integration.sh
+          '''
+        }
+      }
+    }
+
+    stage('Push Images') {
+      when {
+        expression { return env.SHOULD_PUSH == 'true' }
+      }
+      steps {
+        sh '''
+          set -e
+          docker push ${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}
+          docker push ${REGISTRY}/${IMAGE_GPU_SERVER}:${IMAGE_TAG}
+          docker push ${REGISTRY}/${IMAGE_UI}:${IMAGE_TAG}
+        '''
+      }
+    }
+
+    stage('Publish Summary') {
+      steps {
+        sh '''
+          set -e
+          echo "Built images:"
+          cat .ci-image-gpu-base
+          cat .ci-image-gpu-server
+          cat .ci-image-ui
+
+          if [ "${SHOULD_PUSH}" = "true" ]; then
+            echo "Images were pushed (branch policy matched)."
+          else
+            echo "Images were not pushed (branch policy did not match or PUSH_ENABLED=false)."
+          fi
+        '''
+      }
+    }
+  }
+
+  post {
+    always {
+      catchError {
+        sh '''
+          set +e
+          [ -f .ci-image-gpu-server ] && docker image rm "$(cat .ci-image-gpu-server)"
+          [ -f .ci-image-ui ] && docker image rm "$(cat .ci-image-ui)"
+          [ -f .ci-image-gpu-base ] && docker image rm "$(cat .ci-image-gpu-base)"
+        '''
+      }
+      cleanWs(
+        cleanWhenAborted: true,
+        cleanWhenFailure: true,
+        cleanWhenNotBuilt: true,
+        cleanWhenSuccess: true,
+        cleanWhenUnstable: true,
+        cleanupMatrixParent: true,
+        deleteDirs: true,
+      )
+    }
+    success {
+      catchError {
+        rocketSend(channel: 'build', message: 'Container images build/push succeeded', color: 'green')
+      }
+    }
+    aborted {
+      catchError {
+        rocketSend(channel: 'build', message: 'Container images pipeline superseded or aborted')
+      }
+    }
+    unstable {
+      catchError {
+        rocketSend(channel: 'build', message: 'Container images pipeline unstable', color: 'red')
+      }
+    }
+    failure {
+      catchError {
+        rocketSend(channel: 'build', message: 'Container images build/push failed', color: 'red')
+      }
+    }
+  }
+}

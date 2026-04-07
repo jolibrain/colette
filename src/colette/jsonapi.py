@@ -288,6 +288,7 @@ class JSONApi(APIStrategy):
         except Exception as e:
             self.logger_api.error("Exception: " + str(e))
             self.logger_api.error(traceback.format_exc())
+            return colette_internal_error_500(repr(e))
 
         return response
 

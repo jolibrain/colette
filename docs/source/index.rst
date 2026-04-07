@@ -23,6 +23,7 @@
 
    developers/setup.md
    developers/deployment.md
+   developers/container_rebuild.md
    developers/integration_testing.md
    developers/jenkins_pipeline.md
 

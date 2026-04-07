@@ -57,6 +57,20 @@ Also the default config file is `vrag_default_lite.json` which is designed to ru
 ### Docker (recommended)
 Easiest way to get started uses Docker. If you with to install from sources, see [Developer Setup](https://colette.chat/doc/developers/setup.html)
 
+For rebuilding images after local code changes, see [Container Rebuild Guide](https://colette.chat/doc/developers/container_rebuild.html).
+
+### Jenkins (Container Publish)
+
+Use the dedicated pipeline file `Jenkinsfile.images` for container build/push automation.
+
+For a Jenkins Multibranch Pipeline job:
+
+1. Set `Script Path` to `Jenkinsfile.images`.
+2. Keep the root `Jenkinsfile` for test CI only.
+3. The image pipeline builds `colette_gpu`, `colette_gpu_server`, and `colette_ui` with a short SHA tag.
+4. Push runs only on `main` and `release/*` branches.
+5. Optional `RUN_INTEGRATION=true` runs containerized integration tests via `ci/container_integration.sh` before push.
+
 1. Pull the Docker image
 
 ```bash
@@ -244,6 +258,12 @@ query_text_search = {
 response_text_search = colette_api.service_predict(app_name, APIData(**query_text_search))
 for hit in response_text_search.sources.get('text_context', []):
     print(hit['source'], hit.get('page_number'), hit.get('score'))
+
+# Notes:
+# - If you index with retrieval_mode='hybrid', both embedding and text-search data are available.
+# - The indexing retrieval_mode is persisted in app_colette/config.json.
+# - If chat/predict requests omit parameters.input.rag.retrieval_mode,
+#   Colette falls back to the persisted value from config.json.
 ```
 
 ### Retrieval modes
