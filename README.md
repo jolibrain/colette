@@ -68,13 +68,13 @@ For a Jenkins Multibranch Pipeline job:
 1. Set `Script Path` to `Jenkinsfile.images`.
 2. Keep the root `Jenkinsfile` for test CI only.
 3. The image pipeline builds `colette_gpu`, `colette_gpu_server`, and `colette_ui` with a short SHA tag.
-4. Push runs only on `main` and `release/*` branches.
+4. Push runs only on `main` and `release/*` branches; `latest` is refreshed on `main` only.
 5. Optional `RUN_INTEGRATION=true` runs containerized integration tests via `ci/container_integration.sh` before push.
 
 1. Pull the Docker image
 
 ```bash
-docker pull docker.jolibrain.com/colette_gpu
+docker pull docker.jolibrain.com/colette_gpu:latest
 ```
 
 2. Create folders for models and app_colette

@@ -17,11 +17,14 @@ This pipeline builds and tags:
 - `docker.jolibrain.com/colette_gpu:<short_sha>` from `docker/gpu_build.Dockerfile`
 - `docker.jolibrain.com/colette_gpu_server:<short_sha>` from `docker/gpu_jb_server.Dockerfile`
 - `docker.jolibrain.com/colette_ui:<short_sha>` from `docker/ui.Dockerfile`
+- `docker.jolibrain.com/colette_gpu:latest` on `main` (moving alias)
+- `docker.jolibrain.com/colette_gpu_server:latest` on `main` (moving alias)
+- `docker.jolibrain.com/colette_ui:latest` on `main` (moving alias)
 
 Push policy:
 
-- Push runs only on `main` and `release/*` branches
-- Tags use short Git SHA
+- Short-SHA tags are pushed on `main` and `release/*` branches
+- `latest` tags are refreshed only on `main`
 - Existing root `Jenkinsfile` remains focused on tests
 
 Jenkins Multibranch setup:
@@ -120,7 +123,7 @@ Docker images are provided on https://docker.jolibrain.com/
 To pull an image:
 
 ```bash
-docker pull docker.jolibrain.com/colette_gpu_build
+docker pull docker.jolibrain.com/colette_gpu:latest
 ```
 
 ### Building with Docker for GPU

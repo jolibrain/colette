@@ -31,6 +31,7 @@ pipeline {
     IMAGE_UI = 'colette_ui'
     IMAGE_TAG = ''
     SHOULD_PUSH = 'false'
+    SHOULD_PUSH_LATEST = 'false'
   }
 
   stages {
@@ -41,7 +42,9 @@ pipeline {
 
           String branch = env.BRANCH_NAME ?: ''
           boolean branchAllowed = (branch == 'main' || branch.startsWith('release/'))
+          boolean branchMain = (branch == 'main')
           env.SHOULD_PUSH = (params.PUSH_ENABLED && branchAllowed) ? 'true' : 'false'
+          env.SHOULD_PUSH_LATEST = (params.PUSH_ENABLED && branchMain) ? 'true' : 'false'
 
           sh '''
             set -e
@@ -54,6 +57,7 @@ pipeline {
           echo "Image tag: ${env.IMAGE_TAG}"
           echo "Push enabled parameter: ${params.PUSH_ENABLED}"
           echo "Push policy decision: ${env.SHOULD_PUSH}"
+          echo "Latest tag update decision: ${env.SHOULD_PUSH_LATEST}"
         }
       }
     }
@@ -147,6 +151,16 @@ pipeline {
           docker push ${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}
           docker push ${REGISTRY}/${IMAGE_GPU_SERVER}:${IMAGE_TAG}
           docker push ${REGISTRY}/${IMAGE_UI}:${IMAGE_TAG}
+
+          if [ "${SHOULD_PUSH_LATEST}" = "true" ]; then
+            docker tag ${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_GPU_BASE}:latest
+            docker tag ${REGISTRY}/${IMAGE_GPU_SERVER}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_GPU_SERVER}:latest
+            docker tag ${REGISTRY}/${IMAGE_UI}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_UI}:latest
+
+            docker push ${REGISTRY}/${IMAGE_GPU_BASE}:latest
+            docker push ${REGISTRY}/${IMAGE_GPU_SERVER}:latest
+            docker push ${REGISTRY}/${IMAGE_UI}:latest
+          fi
         '''
       }
     }
@@ -165,6 +179,12 @@ pipeline {
           else
             echo "Images were not pushed (branch policy did not match or PUSH_ENABLED=false)."
           fi
+
+          if [ "${SHOULD_PUSH_LATEST}" = "true" ]; then
+            echo "Latest tags were updated for main branch."
+          else
+            echo "Latest tags were not updated (not main branch or PUSH_ENABLED=false)."
+          fi
         '''
       }
     }
@@ -175,6 +195,9 @@ pipeline {
       catchError {
         sh '''
           set +e
+          [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_GPU_BASE}:latest"
+          [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_GPU_SERVER}:latest"
+          [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_UI}:latest"
           [ -f .ci-image-gpu-server ] && docker image rm "$(cat .ci-image-gpu-server)"
           [ -f .ci-image-ui ] && docker image rm "$(cat .ci-image-ui)"
           [ -f .ci-image-gpu-base ] && docker image rm "$(cat .ci-image-gpu-base)"
