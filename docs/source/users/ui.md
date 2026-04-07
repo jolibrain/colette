@@ -9,7 +9,7 @@ Also the default config file is `vrag_default_lite.json` which is designed to ru
 ### 0. Get the GPU Colette image
 
 ```bash
-docker pull docker.jolibrain.com/colette_gpu
+docker pull docker.jolibrain.com/colette_gpu:latest
 ```
 
 ### 1. Clone the repository
@@ -37,7 +37,7 @@ docker run --gpus all --user $(id -u):$(id -g) \
   -v $PWD:/rag \
   -v $PWD/docs:/data \
   -v $PWD/models:/app/models \
-  docker.jolibrain.com/colette_gpu \
+  docker.jolibrain.com/colette_gpu:latest \
   bash -c "git config --global --add safe.directory /app && colette_cli index --app-dir /rag/app_colette --data-dir /data/pdf --config-file src/colette/config/vrag_default_lite.json --models-dir /app/models"
 ```
 
