@@ -15,7 +15,8 @@ if [ -n "${HF_TOKEN:-}" ]; then
     echo "[DEBUG] HF_TOKEN length after strip: ${#HF_TOKEN}"
     echo "[DEBUG] HF_TOKEN first 10 chars: $(printf '%s' "${HF_TOKEN}" | head -c 10)"
     export HF_TOKEN
-    hf auth login --token "${HF_TOKEN}"
+    # Try to login, but don't fail on error (token might be invalid but colette might still work)
+    hf auth login --token "${HF_TOKEN}" || echo "[WARN] HF auth login failed, continuing anyway"
 fi
 
 # then exec the user-specified command (or the default from CMD)
