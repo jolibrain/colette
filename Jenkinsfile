@@ -12,6 +12,7 @@ pipeline {
     booleanParam(name: 'RUN_INTEGRATION_STABLE', defaultValue: false, description: 'Run optional protected integration-stable lane')
     booleanParam(name: 'RUN_NIGHTLY_MATRIX', defaultValue: false, description: 'Run full GPU matrix (integration, pipeline, e2e)')
     booleanParam(name: 'REQUIRE_FLASH_ATTN', defaultValue: false, description: 'Require flash-attn in full-profile lanes; use only on a pre-provisioned runner')
+    string(name: 'HF_CREDENTIALS_ID', defaultValue: 'hf', description: 'Jenkins Secret Text credential ID that stores HF token')
   }
 
   environment {
@@ -92,7 +93,7 @@ pipeline {
         node { label 'linux && gpu && n5' }
       }
       steps {
-        withCredentials([string(credentialsId: 'hf', variable: 'HF_TOKEN')]) {
+        withCredentials([string(credentialsId: params.HF_CREDENTIALS_ID, variable: 'HF_TOKEN')]) {
           lock(resource: null, label: "${NODE_NAME}-gpu", variable: 'LOCKED_GPU', quantity: 1) {
             sh '''
               set -e
@@ -128,7 +129,7 @@ pipeline {
             node { label 'linux && gpu && n5' }
           }
           steps {
-            withCredentials([string(credentialsId: 'hf', variable: 'HF_TOKEN')]) {
+            withCredentials([string(credentialsId: params.HF_CREDENTIALS_ID, variable: 'HF_TOKEN')]) {
               lock(resource: null, label: "${NODE_NAME}-gpu", variable: 'LOCKED_GPU', quantity: 1) {
                 sh '''
                   set -e
@@ -159,7 +160,7 @@ pipeline {
             node { label 'linux && gpu && n5' }
           }
           steps {
-            withCredentials([string(credentialsId: 'hf', variable: 'HF_TOKEN')]) {
+            withCredentials([string(credentialsId: params.HF_CREDENTIALS_ID, variable: 'HF_TOKEN')]) {
               lock(resource: null, label: "${NODE_NAME}-gpu", variable: 'LOCKED_GPU', quantity: 1) {
                 sh '''
                   set -e
@@ -190,7 +191,7 @@ pipeline {
             node { label 'linux && gpu && n5' }
           }
           steps {
-            withCredentials([string(credentialsId: 'hf', variable: 'HF_TOKEN')]) {
+            withCredentials([string(credentialsId: params.HF_CREDENTIALS_ID, variable: 'HF_TOKEN')]) {
               lock(resource: null, label: "${NODE_NAME}-gpu", variable: 'LOCKED_GPU', quantity: 1) {
                 sh '''
                   set -e

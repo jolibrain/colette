@@ -18,6 +18,7 @@ pipeline {
     booleanParam(name: 'NO_CACHE', defaultValue: false, description: 'Build Docker images with --no-cache')
     booleanParam(name: 'PUSH_ENABLED', defaultValue: true, description: 'Allow pushing images when branch policy matches')
     booleanParam(name: 'RUN_INTEGRATION', defaultValue: false, description: 'Run containerized integration tests before push')
+    string(name: 'HF_CREDENTIALS_ID', defaultValue: 'hf', description: 'Jenkins Secret Text credential ID that stores HF token')
     choice(name: 'SMOKE_MODE', choices: ['quick', 'api'], description: 'Container smoke mode: quick checks or API startup checks')
     string(name: 'SMOKE_TIMEOUT_SEC', defaultValue: '120', description: 'Timeout in seconds for API smoke mode')
     string(name: 'INTEGRATION_PYTEST_ARGS', defaultValue: '-q', description: 'pytest args passed to ci/container_integration.sh')
@@ -38,23 +39,36 @@ pipeline {
     stage('Prepare Metadata') {
       steps {
         script {
-          env.IMAGE_TAG = sh(returnStdout: true, script: 'git rev-parse --short=12 HEAD').trim()
+          if (!params.HF_CREDENTIALS_ID?.trim()) {
+            error('HF_CREDENTIALS_ID must not be empty')
+          }
 
-          String branch = env.BRANCH_NAME ?: ''
+          String imageTag = sh(returnStdout: true, script: 'git rev-parse --short=12 HEAD').trim()
+          if (!imageTag) {
+            error('Could not compute IMAGE_TAG from git rev-parse --short=12 HEAD')
+          }
+          env.IMAGE_TAG = imageTag
+
+          String branch = (env.BRANCH_NAME ?: env.CHANGE_BRANCH ?: env.GIT_BRANCH ?: '').trim()
+          if (!branch) {
+            branch = sh(returnStdout: true, script: 'git rev-parse --abbrev-ref HEAD').trim()
+          }
+          if (branch.startsWith('origin/')) {
+            branch = branch.replaceFirst('^origin/', '')
+          }
+
           boolean branchAllowed = (branch == 'main' || branch.startsWith('release/'))
           boolean branchMain = (branch == 'main')
           env.SHOULD_PUSH = (params.PUSH_ENABLED && branchAllowed) ? 'true' : 'false'
           env.SHOULD_PUSH_LATEST = (params.PUSH_ENABLED && branchMain) ? 'true' : 'false'
 
-          sh '''
-            set -e
-            printf "%s\n" "${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}" > .ci-image-gpu-base
-            printf "%s\n" "${REGISTRY}/${IMAGE_GPU_SERVER}:${IMAGE_TAG}" > .ci-image-gpu-server
-            printf "%s\n" "${REGISTRY}/${IMAGE_UI}:${IMAGE_TAG}" > .ci-image-ui
-          '''
+          writeFile file: '.ci-image-gpu-base', text: "${env.REGISTRY}/${env.IMAGE_GPU_BASE}:${imageTag}\n"
+          writeFile file: '.ci-image-gpu-server', text: "${env.REGISTRY}/${env.IMAGE_GPU_SERVER}:${imageTag}\n"
+          writeFile file: '.ci-image-ui', text: "${env.REGISTRY}/${env.IMAGE_UI}:${imageTag}\n"
 
           echo "Branch: ${branch}"
-          echo "Image tag: ${env.IMAGE_TAG}"
+          echo "Image tag: ${imageTag}"
+          echo "HF credential id: ${params.HF_CREDENTIALS_ID}"
           echo "Push enabled parameter: ${params.PUSH_ENABLED}"
           echo "Push policy decision: ${env.SHOULD_PUSH}"
           echo "Latest tag update decision: ${env.SHOULD_PUSH_LATEST}"
@@ -66,6 +80,8 @@ pipeline {
       steps {
         sh '''
           set -e
+          export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
+          : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
           export TARGET=gpu_base
           bash ci/build_container_images.sh
         '''
@@ -76,6 +92,8 @@ pipeline {
       steps {
         sh '''
           set -e
+          export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
+          : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
           export TARGET=gpu_server
           bash ci/build_container_images.sh
         '''
@@ -86,6 +104,8 @@ pipeline {
       steps {
         sh '''
           set -e
+          export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
+          : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
           export TARGET=ui
           bash ci/build_container_images.sh
         '''
@@ -96,9 +116,11 @@ pipeline {
       steps {
         script {
           if (params.SMOKE_MODE == 'api') {
-            withCredentials([string(credentialsId: 'hf', variable: 'HF_TOKEN')]) {
+            withCredentials([string(credentialsId: params.HF_CREDENTIALS_ID, variable: 'HF_TOKEN')]) {
               sh '''
                 set -e
+                export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
+                : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
                 export GPU_BASE_IMAGE="${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}"
                 export GPU_SERVER_IMAGE="${REGISTRY}/${IMAGE_GPU_SERVER}:${IMAGE_TAG}"
                 export UI_IMAGE="${REGISTRY}/${IMAGE_UI}:${IMAGE_TAG}"
@@ -110,6 +132,8 @@ pipeline {
           } else {
             sh '''
               set -e
+              export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
+              : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
               export GPU_BASE_IMAGE="${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}"
               export GPU_SERVER_IMAGE="${REGISTRY}/${IMAGE_GPU_SERVER}:${IMAGE_TAG}"
               export UI_IMAGE="${REGISTRY}/${IMAGE_UI}:${IMAGE_TAG}"
@@ -127,9 +151,11 @@ pipeline {
         expression { return params.RUN_INTEGRATION }
       }
       steps {
-        withCredentials([string(credentialsId: 'hf', variable: 'HF_TOKEN')]) {
+        withCredentials([string(credentialsId: params.HF_CREDENTIALS_ID, variable: 'HF_TOKEN')]) {
           sh '''
             set -e
+            export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
+            : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
             export GPU_BASE_IMAGE="${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}"
             export MODELS_PATH=./models
             export TESTS_PATH=./tests
@@ -148,6 +174,8 @@ pipeline {
       steps {
         sh '''
           set -e
+          export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
+          : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
           docker push ${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}
           docker push ${REGISTRY}/${IMAGE_GPU_SERVER}:${IMAGE_TAG}
           docker push ${REGISTRY}/${IMAGE_UI}:${IMAGE_TAG}
@@ -195,12 +223,13 @@ pipeline {
       catchError {
         sh '''
           set +e
-          [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_GPU_BASE}:latest"
-          [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_GPU_SERVER}:latest"
-          [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_UI}:latest"
-          [ -f .ci-image-gpu-server ] && docker image rm "$(cat .ci-image-gpu-server)"
-          [ -f .ci-image-ui ] && docker image rm "$(cat .ci-image-ui)"
-          [ -f .ci-image-gpu-base ] && docker image rm "$(cat .ci-image-gpu-base)"
+          [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_GPU_BASE}:latest" || true
+          [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_GPU_SERVER}:latest" || true
+          [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_UI}:latest" || true
+          [ -f .ci-image-gpu-server ] && docker image rm "$(cat .ci-image-gpu-server)" || true
+          [ -f .ci-image-ui ] && docker image rm "$(cat .ci-image-ui)" || true
+          [ -f .ci-image-gpu-base ] && docker image rm "$(cat .ci-image-gpu-base)" || true
+          exit 0
         '''
       }
       cleanWs(
