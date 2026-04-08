@@ -38,9 +38,20 @@ pipeline {
     stage('Prepare Metadata') {
       steps {
         script {
-          env.IMAGE_TAG = sh(returnStdout: true, script: 'git rev-parse --short=12 HEAD').trim()
+          String imageTag = sh(returnStdout: true, script: 'git rev-parse --short=12 HEAD').trim()
+          if (!imageTag) {
+            error('Could not compute IMAGE_TAG from git rev-parse --short=12 HEAD')
+          }
+          env.IMAGE_TAG = imageTag
 
-          String branch = env.BRANCH_NAME ?: ''
+          String branch = (env.BRANCH_NAME ?: env.CHANGE_BRANCH ?: env.GIT_BRANCH ?: '').trim()
+          if (!branch) {
+            branch = sh(returnStdout: true, script: 'git rev-parse --abbrev-ref HEAD').trim()
+          }
+          if (branch.startsWith('origin/')) {
+            branch = branch.replaceFirst('^origin/', '')
+          }
+
           boolean branchAllowed = (branch == 'main' || branch.startsWith('release/'))
           boolean branchMain = (branch == 'main')
           env.SHOULD_PUSH = (params.PUSH_ENABLED && branchAllowed) ? 'true' : 'false'
@@ -48,6 +59,7 @@ pipeline {
 
           sh '''
             set -e
+            : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
             printf "%s\n" "${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}" > .ci-image-gpu-base
             printf "%s\n" "${REGISTRY}/${IMAGE_GPU_SERVER}:${IMAGE_TAG}" > .ci-image-gpu-server
             printf "%s\n" "${REGISTRY}/${IMAGE_UI}:${IMAGE_TAG}" > .ci-image-ui
@@ -195,12 +207,13 @@ pipeline {
       catchError {
         sh '''
           set +e
-          [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_GPU_BASE}:latest"
-          [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_GPU_SERVER}:latest"
-          [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_UI}:latest"
-          [ -f .ci-image-gpu-server ] && docker image rm "$(cat .ci-image-gpu-server)"
-          [ -f .ci-image-ui ] && docker image rm "$(cat .ci-image-ui)"
-          [ -f .ci-image-gpu-base ] && docker image rm "$(cat .ci-image-gpu-base)"
+          [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_GPU_BASE}:latest" || true
+          [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_GPU_SERVER}:latest" || true
+          [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_UI}:latest" || true
+          [ -f .ci-image-gpu-server ] && docker image rm "$(cat .ci-image-gpu-server)" || true
+          [ -f .ci-image-ui ] && docker image rm "$(cat .ci-image-ui)" || true
+          [ -f .ci-image-gpu-base ] && docker image rm "$(cat .ci-image-gpu-base)" || true
+          exit 0
         '''
       }
       cleanWs(
