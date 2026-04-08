@@ -62,15 +62,13 @@ pipeline {
           env.SHOULD_PUSH = (params.PUSH_ENABLED && branchAllowed) ? 'true' : 'false'
           env.SHOULD_PUSH_LATEST = (params.PUSH_ENABLED && branchMain) ? 'true' : 'false'
 
-          sh '''
-            set -e
-            printf "%s\n" "${REGISTRY}/${IMAGE_GPU_BASE}:${imageTag}" > .ci-image-gpu-base
-            printf "%s\n" "${REGISTRY}/${IMAGE_GPU_SERVER}:${imageTag}" > .ci-image-gpu-server
-            printf "%s\n" "${REGISTRY}/${IMAGE_UI}:${imageTag}" > .ci-image-ui
-          '''
+          writeFile file: '.ci-image-gpu-base', text: "${env.REGISTRY}/${env.IMAGE_GPU_BASE}:${imageTag}\n"
+          writeFile file: '.ci-image-gpu-server', text: "${env.REGISTRY}/${env.IMAGE_GPU_SERVER}:${imageTag}\n"
+          writeFile file: '.ci-image-ui', text: "${env.REGISTRY}/${env.IMAGE_UI}:${imageTag}\n"
 
           echo "Branch: ${branch}"
           echo "Image tag: ${imageTag}"
+          echo "HF credential id: ${params.HF_CREDENTIALS_ID}"
           echo "Push enabled parameter: ${params.PUSH_ENABLED}"
           echo "Push policy decision: ${env.SHOULD_PUSH}"
           echo "Latest tag update decision: ${env.SHOULD_PUSH_LATEST}"
