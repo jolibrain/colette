@@ -99,7 +99,7 @@ api_checks() {
     mkdir -p "${MODELS_PATH}" "${APPS_PATH}" "${APPS_PATH}/.cache"
 
     local api_port
-    API_CID="$(docker run -d --rm \
+    API_CID="$(docker run -d \
         "${DOCKER_USER_ARGS[@]}" \
         --gpus all \
         -e HF_TOKEN="${HF_TOKEN}" \
@@ -123,6 +123,12 @@ api_checks() {
 
     local elapsed=0
     while [ "${elapsed}" -lt "${SMOKE_TIMEOUT_SEC}" ]; do
+        if [ "$(docker inspect -f '{{.State.Running}}' "${API_CID}" 2>/dev/null || echo false)" != "true" ]; then
+            echo "ERROR: API container exited before health endpoint became ready." >&2
+            docker logs --tail=200 "${API_CID}" || true
+            exit 1
+        fi
+
         if curl -fsS "http://127.0.0.1:${api_port}/v1/info" >/dev/null; then
             echo "api-health-ok"
             return 0
