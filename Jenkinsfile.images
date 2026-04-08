@@ -59,14 +59,13 @@ pipeline {
 
           sh '''
             set -e
-            : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
-            printf "%s\n" "${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}" > .ci-image-gpu-base
-            printf "%s\n" "${REGISTRY}/${IMAGE_GPU_SERVER}:${IMAGE_TAG}" > .ci-image-gpu-server
-            printf "%s\n" "${REGISTRY}/${IMAGE_UI}:${IMAGE_TAG}" > .ci-image-ui
+            printf "%s\n" "${REGISTRY}/${IMAGE_GPU_BASE}:${imageTag}" > .ci-image-gpu-base
+            printf "%s\n" "${REGISTRY}/${IMAGE_GPU_SERVER}:${imageTag}" > .ci-image-gpu-server
+            printf "%s\n" "${REGISTRY}/${IMAGE_UI}:${imageTag}" > .ci-image-ui
           '''
 
           echo "Branch: ${branch}"
-          echo "Image tag: ${env.IMAGE_TAG}"
+          echo "Image tag: ${imageTag}"
           echo "Push enabled parameter: ${params.PUSH_ENABLED}"
           echo "Push policy decision: ${env.SHOULD_PUSH}"
           echo "Latest tag update decision: ${env.SHOULD_PUSH_LATEST}"
@@ -78,6 +77,8 @@ pipeline {
       steps {
         sh '''
           set -e
+          export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
+          : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
           export TARGET=gpu_base
           bash ci/build_container_images.sh
         '''
@@ -88,6 +89,8 @@ pipeline {
       steps {
         sh '''
           set -e
+          export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
+          : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
           export TARGET=gpu_server
           bash ci/build_container_images.sh
         '''
@@ -98,6 +101,8 @@ pipeline {
       steps {
         sh '''
           set -e
+          export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
+          : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
           export TARGET=ui
           bash ci/build_container_images.sh
         '''
@@ -111,6 +116,8 @@ pipeline {
             withCredentials([string(credentialsId: 'hf', variable: 'HF_TOKEN')]) {
               sh '''
                 set -e
+                export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
+                : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
                 export GPU_BASE_IMAGE="${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}"
                 export GPU_SERVER_IMAGE="${REGISTRY}/${IMAGE_GPU_SERVER}:${IMAGE_TAG}"
                 export UI_IMAGE="${REGISTRY}/${IMAGE_UI}:${IMAGE_TAG}"
@@ -122,6 +129,8 @@ pipeline {
           } else {
             sh '''
               set -e
+              export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
+              : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
               export GPU_BASE_IMAGE="${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}"
               export GPU_SERVER_IMAGE="${REGISTRY}/${IMAGE_GPU_SERVER}:${IMAGE_TAG}"
               export UI_IMAGE="${REGISTRY}/${IMAGE_UI}:${IMAGE_TAG}"
@@ -142,6 +151,8 @@ pipeline {
         withCredentials([string(credentialsId: 'hf', variable: 'HF_TOKEN')]) {
           sh '''
             set -e
+            export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
+            : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
             export GPU_BASE_IMAGE="${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}"
             export MODELS_PATH=./models
             export TESTS_PATH=./tests
@@ -160,6 +171,8 @@ pipeline {
       steps {
         sh '''
           set -e
+          export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
+          : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
           docker push ${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}
           docker push ${REGISTRY}/${IMAGE_GPU_SERVER}:${IMAGE_TAG}
           docker push ${REGISTRY}/${IMAGE_UI}:${IMAGE_TAG}
