@@ -18,6 +18,7 @@ pipeline {
     booleanParam(name: 'NO_CACHE', defaultValue: false, description: 'Build Docker images with --no-cache')
     booleanParam(name: 'PUSH_ENABLED', defaultValue: true, description: 'Allow pushing images when branch policy matches')
     booleanParam(name: 'RUN_INTEGRATION', defaultValue: false, description: 'Run containerized integration tests before push')
+    string(name: 'HF_CREDENTIALS_ID', defaultValue: 'hf', description: 'Jenkins Secret Text credential ID that stores HF token')
     choice(name: 'SMOKE_MODE', choices: ['quick', 'api'], description: 'Container smoke mode: quick checks or API startup checks')
     string(name: 'SMOKE_TIMEOUT_SEC', defaultValue: '120', description: 'Timeout in seconds for API smoke mode')
     string(name: 'INTEGRATION_PYTEST_ARGS', defaultValue: '-q', description: 'pytest args passed to ci/container_integration.sh')
@@ -38,6 +39,10 @@ pipeline {
     stage('Prepare Metadata') {
       steps {
         script {
+          if (!params.HF_CREDENTIALS_ID?.trim()) {
+            error('HF_CREDENTIALS_ID must not be empty')
+          }
+
           String imageTag = sh(returnStdout: true, script: 'git rev-parse --short=12 HEAD').trim()
           if (!imageTag) {
             error('Could not compute IMAGE_TAG from git rev-parse --short=12 HEAD')
@@ -113,7 +118,7 @@ pipeline {
       steps {
         script {
           if (params.SMOKE_MODE == 'api') {
-            withCredentials([string(credentialsId: 'hf', variable: 'HF_TOKEN')]) {
+            withCredentials([string(credentialsId: params.HF_CREDENTIALS_ID, variable: 'HF_TOKEN')]) {
               sh '''
                 set -e
                 export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
@@ -148,7 +153,7 @@ pipeline {
         expression { return params.RUN_INTEGRATION }
       }
       steps {
-        withCredentials([string(credentialsId: 'hf', variable: 'HF_TOKEN')]) {
+        withCredentials([string(credentialsId: params.HF_CREDENTIALS_ID, variable: 'HF_TOKEN')]) {
           sh '''
             set -e
             export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
