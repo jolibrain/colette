@@ -10,7 +10,10 @@ git config --global --add safe.directory /app
 # Log in to HuggingFace if a token is provided.
 # Strip whitespace to handle copy-paste artifacts (e.g. trailing newlines from Jenkins secrets).
 if [ -n "${HF_TOKEN:-}" ]; then
+    echo "[DEBUG] HF_TOKEN length before strip: ${#HF_TOKEN}"
     HF_TOKEN="$(printf '%s' "${HF_TOKEN}" | tr -d '\n\r\t ')"
+    echo "[DEBUG] HF_TOKEN length after strip: ${#HF_TOKEN}"
+    echo "[DEBUG] HF_TOKEN first 10 chars: $(printf '%s' "${HF_TOKEN}" | head -c 10)"
     export HF_TOKEN
     hf auth login --token "${HF_TOKEN}"
 fi

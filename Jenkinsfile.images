@@ -119,6 +119,12 @@ pipeline {
             withCredentials([string(credentialsId: params.HF_CREDENTIALS_ID, variable: 'HF_TOKEN')]) {
               sh '''
                 set -e
+                # Debug: show token length and first/last chars (masked)
+                TOKEN_LEN=${#HF_TOKEN}
+                TOKEN_FIRST=$(printf '%s' "${HF_TOKEN}" | head -c 10)
+                TOKEN_LAST=$(printf '%s' "${HF_TOKEN}" | tail -c 5)
+                echo "Token length: ${TOKEN_LEN}, first 10: ${TOKEN_FIRST}..., last 5: ...${TOKEN_LAST}"
+                
                 export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
                 : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
                 export GPU_BASE_IMAGE="${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}"
