@@ -53,6 +53,15 @@ pipeline {
           if (!branch) {
             branch = sh(returnStdout: true, script: 'git rev-parse --abbrev-ref HEAD').trim()
           }
+          if (branch.startsWith('refs/heads/')) {
+            branch = branch.replaceFirst('^refs/heads/', '')
+          }
+          if (branch.startsWith('refs/remotes/origin/')) {
+            branch = branch.replaceFirst('^refs/remotes/origin/', '')
+          }
+          if (branch.startsWith('remotes/origin/')) {
+            branch = branch.replaceFirst('^remotes/origin/', '')
+          }
           if (branch.startsWith('origin/')) {
             branch = branch.replaceFirst('^origin/', '')
           }
