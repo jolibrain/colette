@@ -65,11 +65,13 @@ pipeline {
           if (branch.startsWith('origin/')) {
             branch = branch.replaceFirst('^origin/', '')
           }
+          branch = branch.replaceAll('\\p{C}', '').trim()
 
+          boolean pushEnabled = params.PUSH_ENABLED?.toString()?.toBoolean()
           boolean branchAllowed = (branch == 'main' || branch.startsWith('release/'))
           boolean branchMain = (branch == 'main')
-          env.SHOULD_PUSH = (params.PUSH_ENABLED && branchAllowed) ? 'true' : 'false'
-          env.SHOULD_PUSH_LATEST = (params.PUSH_ENABLED && branchMain) ? 'true' : 'false'
+          env.SHOULD_PUSH = (pushEnabled && branchAllowed) ? 'true' : 'false'
+          env.SHOULD_PUSH_LATEST = (pushEnabled && branchMain) ? 'true' : 'false'
 
           writeFile file: '.ci-image-gpu-base', text: "${env.REGISTRY}/${env.IMAGE_GPU_BASE}:${imageTag}\n"
           writeFile file: '.ci-image-gpu-server', text: "${env.REGISTRY}/${env.IMAGE_GPU_SERVER}:${imageTag}\n"
@@ -78,7 +80,7 @@ pipeline {
           echo "Branch: ${branch}"
           echo "Image tag: ${imageTag}"
           echo "HF credential id: ${params.HF_CREDENTIALS_ID}"
-          echo "Push enabled parameter: ${params.PUSH_ENABLED}"
+          echo "Push enabled parameter: ${pushEnabled}"
           echo "Push policy decision: ${env.SHOULD_PUSH}"
           echo "Latest tag update decision: ${env.SHOULD_PUSH_LATEST}"
         }
