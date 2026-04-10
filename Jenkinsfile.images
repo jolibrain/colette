@@ -85,11 +85,14 @@ pipeline {
           if (branch.startsWith('origin/')) {
             branch = branch.replaceFirst('^origin/', '')
           }
-          branch = branch.replaceAll('\\p{C}', '').trim()
+          String branchCanonical = (branch ?: '')
+            .replaceAll('[\\p{C}\\p{Z}]', '')
+            .trim()
+            .toLowerCase()
 
           boolean pushEnabled = params.PUSH_ENABLED?.toString()?.toBoolean()
-          boolean branchAllowed = (branch == 'main' || branch.startsWith('release/'))
-          boolean branchMain = (branch == 'main')
+          boolean branchAllowed = (branchCanonical == 'main' || branchCanonical.startsWith('release/'))
+          boolean branchMain = (branchCanonical == 'main')
           env.SHOULD_PUSH = (pushEnabled && branchAllowed) ? 'true' : 'false'
           env.SHOULD_PUSH_LATEST = (pushEnabled && branchMain) ? 'true' : 'false'
 
@@ -98,6 +101,7 @@ pipeline {
           writeFile file: '.ci-image-ui', text: "${env.REGISTRY}/${env.IMAGE_UI}:${imageTag}\n"
 
           echo "Branch: ${branch}"
+          echo "Branch canonical: ${branchCanonical}"
           echo "Image tag: ${imageTag}"
           echo "HF credential id: ${params.HF_CREDENTIALS_ID}"
           echo "Push enabled parameter: ${pushEnabled}"
