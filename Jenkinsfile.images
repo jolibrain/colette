@@ -91,8 +91,21 @@ pipeline {
             .toLowerCase()
 
           boolean pushEnabled = params.PUSH_ENABLED?.toString()?.toBoolean()
+          String overrideRaw = params.BRANCH_OVERRIDE?.toString() ?: ''
+          String overrideCanonical = overrideRaw
+            .replaceAll('[\\p{C}\\p{Z}]', '')
+            .trim()
+            .toLowerCase()
+          boolean overrideProvided = overrideCanonical != ''
+
           boolean branchAllowed = (branchCanonical == 'main' || branchCanonical.startsWith('release/'))
           boolean branchMain = (branchCanonical == 'main')
+
+          if (overrideProvided) {
+            // When override is provided, evaluate policy from the explicit override value.
+            branchAllowed = (overrideCanonical == 'main' || overrideCanonical.startsWith('release/'))
+            branchMain = (overrideCanonical == 'main')
+          }
           env.SHOULD_PUSH = (pushEnabled && branchAllowed) ? 'true' : 'false'
           env.SHOULD_PUSH_LATEST = (pushEnabled && branchMain) ? 'true' : 'false'
 
@@ -102,6 +115,8 @@ pipeline {
 
           echo "Branch: ${branch}"
           echo "Branch canonical: ${branchCanonical}"
+          echo "Branch override canonical: ${overrideCanonical}"
+          echo "Branch override provided: ${overrideProvided}"
           echo "Image tag: ${imageTag}"
           echo "HF credential id: ${params.HF_CREDENTIALS_ID}"
           echo "Push enabled parameter: ${pushEnabled}"
