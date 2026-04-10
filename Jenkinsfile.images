@@ -32,8 +32,6 @@ pipeline {
     IMAGE_GPU_SERVER = 'colette_gpu_server'
     IMAGE_UI = 'colette_ui'
     IMAGE_TAG = ''
-    SHOULD_PUSH = 'false'
-    SHOULD_PUSH_LATEST = 'false'
   }
 
   stages {
@@ -106,12 +104,14 @@ pipeline {
             branchAllowed = (overrideCanonical == 'main' || overrideCanonical.startsWith('release/'))
             branchMain = (overrideCanonical == 'main')
           }
-          env.SHOULD_PUSH = (pushEnabled && branchAllowed) ? 'true' : 'false'
-          env.SHOULD_PUSH_LATEST = (pushEnabled && branchMain) ? 'true' : 'false'
+          String shouldPush = (pushEnabled && branchAllowed) ? 'true' : 'false'
+          String shouldPushLatest = (pushEnabled && branchMain) ? 'true' : 'false'
 
           writeFile file: '.ci-image-gpu-base', text: "${env.REGISTRY}/${env.IMAGE_GPU_BASE}:${imageTag}\n"
           writeFile file: '.ci-image-gpu-server', text: "${env.REGISTRY}/${env.IMAGE_GPU_SERVER}:${imageTag}\n"
           writeFile file: '.ci-image-ui', text: "${env.REGISTRY}/${env.IMAGE_UI}:${imageTag}\n"
+          writeFile file: '.ci-should-push', text: "${shouldPush}\n"
+          writeFile file: '.ci-should-push-latest', text: "${shouldPushLatest}\n"
 
           echo "Branch: ${branch}"
           echo "Branch canonical: ${branchCanonical}"
@@ -120,8 +120,8 @@ pipeline {
           echo "Image tag: ${imageTag}"
           echo "HF credential id: ${params.HF_CREDENTIALS_ID}"
           echo "Push enabled parameter: ${pushEnabled}"
-          echo "Push policy decision: ${env.SHOULD_PUSH}"
-          echo "Latest tag update decision: ${env.SHOULD_PUSH_LATEST}"
+          echo "Push policy decision: ${shouldPush}"
+          echo "Latest tag update decision: ${shouldPushLatest}"
         }
       }
     }
@@ -219,13 +219,21 @@ pipeline {
 
     stage('Push Images') {
       when {
-        expression { return env.SHOULD_PUSH == 'true' }
+        expression { return params.PUSH_ENABLED }
       }
       steps {
         sh '''
           set -e
           export IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
           : "${IMAGE_TAG:?IMAGE_TAG must not be empty}"
+
+          SHOULD_PUSH="$(cat .ci-should-push 2>/dev/null | tr -d '\\r\\n' || echo false)"
+          SHOULD_PUSH_LATEST="$(cat .ci-should-push-latest 2>/dev/null | tr -d '\\r\\n' || echo false)"
+          if [ "${SHOULD_PUSH}" != "true" ]; then
+            echo "Skipping push: branch policy did not match."
+            exit 0
+          fi
+
           docker push ${REGISTRY}/${IMAGE_GPU_BASE}:${IMAGE_TAG}
           docker push ${REGISTRY}/${IMAGE_GPU_SERVER}:${IMAGE_TAG}
           docker push ${REGISTRY}/${IMAGE_UI}:${IMAGE_TAG}
@@ -252,6 +260,9 @@ pipeline {
           cat .ci-image-gpu-server
           cat .ci-image-ui
 
+          SHOULD_PUSH="$(cat .ci-should-push 2>/dev/null | tr -d '\\r\\n' || echo false)"
+          SHOULD_PUSH_LATEST="$(cat .ci-should-push-latest 2>/dev/null | tr -d '\\r\\n' || echo false)"
+
           if [ "${SHOULD_PUSH}" = "true" ]; then
             echo "Images were pushed (branch policy matched)."
           else
@@ -273,6 +284,7 @@ pipeline {
       catchError {
         sh '''
           set +e
+          SHOULD_PUSH_LATEST="$(cat .ci-should-push-latest 2>/dev/null | tr -d '\\r\\n' || echo false)"
           [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_GPU_BASE}:latest" || true
           [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_GPU_SERVER}:latest" || true
           [ "${SHOULD_PUSH_LATEST}" = "true" ] && docker image rm "${REGISTRY}/${IMAGE_UI}:latest" || true
