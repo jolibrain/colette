@@ -53,6 +53,21 @@ pipeline {
           if (!branch) {
             branch = sh(returnStdout: true, script: 'git rev-parse --abbrev-ref HEAD').trim()
           }
+          // In a regular (non-multibranch) Pipeline with a detached HEAD checkout,
+          // git rev-parse --abbrev-ref HEAD returns 'HEAD'. Fall back to parsing
+          // the symbolic ref names from the git log decorations.
+          if (!branch || branch == 'HEAD') {
+            String refs = sh(returnStdout: true, script: "git log -1 --format='%D' HEAD").trim()
+            for (String ref : refs.split(',')) {
+              String r = ref.trim()
+              if (r.startsWith('origin/')) r = r.replaceFirst('^origin/', '')
+              if (r == 'HEAD') continue
+              if (r && !r.startsWith('HEAD ->')) {
+                branch = r.startsWith('HEAD -> ') ? r.replaceFirst('^HEAD -> ', '') : r
+                break
+              }
+            }
+          }
           if (branch.startsWith('refs/heads/')) {
             branch = branch.replaceFirst('^refs/heads/', '')
           }
