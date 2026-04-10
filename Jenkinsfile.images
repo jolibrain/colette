@@ -23,6 +23,7 @@ pipeline {
     string(name: 'SMOKE_TIMEOUT_SEC', defaultValue: '120', description: 'Timeout in seconds for API smoke mode')
     string(name: 'INTEGRATION_PYTEST_ARGS', defaultValue: '-q', description: 'pytest args passed to ci/container_integration.sh')
     string(name: 'INTEGRATION_TEST_FILES', defaultValue: '/app/tests/test_pipeline_python_api_integration.py /app/tests/test_pipeline_tantivy_integration.py', description: 'Space-separated integration test files')
+    string(name: 'BRANCH_OVERRIDE', defaultValue: '', description: 'Override branch name for push policy (leave empty for auto-detection). Set to "main" or "release/x" to force push.')
   }
 
   environment {
@@ -49,7 +50,11 @@ pipeline {
           }
           env.IMAGE_TAG = imageTag
 
-          String branch = (env.BRANCH_NAME ?: env.CHANGE_BRANCH ?: env.GIT_BRANCH ?: '').trim()
+          // Allow explicit branch override via parameter (most reliable for regular Pipeline jobs)
+          String branch = params.BRANCH_OVERRIDE?.trim() ?: ''
+          if (!branch) {
+            branch = (env.BRANCH_NAME ?: env.CHANGE_BRANCH ?: env.GIT_BRANCH ?: '').trim()
+          }
           if (!branch) {
             branch = sh(returnStdout: true, script: 'git rev-parse --abbrev-ref HEAD').trim()
           }
