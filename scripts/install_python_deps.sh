@@ -27,7 +27,7 @@ if [ -z "${COLETTE_CUDA_SHORT}" ]; then
         cuda_version=$(nvcc --version | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' | head -n1)
         COLETTE_CUDA_SHORT="${cuda_version/.}"
     elif command -v nvidia-smi >/dev/null 2>&1; then
-        cuda_version=$(nvidia-smi | sed -n 's/.*CUDA Version: \([0-9]*\.[0-9]*\).*/\1/p' | head -n1)
+        cuda_version=$(nvidia-smi | sed -n 's/.*CUDA[^:]*Version: \([0-9]*\.[0-9]*\).*/\1/p' | head -n1)
         COLETTE_CUDA_SHORT="${cuda_version/.}"
     else
         echo "ERROR: COLETTE_CUDA_SHORT is not set and CUDA version could not be auto-detected." >&2
@@ -38,6 +38,14 @@ fi
 if ! [[ "${COLETTE_CUDA_SHORT}" =~ ^[0-9]+$ ]]; then
     echo "ERROR: invalid COLETTE_CUDA_SHORT='${COLETTE_CUDA_SHORT}'" >&2
     exit 1
+fi
+
+# PyTorch wheels are published for specific CUDA versions; cap to the highest one
+# that ships torch ${TORCH_VERSION} so newer drivers still get a valid index URL.
+PYTORCH_MAX_CUDA_SHORT="${PYTORCH_MAX_CUDA_SHORT:-128}"
+if [ "${COLETTE_CUDA_SHORT}" -gt "${PYTORCH_MAX_CUDA_SHORT}" ]; then
+    echo "WARNING: CUDA cu${COLETTE_CUDA_SHORT} has no PyTorch ${TORCH_VERSION} wheel; falling back to cu${PYTORCH_MAX_CUDA_SHORT} (driver is forward-compatible)." >&2
+    COLETTE_CUDA_SHORT="${PYTORCH_MAX_CUDA_SHORT}"
 fi
 
 TORCH_INDEX_URL="https://download.pytorch.org/whl/cu${COLETTE_CUDA_SHORT}"

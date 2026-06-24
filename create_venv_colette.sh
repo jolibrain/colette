@@ -9,7 +9,7 @@ if command -v nvcc &> /dev/null; then
     cuda_short=$(echo $cuda_version | sed 's/\.//')
     echo "cu${cuda_short}"
 elif command -v nvidia-smi &> /dev/null; then
-    cuda_version=$(nvidia-smi | grep "CUDA Version" | sed 's/.*CUDA Version: \([0-9]*\.[0-9]*\).*/\1/')
+    cuda_version=$(nvidia-smi | grep -i "CUDA.*Version" | sed 's/.*CUDA[^:]*Version: \([0-9]*\.[0-9]*\).*/\1/')
     cuda_short=$(echo $cuda_version | sed 's/\.//')
     echo "CUDA found: cu${cuda_short}"
 else
