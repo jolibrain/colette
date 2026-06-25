@@ -226,7 +226,7 @@ class LLMModelObj(BaseModel):
     """ Whether to load in 8-bit format """
     query_rephrasing: bool = False
     """ Whether to rephrase queries (V-RAG) only """
-    query_rephrasing_num_tok: int = 512
+    query_rephrasing_num_tok: int = 2048
     """ Number of token for rephrasing queries (V-RAG) only """
     external_vllm_server: VLLMServerObj = Field(default_factory=VLLMServerObj)
     """ vllm server parameters """
@@ -238,7 +238,7 @@ class OutputConnectorObj(BaseModel):
     postprocessing: list[str] = Field(default_factory=list)
     output_format: Literal["json"] = "json"
     base64: bool = True
-    num_tokens: int = 512
+    num_tokens: int = 2048
     # XXX: json_schema
 
 
