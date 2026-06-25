@@ -65,8 +65,9 @@ class RAGObj(BaseModel):
     """ Indexing database library, chromadb or coldb """
     retrieval_mode: Literal["embedding_retrieval", "text_search_retrieval", "hybrid"] = "embedding_retrieval"
     """ Retrieval mode: embedding-only, text-search-only, or hybrid in parallel """
-    embedding_lib: Literal["huggingface", "colbert", "vllm"] = "huggingface"
-    """ Embedding library, use colbert with coldb, huggingface for V-RAG """
+    embedding_lib: Literal["huggingface", "colbert", "vllm", "twelvelabs"] = "huggingface"
+    """ Embedding library, use colbert with coldb, huggingface for V-RAG,
+    twelvelabs for Marengo multimodal (text/video) embeddings via the TwelveLabs API """
     embedding_model: str | None = None
     """ Embedding model, e.g. MrLight/dse-qwen2-2b-mrl-v1 """
     embedding_model_path: str | None = None

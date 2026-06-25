@@ -102,7 +102,12 @@ class RAGTxt:
 
             self.text_search_engine_index = TantivyIndex(self.app_repository / "index" / "text_search_engine", self.logger)
 
-            if retrieval_mode_uses_embedding_retrieval(ad.rag.retrieval_mode) and ad.rag.embedding_model is None:
+            # twelvelabs (Marengo) has a sensible default model, so embedding_model is optional there
+            if (
+                retrieval_mode_uses_embedding_retrieval(ad.rag.retrieval_mode)
+                and ad.rag.embedding_model is None
+                and ad.rag.embedding_lib != "twelvelabs"
+            ):
                 msg = "Missing rag embedding model"
                 self.logger.error(msg)
                 raise InputConnectorBadParamException(msg)
@@ -129,6 +134,13 @@ class RAGTxt:
                     )
                 elif self.rag_embedding_lib == "colbert":
                     self.rag_embedding = None
+                elif self.rag_embedding_lib == "twelvelabs":
+                    # Marengo multimodal embeddings via the TwelveLabs API (opt-in).
+                    # API-based, so device/cache_folder do not apply; the key is read
+                    # from the TWELVELABS_API_KEY environment variable.
+                    from colette.backends.langchain.rag.twelvelabs_embeddings import MarengoEmbeddings
+
+                    self.rag_embedding = MarengoEmbeddings(model_name=self.rag_embedding_model)
                 else:
                     msg = "Unknown embedding lib " + ad.rag.embedding_lib
                     self.logger.error(msg)
