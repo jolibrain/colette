@@ -557,11 +557,26 @@ class HFModel(LLMModel):
                             out_ids[len(in_ids) :]
                             for in_ids, out_ids in zip(model_inputs.input_ids, generation, strict=False)
                         ]
+                        # Decode with skip_special_tokens=False so that <think> and </think>
+                        # appear as literal text even though they are registered special tokens.
+                        # This lets the regex below reliably remove the thinking block.
                         decoded = self.processor.batch_decode(
                             generated_ids_trimmed,
-                            skip_special_tokens=True,
+                            skip_special_tokens=False,
                             clean_up_tokenization_spaces=False,
-                        )[0]                        
+                        )[0]
+                        import re
+                        # Qwen3's chat template forces <think> as the last token of the input
+                        # prompt (assistant prefix), so it is trimmed by the len(in_ids) slice.
+                        # Generated output is therefore: [thinking text]</think>\n\n[answer].
+                        # Step 1: regex removes block when both tags appear as literal text.
+                        # Step 2: split on </think> handles the common case (no opening tag).
+                        decoded = re.sub(r"<think>.*?</think>", "", decoded, flags=re.DOTALL)
+                        if "</think>" in decoded:
+                            decoded = decoded.split("</think>", 1)[1]
+                        # Remove remaining control tokens: <|im_end|>, <|endoftext|>, etc.
+                        decoded = re.sub(r"<\|[^|]*\|>", "", decoded)
+                        decoded = decoded.strip()
                     elif self.llm_type == "nanonets":
                         generated_ids_trimmed = [
                             out_ids[len(in_ids) :]
