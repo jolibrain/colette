@@ -588,7 +588,7 @@ class HFModel(LLMModel):
                             self.logger.warning(
                                 "qwen3-vl: thinking block overflow — no </think> in output. "
                                 "Increase output.num_tokens (currently %d) to leave room for the answer.",
-                                self.max_new_tokens,
+                                max_new_tokens,
                             )
                             decoded = ""
                         # Remove remaining control tokens: <|im_end|>, <|endoftext|>, etc.
