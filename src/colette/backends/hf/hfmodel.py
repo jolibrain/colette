@@ -367,7 +367,8 @@ class HFModel(LLMModel):
                 # because there are no images.
                 has_images = any(c.get("type") == "image" for c in content)
                 has_text_context = bool(docs.get("text_context"))
-                chat_template_kwargs["enable_thinking"] = has_images and not has_text_context
+                thinking_enabled = has_images and not has_text_context
+                chat_template_kwargs["enable_thinking"] = thinking_enabled
             text = self.processor.apply_chat_template(messages, **chat_template_kwargs)
             image_inputs, video_inputs = process_vision_info(messages)
             model_inputs = self.processor(
@@ -585,12 +586,11 @@ class HFModel(LLMModel):
                         decoded = re.sub(r"<think>.*?</think>", "", decoded, flags=re.DOTALL)
                         if "</think>" in decoded:
                             decoded = decoded.split("</think>", 1)[1]
-                        elif has_images and decoded.strip() and not decoded.strip().startswith("<"):
-                            # Thinking was enabled (has_images=True) but filled the entire
-                            # max_new_tokens budget before </think> could appear.  The whole
-                            # output is thinking content, not an answer.
-                            # When enable_thinking=False (no images), decoded IS the answer —
-                            # do not discard it.
+                        elif thinking_enabled and decoded.strip() and not decoded.strip().startswith("<"):
+                            # Thinking was enabled but filled the entire max_new_tokens budget
+                            # before </think> could appear.  The whole output is thinking content.
+                            # When thinking is disabled (text-only or hybrid), decoded IS the
+                            # answer — do not discard it.
                             self.logger.warning(
                                 "qwen3-vl: thinking block overflow — no </think> in output. "
                                 "Increase output.num_tokens (currently %d) to leave room for the answer.",

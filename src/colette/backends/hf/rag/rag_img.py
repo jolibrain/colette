@@ -461,22 +461,6 @@ class ImageEmbeddingFunction(EmbeddingFunction):
             truncation=True,
             return_tensors="pt",
         ).to("cuda:" + str(self.device))
-        cache_position = torch.arange(0, len(doc_texts)).to("cuda:" + str(self.device))
-        # Some embedding models (e.g., Qwen2 VL) require prepare_inputs_for_generation,
-        # while other embedding models (e.g., Qwen3 embeddings) can be called directly.
-        try:
-            doc_inputs = self.model.prepare_inputs_for_generation(
-                **doc_inputs, cache_position=cache_position, use_cache=False
-            )
-            # prepare_inputs_for_generation may add CPU tensors (e.g. causal mask);
-            # move all tensor values back to the model device.
-            doc_inputs = {
-                k: v.to("cuda:" + str(self.device)) if isinstance(v, torch.Tensor) else v
-                for k, v in doc_inputs.items()
-            }
-        except Exception:
-            # model has no prepare_inputs_for_generation; assume doc_inputs is acceptable
-            pass
 
         # call on the model
         with torch.no_grad():
@@ -491,7 +475,7 @@ class ImageEmbeddingFunction(EmbeddingFunction):
                     # fallback: if `embed` returns tensor-like
                     doc_embeddings = torch.nn.functional.normalize(torch.tensor(outputs), p=2, dim=-1)
             else:
-                output = self.model(**doc_inputs, return_dict=True, output_hidden_states=True)
+                output = self.model(**doc_inputs, use_cache=False, return_dict=True, output_hidden_states=True)
                 # prefer last_hidden_state if available, otherwise use hidden_states
                 if hasattr(output, "last_hidden_state") and output.last_hidden_state is not None:
                     src = output.last_hidden_state
