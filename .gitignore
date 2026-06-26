@@ -21,6 +21,7 @@ models/
 
 # examples folder
 examples/*.png
+examples/questions_gaia_converter_demo.ipynb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -70,3 +71,4 @@ tests/pipeline_debug_qwen2vl.log
 docs/gaia_converter/
 docs/gaia_converter_flat/
 app_colette_demo_gaia_converter/
+app_colette_demo_gaia_converter_v0/
