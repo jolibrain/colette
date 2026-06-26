@@ -581,10 +581,12 @@ class HFModel(LLMModel):
                         decoded = re.sub(r"<think>.*?</think>", "", decoded, flags=re.DOTALL)
                         if "</think>" in decoded:
                             decoded = decoded.split("</think>", 1)[1]
-                        elif decoded.strip() and not decoded.strip().startswith("<"):
-                            # Thinking filled the entire max_new_tokens budget and was truncated
-                            # before </think> could appear. The whole output is thinking content.
-                            # Increase output.num_tokens so the answer has room to be generated.
+                        elif has_images and decoded.strip() and not decoded.strip().startswith("<"):
+                            # Thinking was enabled (has_images=True) but filled the entire
+                            # max_new_tokens budget before </think> could appear.  The whole
+                            # output is thinking content, not an answer.
+                            # When enable_thinking=False (no images), decoded IS the answer —
+                            # do not discard it.
                             self.logger.warning(
                                 "qwen3-vl: thinking block overflow — no </think> in output. "
                                 "Increase output.num_tokens (currently %d) to leave room for the answer.",
