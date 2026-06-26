@@ -359,11 +359,15 @@ class HFModel(LLMModel):
 
             chat_template_kwargs = {"tokenize": False, "add_generation_prompt": True}
             if self.llm_type == "qwen3-vl":
-                # With no images the thinking block exhausts max_new_tokens before </think>
-                # appears, leaving nothing for the actual answer.  Disable thinking for
-                # text-only inputs; keep it on when images are present (helps reasoning).
+                # Enable thinking only when there are images and NO separate text-search
+                # context snippets (i.e. pure embedding_retrieval).  In hybrid mode the
+                # model analyses both image crops and text passages, producing a thinking
+                # trace that overflows even 4096 tokens before </think> appears and yields
+                # an empty answer.  Text-only (text_search_retrieval) also disables thinking
+                # because there are no images.
                 has_images = any(c.get("type") == "image" for c in content)
-                chat_template_kwargs["enable_thinking"] = has_images
+                has_text_context = bool(docs.get("text_context"))
+                chat_template_kwargs["enable_thinking"] = has_images and not has_text_context
             text = self.processor.apply_chat_template(messages, **chat_template_kwargs)
             image_inputs, video_inputs = process_vision_info(messages)
             model_inputs = self.processor(
