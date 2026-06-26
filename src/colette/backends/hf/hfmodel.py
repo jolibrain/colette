@@ -357,7 +357,14 @@ class HFModel(LLMModel):
                 messages = history.copy()
                 messages.append(new_message)
 
-            text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            chat_template_kwargs = {"tokenize": False, "add_generation_prompt": True}
+            if self.llm_type == "qwen3-vl":
+                # With no images the thinking block exhausts max_new_tokens before </think>
+                # appears, leaving nothing for the actual answer.  Disable thinking for
+                # text-only inputs; keep it on when images are present (helps reasoning).
+                has_images = any(c.get("type") == "image" for c in content)
+                chat_template_kwargs["enable_thinking"] = has_images
+            text = self.processor.apply_chat_template(messages, **chat_template_kwargs)
             image_inputs, video_inputs = process_vision_info(messages)
             model_inputs = self.processor(
                 text=[text],
@@ -574,6 +581,16 @@ class HFModel(LLMModel):
                         decoded = re.sub(r"<think>.*?</think>", "", decoded, flags=re.DOTALL)
                         if "</think>" in decoded:
                             decoded = decoded.split("</think>", 1)[1]
+                        elif decoded.strip() and not decoded.strip().startswith("<"):
+                            # Thinking filled the entire max_new_tokens budget and was truncated
+                            # before </think> could appear. The whole output is thinking content.
+                            # Increase output.num_tokens so the answer has room to be generated.
+                            self.logger.warning(
+                                "qwen3-vl: thinking block overflow — no </think> in output. "
+                                "Increase output.num_tokens (currently %d) to leave room for the answer.",
+                                self.max_new_tokens,
+                            )
+                            decoded = ""
                         # Remove remaining control tokens: <|im_end|>, <|endoftext|>, etc.
                         decoded = re.sub(r"<\|[^|]*\|>", "", decoded)
                         decoded = decoded.strip()
