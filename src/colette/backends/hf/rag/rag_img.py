@@ -440,7 +440,7 @@ class ImageEmbeddingFunction(EmbeddingFunction):
                         ],
                     }
                 ]
-        doc_messages.append(message)
+            doc_messages.append(message)
 
         # print("doc_messages=", doc_messages)
 
@@ -543,10 +543,12 @@ class RAGImgRetriever:
         retrieval_mode: str = "embedding_retrieval",
         text_search_engine_top_k: int = 4,
         text_search_engine_fields: list[str] | None = None,
+        top_k: int | None = None,
     ):
         ##- call on DB
         if query_depth_mult is None:
             query_depth_mult = self.query_depth_mult
+        effective_top_k = top_k if top_k is not None else self.top_k
 
         docs = {"ids": [[]], "distances": [[]], "metadatas": [[]]}
         if retrieval_mode_uses_embedding_retrieval(retrieval_mode):
@@ -568,14 +570,14 @@ class RAGImgRetriever:
 
                 docs = self.indexdb.query(
                     query_texts=[question],
-                    n_results=self.top_k * query_depth_mult,
+                    n_results=effective_top_k * query_depth_mult,
                     where=where_filter,
                 )
             else:
                 docs = self.colretriever.invoke(question, query_depth_mult)
 
             self.logger.debug(f"retrieved vector documents: {json.dumps(docs, indent=2)}")
-            docs = self.filter(docs)
+            docs = self.filter(docs, effective_top_k)
 
         if retrieval_mode_uses_text_search_engine(retrieval_mode):
             if self.text_search_engine_index is None:
@@ -591,13 +593,14 @@ class RAGImgRetriever:
 
         return docs
 
-    def filter(self, docs):
+    def filter(self, docs, top_k: int | None = None):
         # filter only top_k docs based on distance
         # we do not filter based on the distance, as it is already done by the embedder
-        if self.remove_duplicates :
-            return sort_and_select_top_k(docs, self.top_k, self.remove_duplicates, self.kvstore, self.logger)
+        k = top_k if top_k is not None else self.top_k
+        if self.remove_duplicates:
+            return sort_and_select_top_k(docs, k, self.remove_duplicates, self.kvstore, self.logger)
         else:
-            return take_top_k(docs, self.top_k)
+            return take_top_k(docs, k)
 
 
 class RAGImg:
@@ -1036,6 +1039,7 @@ class RAGImg:
             retrieval_mode=rag_config.retrieval_mode,
             text_search_engine_top_k=rag_config.text_search_engine_top_k,
             text_search_engine_fields=rag_config.text_search_engine_fields,
+            top_k=rag_config.top_k,
         )
 
         if retrieval_mode_uses_text_search_engine(rag_config.retrieval_mode):
