@@ -15,16 +15,19 @@ import os
 colette_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 print(f'Colette root path: {colette_root}')
 
-colette_api = JSONApi()
-
 documents_dir = os.path.join(colette_root, 'docs/pdf') # where the input documents are located
 app_dir = os.path.join(colette_root, 'app_colette') # where to store the app
 models_dir = os.path.join(colette_root, 'models') # where the models are located
+
+# If the app already has a saved config (query-only run), use it.
+# On a fresh install fall back to the default template.
+_app_config = os.path.join(app_dir, 'config.json')
+config_file = _app_config if os.path.exists(_app_config) else os.path.join(colette_root, 'src/colette/config/vrag_default.json')
+index_file = os.path.join(colette_root, 'src/colette/config/vrag_default_index.json')
+
 app_name = 'app_colette' # name of the app
 
-# read the configuration file
-config_file = os.path.join(colette_root, 'src/colette/config/vrag_default.json')
-index_file = os.path.join(colette_root, 'src/colette/config/vrag_default_index.json')
+colette_api = JSONApi()
 
 with open(config_file, 'r') as f:
     create_config = json.load(f)
@@ -34,19 +37,31 @@ with open(index_file, 'r') as f:
 create_config['app']['repository'] = app_dir
 create_config['app']['models_repository'] = models_dir
 index_config['parameters']['input']['data'] = [documents_dir]
+
 # Index once in hybrid mode so vector + text-search data are both available.
 # Then per-request retrieval_mode can be 'embedding_retrieval', 'text_search_retrieval', or 'hybrid'
 # without a second service_index call.
 index_config['parameters']['input']['rag']['retrieval_mode'] = 'hybrid'
 #index_config['parameters']['input']['rag']['reindex'] = False # if True, the RAG will be reindexed
 
+
+# Clean up any service from a previous cell run in this session, then (re)create
+try:
+    colette_api.service_delete(app_name)
+except Exception:
+    pass  # no-op if service doesn't exist yet
+
 # Create the service
 api_data_create = APIData(**create_config)
 colette_api.service_create(app_name, api_data_create)
 
-# Index the documents
+# uncomment the following line to index the documents, only if they have not been indexed yet. 
+# It may take a while depending on the number of documents and their size.
 api_data_index = APIData(**index_config)
 colette_api.service_index(app_name, api_data_index)
+
+# Query the service with a question
+question = 'What are the identified sources of errors ?'
 
 # Note the optional 'crop_label' parameter to filter the sources by crop label
 # The default crop labels are: 'text', 'table', 'figure'
@@ -55,7 +70,7 @@ colette_api.service_index(app_name, api_data_index)
 query_api_msg = {
     'parameters': {
         'input': {
-            'message': 'What are the identified sources of errors ?'
+            'message': question
             # 'crop_label': 'text'
         }
     }
@@ -109,16 +124,18 @@ for item in response.sources['context']:
 # Query using text search only (keyword/BM25 search)
 # Only retrieval_mode is overridden here; text_search_engine_* values are inherited from
 # the service/index JSON defaults unless you explicitly set them.
+
 query_text_search_only = {
     'parameters': {
         'input': {
-            'message': 'What are the identified sources of errors ?',
+            'message': question,
             'rag': {
                 'retrieval_mode': 'text_search_retrieval',
             }
         }
     }
 }
+
 # response_text_search = colette_api.service_predict(app_name, APIData(**query_text_search_only))
 #
 # Note: for retrieval_mode='text_search_retrieval', embedding context is empty and text hits are
@@ -131,16 +148,18 @@ query_text_search_only = {
 #     print()
 
 # Query using hybrid mode (visual image crops + injected text context)
+
 query_both_modes = {
     'parameters': {
         'input': {
-            'message': 'What are the identified sources of errors ?',
+            'message': question,
             'rag': {
                 'retrieval_mode': 'hybrid',
             }
         }
     }
 }
+
 # response_both = colette_api.service_predict(app_name, APIData(**query_both_modes))
 
 # Inspect text_context sources --------------------------------------------------
