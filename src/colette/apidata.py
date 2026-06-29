@@ -58,13 +58,24 @@ class RAGMultimodalObj(BaseModel):
     """ Whether to index the full page image when layout detection chunking is enabled """
 
 
+class HIndexObj(BaseModel):
+    """Hierarchical document index (hindex) parameters"""
+
+    toc_scan_pages: int = 20
+    """ Number of pages to scan when looking for a table of contents """
+    add_node_summaries: bool = True
+    """ Whether to generate a VLM summary for each hierarchy node at index time """
+    enable_hindex: bool = False
+    """ In hybrid retrieval mode, whether to also run hierarchy-based retrieval """
+
+
 class RAGObj(BaseModel):
     """Main RAG parameters"""
 
     indexdb_lib: Literal["chromadb", "coldb"] = "chromadb"
     """ Indexing database library, chromadb or coldb """
-    retrieval_mode: Literal["embedding_retrieval", "text_search_retrieval", "hybrid"] = "embedding_retrieval"
-    """ Retrieval mode: embedding-only, text-search-only, or hybrid in parallel """
+    retrieval_mode: Literal["embedding_retrieval", "text_search_retrieval", "hybrid", "vision_hierarchical"] = "embedding_retrieval"
+    """ Retrieval mode: embedding-only, text-search-only, hybrid in parallel, or vision_hierarchical (hindex) """
     embedding_lib: Literal["huggingface", "colbert", "vllm"] = "huggingface"
     """ Embedding library, use colbert with coldb, huggingface for V-RAG """
     embedding_model: str | None = None
@@ -115,6 +126,8 @@ class RAGObj(BaseModel):
     """ VLLM memory utilization ratio """
     vllm_rag_enforce_eager: bool = True
     """ Whether to enforce eager execution """
+    hindex: HIndexObj = Field(default_factory=HIndexObj)
+    """ Hierarchical document index (hindex) parameters """
 
 
 # class IndexObj(BaseModel):
