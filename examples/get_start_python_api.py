@@ -176,131 +176,93 @@ query_both_modes = {
 # ─────────────────────────────────────────────────────────────────────────────
 # Hierarchical Indexing (vision_hierarchical retrieval mode)
 # ─────────────────────────────────────────────────────────────────────────────
-# hindex builds a hierarchical JSON tree from the document's table of contents
-# using VLM OCR, then at query time navigates the tree with the VLM to select
-# the most relevant sections and returns their full page images.
+# hindex uses the VLM to OCR each page, extract the TOC, build a JSON hierarchy
+# tree, and at query time navigate that tree to return full page images —
+# no text chunking, no embedding lookup.
 #
-# Two ways to activate hindex:
-#   A) retrieval_mode="vision_hierarchical" — hindex is the sole retrieval source.
-#   B) retrieval_mode="hybrid" + hindex.enable_hindex=True — hindex results are
-#      merged with embedding and BM25 hits for maximum coverage.
-#
-# NOTE: hindex requires a VLM (vision model) to be configured.  It runs
-# automatically during service_index when the mode is set.
+# Key: index with update_index=True so the existing vector and BM25 indexes
+# are preserved — only the hierarchy trees are built.
 
-# A) Index with vision_hierarchical mode ----------------------------------------
-# Re-index (or index for the first time) with hindex active.  The VLM will
-# OCR the first N pages to extract the TOC and build a JSON hierarchy tree.
+import os as _os
+import json as _json
+import sys as _sys
+_sys.path.insert(0, _os.path.join(colette_root, 'src'))
+from pathlib import Path as _Path
+from colette.backends.hf.hindex import DocumentHierarchy
 
+# Check whether hindex trees are already built
+hindex_dir = _Path(app_dir) / 'mm_index' / 'hindex'
+hindex_files = sorted(hindex_dir.glob('*.json')) if hindex_dir.exists() else []
+if hindex_files:
+    print(f'hindex already built — {len(hindex_files)} document(s):')
+    for p in hindex_files:
+        h = DocumentHierarchy.from_dict(_json.loads(p.read_text(encoding='utf-8')))
+        print(f'  {h.doc_name} ({h.page_count} pages, {len(h.flat_nodes())} nodes)')
+else:
+    print('hindex not built yet — run service_index below.')
+
+# Build hindex without deleting the existing vector + BM25 index.
+# update_index=True: process all documents, keep existing index intact.
 index_config_hindex = {
     'parameters': {
         'input': {
             'data': [documents_dir],
             'rag': {
                 'retrieval_mode': 'vision_hierarchical',
+                'update_index': True,   # keep existing vector + BM25 indexes
                 'hindex': {
-                    'toc_scan_pages': 20,       # how many leading pages to scan for TOC
-                    'add_node_summaries': True,  # ask VLM to summarise each section
-                },
-            }
-        }
-    }
-}
-
-# api_data_hindex_index = APIData(**index_config_hindex)
-# colette_api.service_index(app_name, api_data_hindex_index)
-
-# B) Query with vision_hierarchical mode ----------------------------------------
-# The VLM first selects the relevant document (when multiple are indexed), then
-# navigates the hierarchy tree and returns the full page images for the chosen
-# section — without any text chunking or embedding lookup.
-
-query_vision_hierarchical = {
-    'parameters': {
-        'input': {
-            'message': question,
-            'rag': {
-                'retrieval_mode': 'vision_hierarchical',
-            }
-        }
-    }
-}
-
-# response_hindex = colette_api.service_predict(app_name, APIData(**query_vision_hierarchical))
-# print(response_hindex.output)
-#
-# # hindex page images come back in sources['context'] like any other retrieval mode.
-# # Each item also carries retrieval_source='hindex' in its metadata.
-# for item in response_hindex.sources.get('context', []):
-#     print(f"Key: {item['key']}")
-#     print(f"Source: {item.get('source', 'n/a')}")
-#     print(f"Page:   {item.get('page_number', 'n/a')}")
-#     print(f"Retrieval source: {item.get('retrieval_source', 'n/a')}")  # 'hindex'
-#     image = display_image_from_data_uri(item['content'])
-#     print("-" * 50)
-
-# C) Hybrid mode with hindex enabled --------------------------------------------
-# Index once with hybrid + enable_hindex=True to get all three sources:
-#   - visual embedding retrieval (ChromaDB)
-#   - BM25 text search (Tantivy)
-#   - hierarchical navigation (hindex)
-
-index_config_hybrid_hindex = {
-    'parameters': {
-        'input': {
-            'data': [documents_dir],
-            'rag': {
-                'retrieval_mode': 'hybrid',
-                'hindex': {
-                    'enable_hindex': True,
                     'toc_scan_pages': 20,
+                    'add_node_summaries': True,
                 },
             }
         }
     }
 }
+colette_api.service_index(app_name, APIData(**index_config_hindex))
 
-# api_data_hybrid_hindex = APIData(**index_config_hybrid_hindex)
-# colette_api.service_index(app_name, api_data_hybrid_hindex)
+# Verify the trees were built
+hindex_files = sorted(hindex_dir.glob('*.json')) if hindex_dir.exists() else []
+for p in hindex_files:
+    h = DocumentHierarchy.from_dict(_json.loads(p.read_text(encoding='utf-8')))
+    print(f'\n=== {h.doc_name}  ({h.page_count} pages, {len(h.flat_nodes())} nodes) ===')
+    print(h.as_text_tree())
 
-# At query time, use hybrid retrieval_mode and hindex results are automatically merged.
-query_hybrid_with_hindex = {
-    'parameters': {
-        'input': {
-            'message': question,
-            'rag': {
-                'retrieval_mode': 'hybrid',
+# Query with vision_hierarchical — the VLM navigates the hierarchy tree
+response_hindex = colette_api.service_predict(
+    app_name,
+    APIData(**{
+        'parameters': {
+            'input': {
+                'message': question,
+                'rag': {'retrieval_mode': 'vision_hierarchical'},
             }
         }
-    }
-}
+    })
+)
+print(response_hindex.output)
 
-# response_hybrid_hindex = colette_api.service_predict(
-#     app_name, APIData(**query_hybrid_with_hindex)
-# )
-# print(response_hybrid_hindex.output)
-#
-# # Distinguish hindex hits from embedding hits via the retrieval_source metadata field.
-# for item in response_hybrid_hindex.sources.get('context', []):
-#     src = item.get('retrieval_source', 'embedding')
-#     print(f"[{src}] {item['key']}  page={item.get('page_number', 'n/a')}")
+# hindex pages come back in sources['context'] with retrieval_source='hindex'
+for item in response_hindex.sources.get('context', []):
+    print(f"page={item.get('page_number','?')}  source={item.get('retrieval_source','?')}")
 
-# D) Inspect the built hierarchy tree -------------------------------------------
-# After indexing, the hierarchy trees are stored as JSON files under
-# <app_dir>/mm_index/hindex/*.json.  You can read them with DocumentHierarchy.
+# Query with hybrid + hindex enabled alongside embeddings and BM25
+response_hybrid_hindex = colette_api.service_predict(
+    app_name,
+    APIData(**{
+        'parameters': {
+            'input': {
+                'message': question,
+                'rag': {
+                    'retrieval_mode': 'hybrid',
+                    'hindex': {'enable_hindex': True},
+                },
+            }
+        }
+    })
+)
+print(response_hybrid_hindex.output)
 
-import os as _os
-import json as _json
-import sys as _sys
-_sys.path.insert(0, _os.path.join(colette_root, 'src'))
-
-from pathlib import Path as _Path
-from colette.backends.hf.hindex import DocumentHierarchy
-
-hindex_dir = _Path(app_dir) / 'mm_index' / 'hindex'
-if hindex_dir.exists():
-    for json_file in sorted(hindex_dir.glob('*.json')):
-        data = _json.loads(json_file.read_text(encoding='utf-8'))
-        h = DocumentHierarchy.from_dict(data)
-        print(f'\n=== {h.doc_name}  ({h.page_count} pages) ===')
-        print(h.as_text_tree())
+# Distinguish hindex hits from embedding hits via retrieval_source
+for item in response_hybrid_hindex.sources.get('context', []):
+    src = item.get('retrieval_source', 'embedding')
+    print(f'[{src:10s}] page={item.get("page_number","?")}  key={item["key"][:30]}')
