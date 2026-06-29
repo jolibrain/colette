@@ -94,7 +94,12 @@ def createLLMService(BaseLLMLib):
                 self.llmmodel.app_repository = self.app_repository
                 self.llmmodel.models_repository = self.models_repository
 
-            self.kvstore = ImageStorageFactory.create_storage("hdf5", self.app_repository / "kvstore.db", "a")
+            kvstore_path = self.app_repository / "kvstore.db"
+            # Open read-only when querying an existing index — a read-only handle
+            # cannot be corrupted by an unclean kernel shutdown.  Indexing (service_index)
+            # calls kvstore.reopen("a") before writing and kvstore.reopen("r") after.
+            kvstore_mode = "r" if (_is_chat and kvstore_path.exists()) else "a"
+            self.kvstore = ImageStorageFactory.create_storage("hdf5", kvstore_path, kvstore_mode)
             params = ad.parameters
             input_params = params.input
             output_params = params.output

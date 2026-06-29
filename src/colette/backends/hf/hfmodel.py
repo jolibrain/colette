@@ -357,7 +357,19 @@ class HFModel(LLMModel):
                 messages = history.copy()
                 messages.append(new_message)
 
-            text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            chat_template_kwargs = {"tokenize": False, "add_generation_prompt": True}
+            if self.llm_type == "qwen3-vl":
+                # Enable thinking only when there are images and NO separate text-search
+                # context snippets (i.e. pure embedding_retrieval).  In hybrid mode the
+                # model analyses both image crops and text passages, producing a thinking
+                # trace that overflows even 4096 tokens before </think> appears and yields
+                # an empty answer.  Text-only (text_search_retrieval) also disables thinking
+                # because there are no images.
+                has_images = any(c.get("type") == "image" for c in content)
+                has_text_context = bool(docs.get("text_context"))
+                thinking_enabled = has_images and not has_text_context
+                chat_template_kwargs["enable_thinking"] = thinking_enabled
+            text = self.processor.apply_chat_template(messages, **chat_template_kwargs)
             image_inputs, video_inputs = process_vision_info(messages)
             model_inputs = self.processor(
                 text=[text],
@@ -557,11 +569,37 @@ class HFModel(LLMModel):
                             out_ids[len(in_ids) :]
                             for in_ids, out_ids in zip(model_inputs.input_ids, generation, strict=False)
                         ]
+                        # Decode with skip_special_tokens=False so that <think> and </think>
+                        # appear as literal text even though they are registered special tokens.
+                        # This lets the regex below reliably remove the thinking block.
                         decoded = self.processor.batch_decode(
                             generated_ids_trimmed,
-                            skip_special_tokens=True,
+                            skip_special_tokens=False,
                             clean_up_tokenization_spaces=False,
-                        )[0]                        
+                        )[0]
+                        import re
+                        # Qwen3's chat template forces <think> as the last token of the input
+                        # prompt (assistant prefix), so it is trimmed by the len(in_ids) slice.
+                        # Generated output is therefore: [thinking text]</think>\n\n[answer].
+                        # Step 1: regex removes block when both tags appear as literal text.
+                        # Step 2: split on </think> handles the common case (no opening tag).
+                        decoded = re.sub(r"<think>.*?</think>", "", decoded, flags=re.DOTALL)
+                        if "</think>" in decoded:
+                            decoded = decoded.split("</think>", 1)[1]
+                        elif thinking_enabled and decoded.strip() and not decoded.strip().startswith("<"):
+                            # Thinking was enabled but filled the entire max_new_tokens budget
+                            # before </think> could appear.  The whole output is thinking content.
+                            # When thinking is disabled (text-only or hybrid), decoded IS the
+                            # answer — do not discard it.
+                            self.logger.warning(
+                                "qwen3-vl: thinking block overflow — no </think> in output. "
+                                "Increase output.num_tokens (currently %d) to leave room for the answer.",
+                                max_new_tokens,
+                            )
+                            decoded = ""
+                        # Remove remaining control tokens: <|im_end|>, <|endoftext|>, etc.
+                        decoded = re.sub(r"<\|[^|]*\|>", "", decoded)
+                        decoded = decoded.strip()
                     elif self.llm_type == "nanonets":
                         generated_ids_trimmed = [
                             out_ids[len(in_ids) :]

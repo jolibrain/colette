@@ -154,10 +154,15 @@ class HFLib(LLMLib):
             self.sessions.update_streaming(ad.parameters.input.session_id, response)
 
     def update_index(self, ad: APIData):
+        # kvstore may have been opened read-only (query mode); switch to write mode
+        # for the duration of indexing, then flush and revert to read-only.
+        self.kvstore.reopen("a")
         try:
             nelt = self.inputc.rag_update_index(ad.parameters.input)
         except Exception as e:
             self.logger.error(e, exc_info=True)
             raise InputConnectorInternalException("HFLib input transform error") from e
+        finally:
+            self.kvstore.reopen("r")
         response = APIResponse(message=f"{nelt} elements in rag_index")
         return response

@@ -91,8 +91,23 @@ class HDF5ImageStorage(ImageStorageInterface):
         for hashed_key in self.hdf5_file.keys():
             yield self.hdf5_file[hashed_key].attrs["key"]
 
+    def reopen(self, mode: Literal["r", "w", "a"]) -> None:
+        """Flush, close, and reopen the HDF5 file in a different mode."""
+        try:
+            if self.hdf5_file.id.valid:
+                self.hdf5_file.flush()
+                self.hdf5_file.close()
+        except Exception:
+            pass
+        self.hdf5_file = h5py.File(self.file_path, mode)
+
     def close(self) -> None:
         """Close the HDF5 file."""
+        try:
+            if self.hdf5_file.id.valid:
+                self.hdf5_file.flush()
+        except Exception:
+            pass
         self.hdf5_file.close()
 
 

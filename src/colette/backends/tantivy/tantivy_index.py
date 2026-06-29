@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 from typing import Any
+
+# Tantivy query-syntax special characters that must be escaped in raw user text.
+_TANTIVY_SPECIAL_RE = re.compile(r'([+\-!(){}\[\]^"~*?:\\/])')
 
 
 def retrieval_mode_uses_embedding_retrieval(retrieval_mode: str) -> bool:
@@ -138,7 +142,13 @@ class TantivyIndex:
         search_fields = fields or ["content", "source"]
         parsed_query = self._build_query_text(query, crop_label)
         searcher = index.searcher()
-        tantivy_query = index.parse_query(parsed_query, search_fields)
+        try:
+            tantivy_query = index.parse_query(parsed_query, search_fields)
+        except ValueError:
+            self.logger.warning(
+                "Tantivy could not parse query (special chars?); falling back to '*'",
+            )
+            tantivy_query = index.parse_query("*", search_fields)
         results = searcher.search(tantivy_query, limit=limit)
 
         # Fallback for low-recall/strict queries: return top documents so text-only
@@ -179,8 +189,12 @@ class TantivyIndex:
         schema_builder.add_text_field("content", stored=True)
         return schema_builder.build()
 
+    def _escape_query(self, query: str) -> str:
+        """Escape Tantivy query-syntax special characters in a raw user string."""
+        return _TANTIVY_SPECIAL_RE.sub(r"\\\1", query)
+
     def _build_query_text(self, query: str, crop_label: str | list[str] | None) -> str:
-        base_query = query.strip() or "content:*"
+        base_query = self._escape_query(query.strip()) or "*"
         filters: list[str] = []
 
         if crop_label is not None:
