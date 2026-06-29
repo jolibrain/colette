@@ -377,12 +377,15 @@ class HFModel(LLMModel):
                 # trace that overflows even 4096 tokens before </think> appears and yields
                 # an empty answer.  Text-only (text_search_retrieval) also disables thinking
                 # because there are no images.
+                # Callers that need fast, short-answer responses (e.g. hindex OCR/navigation)
+                # can set docs["_disable_thinking"]=True to opt out of thinking mode.
                 has_images = any(c.get("type") == "image" for c in content)
                 # Use key presence, not truthiness: in hybrid/text_search modes the
                 # "text_context" key is always set (even when Tantivy returns 0 hits),
                 # so bool([]) would wrongly re-enable thinking on an empty result set.
                 has_text_context = "text_context" in docs
-                thinking_enabled = has_images and not has_text_context and not self.disable_thinking
+                caller_disabled = bool(docs.get("_disable_thinking", False))
+                thinking_enabled = has_images and not has_text_context and not caller_disabled and not self.disable_thinking
                 chat_template_kwargs["enable_thinking"] = thinking_enabled
             text = self.processor.apply_chat_template(messages, **chat_template_kwargs)
             image_inputs, video_inputs = process_vision_info(messages)

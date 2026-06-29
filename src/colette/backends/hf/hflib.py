@@ -191,11 +191,14 @@ class HFLib(LLMLib):
                     [{"source": "hindex", "page_number": i, "crop_label": "full_page"}
                      for i in range(len(images))]
                 ],
+                # hindex tasks (OCR, TOC extraction, node selection) produce short
+                # structured answers — disable thinking to avoid token overflow.
+                "_disable_thinking": True,
             }
             try:
                 response, _, _ = llmmodel.generate(
                     prompt,
-                    512,
+                    2048,
                     docs,
                     [],
                     streaming=False,
