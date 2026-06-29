@@ -12,8 +12,7 @@ import json
 import pytest
 from PIL import Image
 
-from colette.backends.hf.hindex import HierarchyBuilder, HierarchyRetriever, HierarchyStore
-from colette.backends.hf.hindex.hierarchy_retriever import _page_key
+from colette.backends.hf.hindex import HierarchyBuilder, HierarchyRetriever, HierarchyStore, _page_key
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +127,10 @@ def test_full_pipeline_build_store_retrieve(tmp_path):
     assert hier.page_count == n_pages
     assert len(hier.nodes) == 3
 
-    # 2. Store
+    # 2. Store — populate page_keys (normally done by RAGImg._build_hindex_for_doc)
+    _FAKE_UUID5 = "deadbeef-0000-0000-0000-000000000001"
+    hier.page_keys = [_page_key(_FAKE_UUID5, i) for i in range(n_pages)]
+
     store = HierarchyStore(tmp_path)
     store.save(hier)
     assert store.exists(doc_name)
@@ -141,7 +143,7 @@ def test_full_pipeline_build_store_retrieve(tmp_path):
     assert loaded.nodes[1].title == "Methods"
 
     # 3. Retrieve
-    all_keys = {_page_key(doc_name, i) for i in range(n_pages)}
+    all_keys = set(hier.page_keys)
     kvstore = _FakeKVStore(all_keys)
     vlm_retrieve = _SequentialVLM(['["0002"]'])  # select Methods node
 
@@ -167,11 +169,13 @@ def test_pipeline_output_is_compatible_with_ragimg_format(tmp_path):
     store = HierarchyStore(tmp_path)
     from colette.backends.hf.hindex.hierarchy_builder import DocumentHierarchy, HierarchyNode
 
+    _UUID = "cafebabe-0000-0000-0000-000000000001"
     node = HierarchyNode("Chapter 1", "0001", 0, 2)
-    hier = DocumentHierarchy("compat.pdf", "Compatibility test", 3, nodes=[node])
+    hier = DocumentHierarchy("compat.pdf", "Compatibility test", 3, nodes=[node],
+                             page_keys=[_page_key(_UUID, i) for i in range(3)])
     store.save(hier)
 
-    kvstore = _FakeKVStore({_page_key("compat.pdf", i) for i in range(3)})
+    kvstore = _FakeKVStore(set(hier.page_keys))
     vlm = _SequentialVLM(['["0001"]'])
     retriever = HierarchyRetriever(store, kvstore, vlm, top_k=3)
 

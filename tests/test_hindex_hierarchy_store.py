@@ -34,10 +34,18 @@ def test_slug_truncates_long_names():
 # ---------------------------------------------------------------------------
 
 
+_FAKE_UUID = "deadbeef-1234-5678-abcd-000000000001"
+
+
+def _make_page_keys(n: int) -> list[str]:
+    return [f"{_FAKE_UUID}_{i:04d}" for i in range(n)]
+
+
 def _make_hierarchy(name: str = "test.pdf", n_pages: int = 10) -> DocumentHierarchy:
     node = HierarchyNode("Chapter 1", "0001", 0, 4, summary="Intro")
     node.children = [HierarchyNode("Section 1.1", "0002", 1, 2)]
-    return DocumentHierarchy(name, "A test document", n_pages, nodes=[node])
+    return DocumentHierarchy(name, "A test document", n_pages, nodes=[node],
+                             page_keys=_make_page_keys(n_pages))
 
 
 def test_store_save_and_load(tmp_path):
@@ -116,6 +124,15 @@ def test_store_overwrite(tmp_path):
     store.save(_make_hierarchy("doc.pdf", n_pages=20))  # overwrite
     loaded = store.load("doc.pdf")
     assert loaded.page_count == 20
+
+
+def test_store_round_trip_preserves_page_keys(tmp_path):
+    store = HierarchyStore(tmp_path)
+    hier = _make_hierarchy()
+    store.save(hier)
+    loaded = store.load("test.pdf")
+    assert loaded.page_keys == hier.page_keys
+    assert len(loaded.page_keys) == 10
 
 
 def test_store_round_trip_preserves_tree(tmp_path):

@@ -58,12 +58,34 @@ class _LogCapture:
     def warning(self, msg, *_a, **_k): self.warnings.append(msg)
 
 
-def _make_store_with_doc(tmp_path, doc_name="manual.pdf", page_count=10) -> HierarchyStore:
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_UUID5 = "aabbccdd-1234-5678-abcd-ef1234567890"
+
+
+def _make_page_keys(n: int, uuid5_val: str = _UUID5) -> list[str]:
+    return [_page_key(uuid5_val, i) for i in range(n)]
+
+
+def _make_store_with_doc(
+    tmp_path,
+    doc_name="manual.pdf",
+    page_count=10,
+    uuid5_val: str = _UUID5,
+) -> HierarchyStore:
     store = HierarchyStore(tmp_path)
     root = HierarchyNode("Chapter 1", "0001", 0, 4, summary="Introduction")
     root.children = [HierarchyNode("Section 1.1", "0002", 1, 2)]
     section2 = HierarchyNode("Chapter 2", "0003", 5, 9, summary="Details")
-    hier = DocumentHierarchy(doc_name, "A technical manual", page_count, nodes=[root, section2])
+    hier = DocumentHierarchy(
+        doc_name,
+        "A technical manual",
+        page_count,
+        nodes=[root, section2],
+        page_keys=_make_page_keys(page_count, uuid5_val),
+    )
     store.save(hier)
     return store
 
@@ -73,14 +95,14 @@ def _make_store_with_doc(tmp_path, doc_name="manual.pdf", page_count=10) -> Hier
 # ---------------------------------------------------------------------------
 
 
-def test_page_key_basic():
-    assert _page_key("manual.pdf", 3) == "manual_pdf_page_3"
+def test_page_key_format():
+    key = _page_key(_UUID5, 3)
+    assert key == f"{_UUID5}_0003"
 
 
-def test_page_key_with_spaces():
-    key = _page_key("my document.pdf", 0)
-    assert " " not in key
-    assert "page_0" in key
+def test_page_key_zero_padded():
+    assert _page_key(_UUID5, 0).endswith("_0000")
+    assert _page_key(_UUID5, 99).endswith("_0099")
 
 
 # ---------------------------------------------------------------------------
@@ -123,19 +145,16 @@ def test_parse_json_list_invalid_returns_empty():
 
 def test_invoke_single_doc_returns_relevant_pages(tmp_path):
     store = _make_store_with_doc(tmp_path)
-    # kvstore has pages 5–9 for Chapter 2
-    kvstore = _FakeKVStore({_page_key("manual.pdf", i) for i in range(5, 10)})
-    # VLM: navigate → select Chapter 2 (node 0003)
-    vlm = _FixedVLM(['["0003"]'])
+    page_keys = _make_page_keys(10)
+    kvstore = _FakeKVStore(set(page_keys[5:10]))  # pages 5-9 available
+    vlm = _FixedVLM(['["0003"]'])  # select Chapter 2 (pages 5-9)
     retriever = HierarchyRetriever(store, kvstore, vlm, top_k=4)
 
     result = retriever.invoke("What are the technical details?")
 
     assert result["ids"] != [[]]
     ids = result["ids"][0]
-    assert all("page_" in i for i in ids)
-    assert all("manual_pdf" in i for i in ids)
-    # Should have returned pages 5–8 (top_k=4) from chapter 2 (pages 5-9)
+    assert len(ids) > 0
     assert len(ids) <= 4
 
 
@@ -154,7 +173,8 @@ def test_invoke_returns_empty_when_store_empty(tmp_path):
 
 def test_invoke_falls_back_when_navigator_returns_no_match(tmp_path):
     store = _make_store_with_doc(tmp_path)
-    kvstore = _FakeKVStore({_page_key("manual.pdf", i) for i in range(10)})
+    page_keys = _make_page_keys(10)
+    kvstore = _FakeKVStore(set(page_keys))
     # VLM returns an empty list — no nodes selected
     vlm = _FixedVLM(['[]'])
     logger = _LogCapture()
@@ -168,16 +188,16 @@ def test_invoke_falls_back_when_navigator_returns_no_match(tmp_path):
 
 
 def test_invoke_respects_top_k(tmp_path):
-    store = _make_store_with_doc(tmp_path, page_count=20)
-    # Add a large chapter spanning pages 0-19
-    store2 = HierarchyStore(tmp_path)
+    store = HierarchyStore(tmp_path)
+    page_keys = _make_page_keys(20)
     big = HierarchyNode("Big Chapter", "0001", 0, 19)
-    hier = DocumentHierarchy("big.pdf", "A very long document", 20, nodes=[big])
-    store2.save(hier)
+    hier = DocumentHierarchy("big.pdf", "A very long document", 20,
+                             nodes=[big], page_keys=page_keys)
+    store.save(hier)
 
-    kvstore = _FakeKVStore({_page_key("big.pdf", i) for i in range(20)})
+    kvstore = _FakeKVStore(set(page_keys))
     vlm = _FixedVLM(['["0001"]'])
-    retriever = HierarchyRetriever(store2, kvstore, vlm, top_k=3)
+    retriever = HierarchyRetriever(store, kvstore, vlm, top_k=3)
 
     result = retriever.invoke("Anything")
 
@@ -186,13 +206,15 @@ def test_invoke_respects_top_k(tmp_path):
 
 def test_invoke_deduplicates_pages(tmp_path):
     store = HierarchyStore(tmp_path)
+    page_keys = _make_page_keys(6)
     # Two overlapping nodes
     n1 = HierarchyNode("A", "0001", 0, 3)
     n2 = HierarchyNode("B", "0002", 2, 5)
-    hier = DocumentHierarchy("overlap.pdf", "Overlap test", 6, nodes=[n1, n2])
+    hier = DocumentHierarchy("overlap.pdf", "Overlap test", 6,
+                             nodes=[n1, n2], page_keys=page_keys)
     store.save(hier)
 
-    kvstore = _FakeKVStore({_page_key("overlap.pdf", i) for i in range(6)})
+    kvstore = _FakeKVStore(set(page_keys))
     vlm = _FixedVLM(['["0001", "0002"]'])
     retriever = HierarchyRetriever(store, kvstore, vlm, top_k=10)
 
@@ -202,6 +224,26 @@ def test_invoke_deduplicates_pages(tmp_path):
     assert len(ids) == len(set(ids)), "Duplicate page keys returned"
 
 
+def test_invoke_skips_page_missing_from_kvstore(tmp_path):
+    store = HierarchyStore(tmp_path)
+    page_keys = _make_page_keys(5)
+    n = HierarchyNode("Chapter", "0001", 0, 4)
+    hier = DocumentHierarchy("doc.pdf", "Test", 5, nodes=[n], page_keys=page_keys)
+    store.save(hier)
+
+    # Only pages 0 and 2 are in kvstore
+    kvstore = _FakeKVStore({page_keys[0], page_keys[2]})
+    vlm = _FixedVLM(['["0001"]'])
+    retriever = HierarchyRetriever(store, kvstore, vlm, top_k=10)
+
+    result = retriever.invoke("Question")
+
+    returned_ids = set(result["ids"][0])
+    assert page_keys[0] in returned_ids
+    assert page_keys[2] in returned_ids
+    assert page_keys[1] not in returned_ids  # not in kvstore
+
+
 # ---------------------------------------------------------------------------
 # HierarchyRetriever.invoke() — multi-document selection
 # ---------------------------------------------------------------------------
@@ -209,19 +251,19 @@ def test_invoke_deduplicates_pages(tmp_path):
 
 def test_invoke_multi_doc_selects_correct_document(tmp_path):
     store = HierarchyStore(tmp_path)
-    # Two documents
-    h1 = DocumentHierarchy("engine.pdf", "Engine maintenance guide", 5, nodes=[
-        HierarchyNode("Engine Overview", "0001", 0, 4),
-    ])
-    h2 = DocumentHierarchy("avionics.pdf", "Avionics systems reference", 8, nodes=[
-        HierarchyNode("Avionics Overview", "0001", 0, 7),
-    ])
+    uuid_engine = "aaaaaaaa-0000-0000-0000-000000000001"
+    uuid_avion  = "bbbbbbbb-0000-0000-0000-000000000002"
+    h1 = DocumentHierarchy("engine.pdf", "Engine maintenance guide", 5,
+                           nodes=[HierarchyNode("Engine Overview", "0001", 0, 4)],
+                           page_keys=_make_page_keys(5, uuid_engine))
+    h2 = DocumentHierarchy("avionics.pdf", "Avionics systems reference", 8,
+                           nodes=[HierarchyNode("Avionics Overview", "0001", 0, 7)],
+                           page_keys=_make_page_keys(8, uuid_avion))
     store.save(h1)
     store.save(h2)
 
     kvstore = _FakeKVStore(
-        {_page_key("avionics.pdf", i) for i in range(8)}
-        | {_page_key("engine.pdf", i) for i in range(5)}
+        set(_make_page_keys(8, uuid_avion)) | set(_make_page_keys(5, uuid_engine))
     )
     # VLM: doc selection → avionics.pdf; tree navigation → node 0001
     vlm = _FixedVLM(['["avionics.pdf"]', '["0001"]'])
@@ -230,12 +272,13 @@ def test_invoke_multi_doc_selects_correct_document(tmp_path):
     result = retriever.invoke("What are the avionics systems?")
 
     ids = result["ids"][0]
-    assert all("avionics_pdf" in i for i in ids)
+    avion_keys = set(_make_page_keys(8, uuid_avion))
+    assert all(k in avion_keys for k in ids)
 
 
 def test_invoke_metadata_has_retrieval_source(tmp_path):
     store = _make_store_with_doc(tmp_path)
-    kvstore = _FakeKVStore({_page_key("manual.pdf", i) for i in range(10)})
+    kvstore = _FakeKVStore(set(_make_page_keys(10)))
     vlm = _FixedVLM(['["0001"]'])
     retriever = HierarchyRetriever(store, kvstore, vlm, top_k=4)
 
@@ -245,3 +288,24 @@ def test_invoke_metadata_has_retrieval_source(tmp_path):
         assert meta["retrieval_source"] == "hindex"
         assert "source" in meta
         assert "page_number" in meta
+
+
+def test_invoke_warns_when_page_key_out_of_range(tmp_path):
+    store = HierarchyStore(tmp_path)
+    # page_keys only has 3 entries but node claims pages 0-5
+    page_keys = _make_page_keys(3)
+    n = HierarchyNode("Chapter", "0001", 0, 5)
+    hier = DocumentHierarchy("short.pdf", "Short doc", 3,
+                             nodes=[n], page_keys=page_keys)
+    store.save(hier)
+
+    kvstore = _FakeKVStore(set(page_keys))
+    logger = _LogCapture()
+    vlm = _FixedVLM(['["0001"]'])
+    retriever = HierarchyRetriever(store, kvstore, vlm, top_k=10, logger=logger)
+
+    result = retriever.invoke("Question")
+
+    # Pages 0-2 returned, pages 3-5 warned and skipped
+    assert len(result["ids"][0]) == 3
+    assert any("No kvstore key" in w for w in logger.warnings)

@@ -73,12 +73,17 @@ class DocumentHierarchy:
     doc_description: str
     page_count: int
     nodes: list[HierarchyNode] = field(default_factory=list)
+    page_keys: list[str] = field(default_factory=list)
+    """Kvstore key for each physical page (0-indexed).  Set by RAGImg.index()
+    after preprocessing so the key format matches the actual stored images
+    (``{uuid5}_{page_idx:04d}`` for full-page entries)."""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "doc_name": self.doc_name,
             "doc_description": self.doc_description,
             "page_count": self.page_count,
+            "page_keys": self.page_keys,
             "nodes": [n.to_dict() for n in self.nodes],
         }
 
@@ -88,6 +93,7 @@ class DocumentHierarchy:
             doc_name=d["doc_name"],
             doc_description=d.get("doc_description", ""),
             page_count=d["page_count"],
+            page_keys=d.get("page_keys", []),
         )
         obj.nodes = [HierarchyNode.from_dict(n) for n in d.get("nodes", [])]
         return obj

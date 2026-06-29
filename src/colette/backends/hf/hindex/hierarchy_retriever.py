@@ -101,11 +101,17 @@ class HierarchyRetriever:
         # Step 3 — Fetch images from kvstore (up to top_k)
         unique_pages = unique_pages[: self.top_k]
         ids, distances, metadatas = [], [], []
+        # Build a fast lookup: doc_name → hierarchy (already loaded)
+        hier_by_name = {h.doc_name: h for h in hierarchies}
         for doc_name, page_idx in unique_pages:
-            key = _page_key(doc_name, page_idx)
+            hier = hier_by_name.get(doc_name)
+            if hier is None or not hier.page_keys or page_idx >= len(hier.page_keys):
+                self.logger.warning(
+                    f"[hindex] No kvstore key for '{doc_name}' page {page_idx} — skipping"
+                )
+                continue
+            key = hier.page_keys[page_idx]
             try:
-                # We don't load the PIL image here — downstream code fetches it
-                # from the kvstore using the key stored in metadatas.
                 if self.kvstore.has_key(key):
                     ids.append(key)
                     distances.append(0.0)  # hierarchy retrieval has no distance score
@@ -188,9 +194,15 @@ class HierarchyRetriever:
 # ---------------------------------------------------------------------------
 
 
-def _page_key(doc_name: str, page_idx: int) -> str:
-    slug = re.sub(r"[^A-Za-z0-9_\-]", "_", doc_name)
-    return f"{slug}_page_{page_idx}"
+def _page_key(uuid5_val: str, page_idx: int) -> str:
+    """Construct a kvstore key matching the format used by preprocessing.py.
+
+    The key format ``{uuid5}_{page_idx:04d}`` is the 'basename' assigned by
+    ``ImageProcessor.preprocess_images()`` for full-page (overview) parts.
+    This must stay in sync with ``preprocessing.py`` line:
+        basename = f"{doc['uuid5']}_{img_idx:04d}"
+    """
+    return f"{uuid5_val}_{page_idx:04d}"
 
 
 def _parse_json_list(raw: str, logger) -> list[str]:

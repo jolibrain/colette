@@ -30,6 +30,8 @@ from transformers import AutoProcessor, AutoModel, Qwen2VLForConditionalGenerati
 from colette.backends.hf.qwen3_vl_embedding import Qwen3VLEmbedder
 from vllm import LLM as VLLM
 
+from uuid import NAMESPACE_URL, uuid5 as _uuid5
+
 from colette.apidata import InputConnectorObj, RAGObj, merge_rag_config
 from colette.backends.coldb import ColDB
 from colette.backends.tantivy import (
@@ -37,6 +39,14 @@ from colette.backends.tantivy import (
     build_text_context,
     retrieval_mode_uses_text_search_engine,
     retrieval_mode_uses_embedding_retrieval,
+)
+from colette.backends.hf.hindex import (
+    HierarchyBuilder,
+    HierarchyStore,
+    HierarchyRetriever,
+    DocumentHierarchy,
+    retrieval_mode_uses_hindex,
+    _page_key,
 )
 from colette.inputconnector import InputConnectorBadParamException
 
@@ -51,6 +61,16 @@ from ..preprocessing import DocumentProcessor, ImageProcessor
 # data to our custom embedding function
 def is_image(target: Any) -> bool:
     return True
+
+
+def _merge_hindex_results(docs: dict, hindex_docs: dict) -> dict:
+    """Append hindex retrieval results into the main docs dict in-place."""
+    if not hindex_docs.get("ids", [[]])[0]:
+        return docs
+    docs["ids"][0].extend(hindex_docs["ids"][0])
+    docs["distances"][0].extend(hindex_docs["distances"][0])
+    docs["metadatas"][0].extend(hindex_docs["metadatas"][0])
+    return docs
 
 
 def compute_sha256_hash(file_path):
@@ -645,6 +665,10 @@ class RAGImg:
         # indexdb
         self.indexpath = self.app_repository / "mm_index"
         self.text_search_engine_index = TantivyIndex(self.indexpath / "text_search_engine", self.logger)
+        self.hindex_store = HierarchyStore(self.indexpath)
+        # vlm_fn is injected by HFLib after the inference model is initialized
+        self.vlm_fn = None
+        self.hindex_retriever = None
         # Store embedding configuration for reuse during indexing
         self.rag_embedding_model = ad.rag.embedding_model
         self.rag_embedding_lib = ad.rag.embedding_lib
@@ -823,6 +847,9 @@ class RAGImg:
                     self.rag_indexdb_client.delete_collection(name="mm_db")
                 if text_search_engine_requested and self.has_existing_text_search_engine_index:
                     self.text_search_engine_index.reset()
+                if retrieval_mode_uses_hindex(rag_config.retrieval_mode, rag_config.hindex):
+                    for doc_name in self.hindex_store.list_doc_names():
+                        self.hindex_store.delete(doc_name)
 
             self.logger.info("Creating new index")
             if vector_requested and self.rag_indexdb_lib == "chromadb":
@@ -920,6 +947,11 @@ class RAGImg:
                     self.logger.info(f"\t{len(document['images'])} images extracted")
                     document["npages"] = len(document["images"])
                     page_texts = self._extract_page_texts(document["source"])
+
+                    # Hierarchical index — build tree from page images using VLM OCR
+                    if retrieval_mode_uses_hindex(rag_config.retrieval_mode, rag_config.hindex):
+                        self._build_hindex_for_doc(document, rag_config)
+
                     # Augment document with crops/chunks
                     image_processor.preprocess_images([document])
                     self.logger.info(f"\t{len(document['parts'])} parts generated")
@@ -1031,6 +1063,24 @@ class RAGImg:
             top_k=rag_config.top_k,
         )
 
+        if retrieval_mode_uses_hindex(rag_config.retrieval_mode, rag_config.hindex):
+            if self.vlm_fn is None:
+                self.logger.warning(
+                    "[hindex] vision_hierarchical mode requested but vlm_fn is not set; "
+                    "skipping hierarchy retrieval"
+                )
+            else:
+                if self.hindex_retriever is None:
+                    self.hindex_retriever = HierarchyRetriever(
+                        self.hindex_store,
+                        self.kvstore,
+                        self.vlm_fn,
+                        top_k=rag_config.top_k,
+                        logger=self.logger,
+                    )
+                hindex_docs = self.hindex_retriever.invoke(rag_question)
+                docs = _merge_hindex_results(docs, hindex_docs)
+
         if retrieval_mode_uses_text_search_engine(rag_config.retrieval_mode):
             text_hits, text_prompt = build_text_context(
                 docs.get("text_context", []),
@@ -1047,6 +1097,57 @@ class RAGImg:
 
     def _get_effective_rag_config_for_request(self, request_rag: RAGObj | None) -> RAGObj:
         return merge_rag_config(self.ad.rag, request_rag)
+
+    def _build_hindex_for_doc(self, document: dict, rag_config: RAGObj) -> None:
+        """Build and persist the hierarchy tree for one document."""
+        doc_name = str(document["source"])
+        if self.hindex_store.exists(doc_name) and not self.rag_reindex:
+            self.logger.info(f"[hindex] Hierarchy already exists for '{doc_name}', skipping")
+            return
+        if self.vlm_fn is None:
+            self.logger.warning(
+                f"[hindex] vlm_fn not set — cannot build hierarchy for '{doc_name}'. "
+                "Set it via RAGImg.vlm_fn after the LLM model is initialized."
+            )
+            return
+
+        page_label_map = self._extract_page_labels(document["source"])
+        builder = HierarchyBuilder(
+            vlm_fn=self.vlm_fn,
+            page_label_map=page_label_map,
+            toc_scan_pages=rag_config.hindex.toc_scan_pages,
+            add_node_summaries=rag_config.hindex.add_node_summaries,
+            logger=self.logger,
+        )
+        hierarchy = builder.build(doc_name, document["images"])
+
+        # Populate page_keys: one kvstore key per physical page.
+        # Must match the key format used by ImageProcessor.preprocess_images():
+        # basename = f"{doc['uuid5']}_{img_idx:04d}" for full-page (overview) parts.
+        uuid5_val = document.get("uuid5")
+        if uuid5_val is None:
+            uuid5_val = str(_uuid5(NAMESPACE_URL, str(document["source"])))
+        hierarchy.page_keys = [
+            _page_key(uuid5_val, i) for i in range(hierarchy.page_count)
+        ]
+
+        self.hindex_store.save(hierarchy)
+        self.logger.info(
+            f"[hindex] Hierarchy saved for '{doc_name}' "
+            f"({len(hierarchy.flat_nodes())} nodes, {hierarchy.page_count} pages)"
+        )
+
+    def _extract_page_labels(self, source: Path | str) -> dict[int, str]:
+        """Return physical-page-index → printed-label map from PDF metadata."""
+        source_path = Path(source)
+        if source_path.suffix.lower() != ".pdf":
+            return {}
+        label_map: dict[int, str] = {}
+        with fitz.open(source_path) as pdf_doc:
+            for i in range(pdf_doc.page_count):
+                label = pdf_doc[i].get_label()
+                label_map[i] = label if label else str(i + 1)
+        return label_map
 
     def _extract_page_texts(self, source: Path | str) -> dict[int, str]:
         source_path = Path(source)

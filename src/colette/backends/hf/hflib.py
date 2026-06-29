@@ -48,6 +48,10 @@ class HFLib(LLMLib):
         if self.llmmodel:
             self.llmmodel.initialize_llm()
             self.llmmodel.kvstore = self.kvstore
+            # Wire hindex vlm_fn: lets RAGImg use the inference LLM for hierarchy
+            # building (OCR + structure extraction) and tree navigation at query time.
+            if self.inputc is not None and getattr(self.inputc, "ragobj", None) is not None:
+                self.inputc.ragobj.vlm_fn = self._make_hindex_vlm_fn(self.llmmodel)
 
         # chat history sessions
         self.sessions = SessionCache(max_sessions=100)
@@ -169,6 +173,39 @@ class HFLib(LLMLib):
         # if session, update it
         if self.llmmodel.llm_obj.conversational:
             self.sessions.update_streaming(ad.parameters.input.session_id, response)
+
+    def _make_hindex_vlm_fn(self, llmmodel):
+        """Return a simple Callable(images, prompt) -> str for use by hindex.
+
+        Wraps the already-initialized inference LLM so HierarchyBuilder and
+        HierarchyRetriever can call it without knowing which backend is active.
+        Text-only calls (empty images list) are supported for tree navigation.
+        """
+        logger = self.logger
+
+        def vlm_fn(images, prompt: str) -> str:
+            docs = {
+                "ids": [[""] * len(images)],
+                "images": [list(images)],
+                "metadatas": [
+                    [{"source": "hindex", "page_number": i, "crop_label": "full_page"}
+                     for i in range(len(images))]
+                ],
+            }
+            try:
+                response, _, _ = llmmodel.generate(
+                    prompt,
+                    512,
+                    docs,
+                    [],
+                    streaming=False,
+                )
+                return response or ""
+            except Exception as exc:
+                logger.warning(f"[hindex] vlm_fn call failed: {exc}")
+                return ""
+
+        return vlm_fn
 
     def update_index(self, ad: APIData):
         # kvstore may have been opened read-only (query mode); switch to write mode
