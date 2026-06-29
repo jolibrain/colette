@@ -291,14 +291,23 @@ class HFModel(LLMModel):
         new_message = []
         imgids = docs["ids"][0]
 
-        # Collect images
+        # Collect images.
+        # If the caller already placed PIL.Image objects in docs["images"] (e.g.
+        # the hindex vlm_fn closure passes images directly to avoid a kvstore
+        # round-trip), use them as-is.  Otherwise fetch each image from kvstore
+        # using the ID string.
         images = []
-        docs["images"] = [[]]
-        for imgid in imgids:
-            # add image to list
-            images.append(self.kvstore.retrieve_image(imgid))
-            # add image (the last one in the list) to docs
-            docs["images"][0].append(images[-1])
+        pre_fetched = (docs.get("images") or [[]])[0]
+        if pre_fetched and isinstance(pre_fetched[0], PIL.Image.Image):
+            images = list(pre_fetched)
+            docs["images"] = [images]
+        else:
+            docs["images"] = [[]]
+            for imgid in imgids:
+                # add image to list
+                images.append(self.kvstore.retrieve_image(imgid))
+                # add image (the last one in the list) to docs
+                docs["images"][0].append(images[-1])
 
         if self.stitch_crops:
             images = [stitch_images_vertically(images)]

@@ -1119,7 +1119,10 @@ class RAGImg:
             add_node_summaries=rag_config.hindex.add_node_summaries,
             logger=self.logger,
         )
-        hierarchy = builder.build(doc_name, document["images"])
+        # document["images"] is a list of {"image": PIL.Image, "metadata": {...}} dicts;
+        # HierarchyBuilder.build() expects plain PIL.Image objects.
+        page_images = [img_dict["image"] for img_dict in document["images"]]
+        hierarchy = builder.build(doc_name, page_images)
 
         # Populate page_keys: one kvstore key per physical page.
         # Must match the key format used by ImageProcessor.preprocess_images():
