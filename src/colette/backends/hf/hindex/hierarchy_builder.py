@@ -204,9 +204,13 @@ class HierarchyBuilder:
         page_count = len(page_images)
         self.logger.info(f"[hindex] Building hierarchy for '{doc_name}' ({page_count} pages)")
 
-        # Step 1 — OCR first N pages and look for a TOC
-        scan_images = page_images[: min(self.toc_scan_pages, page_count)]
-        toc_text = self._ocr_pages(scan_images)
+        # Step 1 — OCR first N pages and look for a TOC.
+        # We keep the per-page texts so they can be reused in _infer_structure
+        # if no TOC is found — avoiding a second full-document OCR pass.
+        scan_count = min(self.toc_scan_pages, page_count)
+        scan_images = page_images[:scan_count]
+        scan_texts = self._ocr_pages_list(scan_images)
+        toc_text = "\n\n".join(scan_texts)
         toc_data = self._detect_and_parse_toc(toc_text, scan_images)
 
         # Step 2 — Map TOC entries to physical page indices
@@ -215,7 +219,17 @@ class HierarchyBuilder:
             nodes = self._map_toc_to_pages(toc_data["entries"], page_count)
         else:
             self.logger.info("[hindex] No TOC found — inferring structure from content")
-            nodes = self._infer_structure(page_images)
+            # OCR pages beyond the scan window (if any) — scan_texts are already cached
+            remaining_texts: list[str] = []
+            ocr_prompt = (
+                "Read and transcribe all text visible in this document page exactly as it appears. "
+                "Preserve line breaks and indentation. Output only the transcribed text."
+            )
+            for idx, img in enumerate(page_images[scan_count:], start=scan_count):
+                self.logger.debug(f"[hindex] OCR page {idx}")
+                remaining_texts.append(self.vlm_fn([img], ocr_prompt))
+            all_texts = scan_texts + remaining_texts
+            nodes = self._infer_structure(all_texts, page_images, page_count)
 
         # Step 3 — Generate a document-level description
         doc_description = self._generate_doc_description(page_images[:3], doc_name)
@@ -235,8 +249,8 @@ class HierarchyBuilder:
     # Internal steps
     # ------------------------------------------------------------------
 
-    def _ocr_pages(self, images: list[Image.Image]) -> str:
-        """Use the VLM to OCR a list of page images and return joined text."""
+    def _ocr_pages_list(self, images: list[Image.Image]) -> list[str]:
+        """OCR each image and return one string per page."""
         prompt = (
             "Read and transcribe all text visible in this document page exactly as it appears. "
             "Preserve line breaks and indentation. Output only the transcribed text."
@@ -245,7 +259,11 @@ class HierarchyBuilder:
         for i, img in enumerate(images):
             self.logger.debug(f"[hindex] OCR page {i}")
             texts.append(self.vlm_fn([img], prompt))
-        return "\n\n".join(texts)
+        return texts
+
+    def _ocr_pages(self, images: list[Image.Image]) -> str:
+        """OCR a list of page images and return the joined text (kept for compatibility)."""
+        return "\n\n".join(self._ocr_pages_list(images))
 
     def _detect_and_parse_toc(
         self, ocr_text: str, scan_images: list[Image.Image]
@@ -301,45 +319,54 @@ class HierarchyBuilder:
 
         return _nest_by_level(entries, nodes_flat)
 
-    def _infer_structure(self, page_images: list[Image.Image]) -> list[HierarchyNode]:
-        """For documents without a TOC, ask the VLM to infer a high-level structure."""
-        # OCR all pages (batched in chunks to avoid context overflow)
-        all_texts: list[str] = []
-        for i, img in enumerate(page_images):
-            all_texts.append(f"--- Page {i} ---\n" + self.vlm_fn([img], "Transcribe all text on this page."))
-
-        combined = "\n\n".join(all_texts)[:12000]
+    def _infer_structure(
+        self,
+        ocr_texts: list[str],
+        page_images: list[Image.Image],
+        page_count: int,
+    ) -> list[HierarchyNode]:
+        """Infer document structure from pre-computed OCR texts (no re-OCR)."""
+        parts = [f"--- Page {i} ---\n{t}" for i, t in enumerate(ocr_texts)]
+        combined = "\n\n".join(parts)[:12000]
+        last_page = page_count - 1
         prompt = (
-            "Given the following document text (page-by-page), identify the main sections.\n"
-            "Output a JSON array of section objects:\n"
-            '[{"title": "...", "start_page": 0, "end_page": 3}, ...]\n'
-            "Use 0-based page indices. Output ONLY the JSON array.\n\n"
-            f"{combined}"
-        )
+            f"The document has {page_count} pages numbered 0 to {last_page} (0-based).\n"
+            "Identify the main sections. Every page must belong to exactly one section.\n"
+            "Output a JSON array that covers all pages from 0 to {last}:\n"
+            '[{{"title": "...", "start_page": 0, "end_page": 3}}, ...]\n'
+            "Rules:\n"
+            "- Use 0-based integer page indices.\n"
+            "- Sections must be contiguous and non-overlapping.\n"
+            "- The last section must end on page {last}.\n"
+            "- Output ONLY the JSON array, no other text.\n\n"
+            "Page content:\n{combined}"
+        ).format(last=last_page, combined=combined)
         raw = self.vlm_fn(page_images[:1], prompt)
         data = _parse_json_response(raw, self.logger)
-        if not isinstance(data, list):
-            self.logger.warning("[hindex] Could not infer structure; falling back to single root node")
-            return [
-                HierarchyNode(
-                    title="Document",
-                    node_id="0001",
-                    start_page=0,
-                    end_page=len(page_images) - 1,
-                )
-            ]
 
         nodes: list[HierarchyNode] = []
-        for i, item in enumerate(data):
-            nodes.append(
-                HierarchyNode(
-                    title=item.get("title", f"Section {i + 1}"),
-                    node_id=f"{i + 1:04d}",
-                    start_page=int(item.get("start_page", 0)),
-                    end_page=int(item.get("end_page", len(page_images) - 1)),
-                )
-            )
-        return nodes
+        if isinstance(data, list):
+            for i, item in enumerate(data):
+                try:
+                    start = max(0, int(item.get("start_page", 0)))
+                    end = min(last_page, int(item.get("end_page", last_page)))
+                    nodes.append(
+                        HierarchyNode(
+                            title=item.get("title", f"Section {i + 1}"),
+                            node_id=f"{i + 1:04d}",
+                            start_page=start,
+                            end_page=end,
+                        )
+                    )
+                except (TypeError, ValueError):
+                    continue
+
+        if not nodes:
+            self.logger.warning("[hindex] Could not infer structure; falling back to single root node")
+            return [HierarchyNode("Document", "0001", 0, last_page)]
+
+        # Guarantee every page is covered; fill any gaps the VLM left
+        return _fill_coverage_gaps(nodes, page_count)
 
     def _generate_doc_description(self, first_pages: list[Image.Image], doc_name: str) -> str:
         prompt = (
@@ -417,6 +444,33 @@ def _nest_by_level(
         stack.append((level, node))
 
     return roots
+
+
+def _fill_coverage_gaps(nodes: list[HierarchyNode], page_count: int) -> list[HierarchyNode]:
+    """Add catch-all nodes for any pages the inferred structure left uncovered."""
+    covered: set[int] = set()
+    for n in nodes:
+        covered.update(range(n.start_page, n.end_page + 1))
+
+    missing = sorted(set(range(page_count)) - covered)
+    if not missing:
+        return sorted(nodes, key=lambda n: n.start_page)
+
+    extra_id = len(nodes) + 1
+    gap_nodes: list[HierarchyNode] = []
+    start = missing[0]
+    prev = start
+    for p in missing[1:]:
+        if p != prev + 1:
+            label = f"Pages {start + 1}–{prev + 1}" if start != prev else f"Page {start + 1}"
+            gap_nodes.append(HierarchyNode(label, f"{extra_id:04d}", start, prev))
+            extra_id += 1
+            start = p
+        prev = p
+    label = f"Pages {start + 1}–{prev + 1}" if start != prev else f"Page {start + 1}"
+    gap_nodes.append(HierarchyNode(label, f"{extra_id:04d}", start, prev))
+
+    return sorted(nodes + gap_nodes, key=lambda n: n.start_page)
 
 
 class _NullLogger:
