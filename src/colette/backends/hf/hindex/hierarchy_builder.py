@@ -373,8 +373,12 @@ class HierarchyBuilder:
     def _extract_page_record(
         self, image: Image.Image, page_idx: int, page_key: str = ""
     ) -> PageRecord:
-        """One rich VLM call per page → structured PageRecord."""
-        prompt = (
+        """One rich VLM call per page → structured PageRecord.
+
+        Retries up to 2 times on parse failure; on the final attempt uses a
+        simplified prompt that is easier for the model to answer correctly.
+        """
+        prompt_full = (
             "Analyze this document page carefully and output a JSON object with "
             "exactly these keys:\n"
             f"{_PAGE_EXTRACT_SCHEMA}\n\n"
@@ -386,8 +390,29 @@ class HierarchyBuilder:
             "- keywords: 3-6 thematic terms (not generic words like 'page' or 'slide')\n"
             "Output ONLY the JSON object, no markdown fences, no other text."
         )
-        raw = self.vlm_fn([image], prompt)
-        data = _parse_json_response(raw, self.logger) or {}
+        # Simplified prompt used on the last retry attempt
+        prompt_simple = (
+            "Look at this document page and respond with a JSON object:\n"
+            '{"text_content": "<all visible text>", '
+            '"visual_description": "<describe any charts/diagrams, or empty string>", '
+            '"summary": "<2-3 sentences about this page>", '
+            '"keywords": ["<kw1>", "<kw2>", "<kw3>"]}\n'
+            "Output ONLY the JSON, nothing else."
+        )
+
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            prompt = prompt_simple if attempt == max_retries else prompt_full
+            raw = self.vlm_fn([image], prompt)
+            data = _parse_json_response(raw, self.logger)
+            if data and isinstance(data, dict):
+                break
+            self.logger.warning(
+                f"[hindex] Page {page_idx} extraction attempt {attempt + 1}/{max_retries + 1} "
+                f"failed — raw response: {raw[:300]!r}"
+            )
+        else:
+            data = {}
 
         return PageRecord(
             page_idx=page_idx,
@@ -489,6 +514,82 @@ class HierarchyBuilder:
             ))
 
         return topics
+
+    # ------------------------------------------------------------------
+    # Repair
+    # ------------------------------------------------------------------
+
+    def repair_empty_pages(
+        self,
+        hierarchy: "DocumentHierarchy",
+        kvstore,
+    ) -> tuple["DocumentHierarchy", list[int]]:
+        """Re-extract PageRecords whose summary and text_content are both empty.
+
+        Loads the page image for each failed page from *kvstore* using the
+        stored ``page_key`` (falling back to the first crop if needed), then
+        runs ``_extract_page_record`` with the new retry logic.
+
+        Parameters
+        ----------
+        hierarchy:
+            Existing DocumentHierarchy with (possibly) empty PageRecords.
+        kvstore:
+            An HDF5ImageStorage (or any object with ``has_key`` and
+            ``retrieve_image`` methods) already opened for reading.
+
+        Returns
+        -------
+        (updated_hierarchy, repaired_indices)
+            The updated hierarchy and a list of page indices that were
+            successfully re-extracted.
+        """
+        empty = [
+            r for r in hierarchy.page_records
+            if not r.summary and not r.text_content
+        ]
+        if not empty:
+            self.logger.info("[hindex] repair_empty_pages: no empty records found")
+            return hierarchy, []
+
+        self.logger.info(
+            f"[hindex] repair_empty_pages: re-extracting {len(empty)} pages: "
+            f"{[r.page_idx for r in empty]}"
+        )
+
+        repaired: list[int] = []
+        for rec in empty:
+            key = rec.page_key
+            resolved = key if kvstore.has_key(key) else f"{key}_crop_0000"
+            try:
+                img = kvstore.retrieve_image(resolved)
+            except Exception as exc:
+                self.logger.warning(
+                    f"[hindex] repair: cannot load image for page {rec.page_idx} "
+                    f"(key={resolved!r}): {exc}"
+                )
+                continue
+
+            new_rec = self._extract_page_record(img, rec.page_idx, rec.page_key)
+            if new_rec.summary or new_rec.text_content:
+                new_rec.crop_keys = rec.crop_keys  # preserve existing crop keys
+                # Replace in-place
+                for i, r in enumerate(hierarchy.page_records):
+                    if r.page_idx == rec.page_idx:
+                        hierarchy.page_records[i] = new_rec
+                        break
+                repaired.append(rec.page_idx)
+                self.logger.info(
+                    f"[hindex] repair: page {rec.page_idx} OK — "
+                    f"{len(new_rec.keywords)} keywords, "
+                    f"{len(new_rec.summary)} char summary"
+                )
+            else:
+                self.logger.warning(
+                    f"[hindex] repair: page {rec.page_idx} still empty after retries"
+                )
+
+        return hierarchy, repaired
 
     # ------------------------------------------------------------------
     # Legacy helpers (kept for backward compatibility / tests)
