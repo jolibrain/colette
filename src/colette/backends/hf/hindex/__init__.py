@@ -1,4 +1,10 @@
-from .hierarchy_builder import HierarchyBuilder, DocumentHierarchy
+from .hierarchy_builder import (
+    HierarchyBuilder,
+    DocumentHierarchy,
+    PageRecord,
+    TopicNode,
+    HierarchyNode,
+)
 from .hierarchy_store import HierarchyStore
 from .hierarchy_retriever import HierarchyRetriever, _page_key
 
@@ -17,6 +23,9 @@ __all__ = [
     "HierarchyStore",
     "HierarchyRetriever",
     "DocumentHierarchy",
+    "PageRecord",
+    "TopicNode",
+    "HierarchyNode",
     "retrieval_mode_uses_hindex",
     "_page_key",
 ]

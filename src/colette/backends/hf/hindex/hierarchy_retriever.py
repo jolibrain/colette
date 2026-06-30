@@ -1,19 +1,15 @@
-"""Agentic hierarchy retriever.
+"""Agentic hierarchy retriever — topic-based navigation.
 
-At query time the VLM acts as a navigator:
-  1. It receives the document tree as a compact text summary.
-  2. It selects the node IDs whose page ranges are most relevant to the question.
-  3. Page images for those ranges are fetched from the HDF5 kvstore.
-  4. Retrieved images are returned in the same format used by RAGImgRetriever so
-     they can be merged into the hybrid context without any downstream changes.
+At query time:
+  1. Select the relevant document(s) from their descriptions.
+  2. Select the most relevant topic(s) from the topic list.
+  3. Collect the page indices for those topics.
+  4. For each page, return the full-page image key AND all crop keys,
+     enriched with the pre-extracted per-page metadata (OCR, summary, etc.)
+     so the answering VLM gets richer context without re-reading from scratch.
 
-The three logical operations mirror PageIndex's tool pattern:
-  - get_documents()           → list of available docs with metadata
-  - get_document_structure()  → compact text tree (no images)
-  - get_page_images()         → PIL images for a page range
-
-These are not exposed as external tools here; they are called internally in the
-agentic loop.  A future refactor could expose them as MCP tools.
+Return format is compatible with RAGImgRetriever so results merge cleanly
+into the hybrid context.
 """
 
 from __future__ import annotations
@@ -22,31 +18,23 @@ import json
 import re
 from typing import Any
 
-from PIL import Image
-
-from .hierarchy_builder import DocumentHierarchy, HierarchyNode
+from .hierarchy_builder import DocumentHierarchy, PageRecord
 from .hierarchy_store import HierarchyStore
 
 
-# Maximum nodes the navigator may select in a single query.
-_MAX_SELECTED_NODES = 6
-
-
 class HierarchyRetriever:
-    """Retrieves page images by navigating the document hierarchy.
+    """Retrieves page images by navigating the document topic structure.
 
     Parameters
     ----------
     store:
-        HierarchyStore used to look up document trees.
+        HierarchyStore with persisted DocumentHierarchy objects.
     kvstore:
-        Colette's HDF5ImageStorage (or compatible) for fetching page images.
-        Keys follow the convention used by the preprocessing pipeline:
-        ``<source_slug>_page_<N>`` where N is the 0-based physical page index.
+        Colette HDF5ImageStorage for fetching images by key.
     vlm_fn:
-        Same callable used by HierarchyBuilder — Callable(images, prompt) -> str.
+        Callable(images, prompt) -> str — same as used by HierarchyBuilder.
     top_k:
-        Maximum number of page images to return.
+        Maximum number of result items to return.
     logger:
         Standard logger or duck-typed equivalent.
     """
@@ -59,11 +47,11 @@ class HierarchyRetriever:
         self.logger = logger or _NullLogger()
 
     # ------------------------------------------------------------------
-    # Public API — mirrors RAGImgRetriever.invoke() return format
+    # Public API
     # ------------------------------------------------------------------
 
     def invoke(self, question: str) -> dict[str, Any]:
-        """Return page images most relevant to *question*.
+        """Return page / crop images most relevant to *question*.
 
         Return value is compatible with the ``docs`` dict consumed by
         ``RAGImgRetriever`` downstream (ids, distances, metadatas keys).
@@ -73,81 +61,75 @@ class HierarchyRetriever:
             self.logger.warning("[hindex] No document hierarchies found in store")
             return _empty_docs()
 
-        # Step 1 — Ask the VLM which document(s) to look at
+        # Step 1 — Select relevant document(s)
         relevant_docs = self._select_documents(question, hierarchies)
         if not relevant_docs:
             self.logger.warning("[hindex] Navigator found no relevant documents")
             return _empty_docs()
 
-        # Step 2 — For each selected doc, navigate the tree to select nodes
+        # Step 2 — For each doc, select relevant topics → collect page indices
         selected_pages: list[tuple[str, int]] = []  # (doc_name, page_idx)
         for hierarchy in relevant_docs:
-            nodes = self._navigate_tree(question, hierarchy)
-            for node in nodes:
-                for page in range(node.start_page, node.end_page + 1):
-                    selected_pages.append((hierarchy.doc_name, page))
+            page_indices = self._select_pages(question, hierarchy)
+            for page_idx in page_indices:
+                selected_pages.append((hierarchy.doc_name, page_idx))
 
         if not selected_pages:
             return _empty_docs()
 
-        # Deduplicate while preserving order
+        # Deduplicate, preserve order
         seen: set[tuple[str, int]] = set()
-        unique_pages: list[tuple[str, int]] = []
+        unique: list[tuple[str, int]] = []
         for item in selected_pages:
             if item not in seen:
                 seen.add(item)
-                unique_pages.append(item)
+                unique.append(item)
 
-        # Step 3 — Fetch images from kvstore (up to top_k)
-        unique_pages = unique_pages[: self.top_k]
-        ids, distances, metadatas = [], [], []
-        # Build a fast lookup: doc_name → hierarchy (already loaded)
+        # Step 3 — Build result items (page image + crops, enriched metadata)
         hier_by_name = {h.doc_name: h for h in hierarchies}
-        for doc_name, page_idx in unique_pages:
-            hier = hier_by_name.get(doc_name)
-            if hier is None or not hier.page_keys or page_idx >= len(hier.page_keys):
-                self.logger.warning(
-                    f"[hindex] No kvstore key for '{doc_name}' page {page_idx} — skipping"
-                )
-                continue
-            key = hier.page_keys[page_idx]
-            try:
-                if self.kvstore.has_key(key):
-                    resolved_key = key
-                    crop_label = "full_page"
-                else:
-                    # Full-page image not stored (layout detector found a single region
-                    # and stored only a crop). Fall back to the first crop key.
-                    fallback = f"{key}_crop_0000"
-                    if self.kvstore.has_key(fallback):
-                        resolved_key = fallback
-                        crop_label = "crop"
-                        self.logger.debug(
-                            f"[hindex] Full-page key '{key}' missing; using crop fallback"
-                        )
-                    else:
-                        self.logger.warning(
-                            f"[hindex] Key '{key}' not found in kvstore (no crop fallback either)"
-                        )
-                        continue
-                ids.append(resolved_key)
-                distances.append(0.0)
-                metadatas.append(
-                    {
-                        "source": doc_name,
-                        "page_number": page_idx,
-                        "crop_label": crop_label,
-                        "retrieval_source": "hindex",
-                    }
-                )
-            except Exception as exc:
-                self.logger.warning(f"[hindex] Could not check kvstore key '{key}': {exc}")
+        ids, distances, metadatas = [], [], []
 
-        return {
-            "ids": [ids],
-            "distances": [distances],
-            "metadatas": [metadatas],
-        }
+        for doc_name, page_idx in unique:
+            if len(ids) >= self.top_k:
+                break
+            hier = hier_by_name.get(doc_name)
+            if hier is None:
+                continue
+
+            record = hier.record_for_page(page_idx)
+            page_key = (
+                record.page_key
+                if record and record.page_key
+                else (hier.page_keys[page_idx] if page_idx < len(hier.page_keys) else "")
+            )
+            if not page_key:
+                continue
+
+            # Resolve full-page key (fall back to first crop if full-page absent)
+            resolved_key, crop_label = self._resolve_key(page_key)
+            if resolved_key is None:
+                continue
+
+            # Base metadata enriched with pre-extracted page information
+            base_meta = self._page_metadata(doc_name, page_idx, crop_label, record)
+            ids.append(resolved_key)
+            distances.append(0.0)
+            metadatas.append(base_meta)
+
+            # Also include individual crop keys for this page
+            if record and record.crop_keys:
+                for crop_key in record.crop_keys:
+                    if len(ids) >= self.top_k:
+                        break
+                    if self.kvstore.has_key(crop_key):
+                        ids.append(crop_key)
+                        distances.append(0.0)
+                        metadatas.append(
+                            self._page_metadata(doc_name, page_idx, "crop", record,
+                                                extra={"crop_key": crop_key})
+                        )
+
+        return {"ids": [ids], "distances": [distances], "metadatas": [metadatas]}
 
     # ------------------------------------------------------------------
     # Navigation steps
@@ -156,7 +138,7 @@ class HierarchyRetriever:
     def _select_documents(
         self, question: str, hierarchies: list[DocumentHierarchy]
     ) -> list[DocumentHierarchy]:
-        """Ask the VLM to select the most relevant document(s) for the question."""
+        """VLM picks which document(s) to search."""
         if len(hierarchies) == 1:
             return hierarchies
 
@@ -165,45 +147,146 @@ class HierarchyRetriever:
             for h in hierarchies
         )
         prompt = (
-            f"You are given a list of documents and a question.\n"
-            f"Select the document names most likely to contain the answer.\n"
-            f"Output a JSON array of document names (strings) — no explanation.\n\n"
+            "Select the document(s) most likely to answer the question.\n"
+            "Output a JSON array of document names — no explanation.\n\n"
             f"Question: {question}\n\n"
             f"Documents:\n{doc_list}"
         )
         raw = self.vlm_fn([], prompt)
-        selected_names = _parse_json_list(raw, self.logger)
-        if not selected_names:
-            return hierarchies[:1]
-        name_set = set(selected_names)
-        return [h for h in hierarchies if h.doc_name in name_set] or hierarchies[:1]
+        selected_names = set(_parse_json_list(raw, self.logger))
+        matched = [h for h in hierarchies if h.doc_name in selected_names]
+        return matched or hierarchies[:1]
 
-    def _navigate_tree(
+    def _select_pages(self, question: str, hierarchy: DocumentHierarchy) -> list[int]:
+        """VLM picks relevant topic IDs → returns their page indices."""
+        # New model: navigate by topics
+        if hierarchy.topics:
+            return self._select_pages_via_topics(question, hierarchy)
+        # Legacy fallback: navigate by flat nodes
+        if hierarchy.nodes:
+            return self._select_pages_via_nodes(question, hierarchy)
+        # Last resort: return all pages up to top_k
+        return list(range(min(hierarchy.page_count, self.top_k)))
+
+    def _select_pages_via_topics(
         self, question: str, hierarchy: DocumentHierarchy
-    ) -> list[HierarchyNode]:
-        """Ask the VLM to pick the most relevant node IDs from the tree."""
-        tree_text = hierarchy.as_text_tree()
+    ) -> list[int]:
+        """Navigate by topics — the new model."""
+        topic_list = "\n".join(
+            f"[{t.topic_id}] {t.theme}: {t.description}  "
+            f"(pages: {', '.join(str(p) for p in t.page_indices)})"
+            for t in hierarchy.topics
+        )
+        # Include per-page summaries as additional context
+        page_summaries = "\n".join(
+            f"  p{r.page_idx:02d}: {r.summary}  [{', '.join(r.keywords)}]"
+            for r in hierarchy.page_records
+            if r.summary
+        )[:3000]
+
         prompt = (
-            f"You are navigating the structure of '{hierarchy.doc_name}'.\n"
-            f"Select the node IDs (the bracketed codes like [0001]) that are most "
-            f"likely to contain the answer to the question below.\n"
-            f"Return a JSON array of node ID strings — at most {_MAX_SELECTED_NODES}.\n"
-            f"Output only the JSON array.\n\n"
+            f"Document: {hierarchy.doc_name}\n"
+            f"Description: {hierarchy.doc_description}\n\n"
+            "Select the topic ID(s) most relevant to the question.\n"
+            "Output a JSON array of topic ID strings (e.g. [\"T01\", \"T03\"]).\n"
+            "Output only the JSON array.\n\n"
             f"Question: {question}\n\n"
-            f"Document structure:\n{tree_text}"
+            f"Topics:\n{topic_list}\n\n"
+            f"Page summaries:\n{page_summaries}"
         )
         raw = self.vlm_fn([], prompt)
         selected_ids = set(_parse_json_list(raw, self.logger))
 
-        flat = hierarchy.flat_nodes()
-        matched = [n for n in flat if n.node_id in selected_ids]
-        if not matched:
+        pages: list[int] = []
+        seen: set[int] = set()
+        for topic in hierarchy.topics:
+            if topic.topic_id in selected_ids:
+                for p in topic.page_indices:
+                    if p not in seen:
+                        seen.add(p)
+                        pages.append(p)
+
+        if not pages:
             self.logger.warning(
-                f"[hindex] Navigator returned no matching nodes for '{hierarchy.doc_name}'; "
-                "falling back to top-level nodes"
+                f"[hindex] No topics matched for '{hierarchy.doc_name}'; "
+                "falling back to first topic"
             )
-            matched = hierarchy.nodes[:2]
-        return matched
+            if hierarchy.topics:
+                pages = list(hierarchy.topics[0].page_indices)
+
+        return pages
+
+    def _select_pages_via_nodes(
+        self, question: str, hierarchy: DocumentHierarchy
+    ) -> list[int]:
+        """Legacy navigation via HierarchyNodes."""
+        tree_text = hierarchy.as_text_tree()
+        prompt = (
+            f"Navigate '{hierarchy.doc_name}' to find the answer.\n"
+            "Return the node IDs (e.g. [\"0001\", \"0003\"]) of relevant sections.\n"
+            "Output only the JSON array.\n\n"
+            f"Question: {question}\n\n"
+            f"Structure:\n{tree_text}"
+        )
+        raw = self.vlm_fn([], prompt)
+        selected_ids = set(_parse_json_list(raw, self.logger))
+
+        pages: list[int] = []
+        seen: set[int] = set()
+        for node in hierarchy.flat_nodes():
+            if node.node_id in selected_ids:
+                for p in range(node.start_page, node.end_page + 1):
+                    if p not in seen:
+                        seen.add(p)
+                        pages.append(p)
+
+        if not pages and hierarchy.nodes:
+            n = hierarchy.nodes[0]
+            pages = list(range(n.start_page, n.end_page + 1))
+        return pages
+
+    # ------------------------------------------------------------------
+    # Key resolution + metadata helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_key(self, page_key: str) -> tuple[str | None, str]:
+        """Return (resolved_kvstore_key, crop_label), falling back to crop_0000."""
+        try:
+            if self.kvstore.has_key(page_key):
+                return page_key, "full_page"
+            fallback = f"{page_key}_crop_0000"
+            if self.kvstore.has_key(fallback):
+                self.logger.debug(
+                    f"[hindex] Full-page key '{page_key}' absent; using crop fallback"
+                )
+                return fallback, "crop"
+        except Exception as exc:
+            self.logger.warning(f"[hindex] kvstore check failed for '{page_key}': {exc}")
+        self.logger.warning(f"[hindex] Key '{page_key}' not found in kvstore")
+        return None, ""
+
+    @staticmethod
+    def _page_metadata(
+        doc_name: str,
+        page_idx: int,
+        crop_label: str,
+        record: PageRecord | None,
+        extra: dict | None = None,
+    ) -> dict[str, Any]:
+        meta: dict[str, Any] = {
+            "source": doc_name,
+            "page_number": page_idx,
+            "crop_label": crop_label,
+            "retrieval_source": "hindex",
+        }
+        if record:
+            meta["text_content"] = record.text_content
+            meta["visual_description"] = record.visual_description
+            meta["summary"] = record.summary
+            meta["keywords"] = record.keywords
+        if extra:
+            meta.update(extra)
+        return meta
 
 
 # ---------------------------------------------------------------------------
@@ -212,13 +295,6 @@ class HierarchyRetriever:
 
 
 def _page_key(uuid5_val: str, page_idx: int) -> str:
-    """Construct a kvstore key matching the format used by preprocessing.py.
-
-    The key format ``{uuid5}_{page_idx:04d}`` is the 'basename' assigned by
-    ``ImageProcessor.preprocess_images()`` for full-page (overview) parts.
-    This must stay in sync with ``preprocessing.py`` line:
-        basename = f"{doc['uuid5']}_{img_idx:04d}"
-    """
     return f"{uuid5_val}_{page_idx:04d}"
 
 

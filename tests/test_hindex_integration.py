@@ -1,8 +1,8 @@
 """Integration test: builder → store → retriever pipeline.
 
 Exercises the full hindex pipeline end-to-end without any real VLM or GPU.
-Tests that the three components wire together correctly and that the output
-of the retriever is compatible with the format expected by RAGImgRetriever.
+Verifies that the three components wire together correctly and that the
+retriever output format is compatible with RAGImgRetriever.
 """
 
 from __future__ import annotations
@@ -12,7 +12,13 @@ import json
 import pytest
 from PIL import Image
 
-from colette.backends.hf.hindex import HierarchyBuilder, HierarchyRetriever, HierarchyStore, _page_key
+from colette.backends.hf.hindex import (
+    HierarchyBuilder,
+    HierarchyRetriever,
+    HierarchyStore,
+    _page_key,
+)
+from colette.backends.hf.hindex.hierarchy_builder import PageRecord, TopicNode
 
 
 # ---------------------------------------------------------------------------
@@ -28,12 +34,12 @@ class _SequentialVLM:
     """Returns a pre-configured sequence of responses."""
 
     def __init__(self, responses: list[str]):
-        self._q = list(responses)
+        self._responses = list(responses)
         self._idx = 0
 
     def __call__(self, images, prompt: str) -> str:
-        if self._idx < len(self._q):
-            resp = self._q[self._idx]
+        if self._idx < len(self._responses):
+            resp = self._responses[self._idx]
             self._idx += 1
             return resp
         return ""
@@ -48,89 +54,66 @@ class _FakeKVStore:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _build_vlm_responses(doc_name: str, n_pages: int) -> list[str]:
-    """Produce a consistent fake VLM response sequence for a 2-chapter document."""
-    toc_scan = 3
-    # OCR responses for toc scan
-    ocr = [f"Page {i} text" for i in range(min(toc_scan, n_pages))]
-    # TOC detection
-    toc = json.dumps({
-        "has_toc": True,
-        "entries": [
-            {"title": "Introduction", "level": 1, "page_label": "1"},
-            {"title": "Core Concepts", "level": 1, "page_label": "4"},
-            {"title": "Overview", "level": 2, "page_label": "4"},
-            {"title": "Details", "level": 2, "page_label": "6"},
-            {"title": "Conclusion", "level": 1, "page_label": "8"},
-        ],
-    })
-    description = f"Comprehensive guide to {doc_name}."
-    # Summaries: one per top-level node (3 top-level)
-    summaries = ["Intro summary.", "Core summary.", "Conclusion summary."]
-    # Level-2 summaries (2 children under Core Concepts)
-    child_summaries = ["Overview summary.", "Details summary."]
-    return ocr + [toc, description] + summaries + child_summaries
-
-
-# ---------------------------------------------------------------------------
 # Full pipeline test
 # ---------------------------------------------------------------------------
 
 
+def _make_page_record_responses(n_pages: int) -> list[str]:
+    """Produce sequential per-page extraction JSON responses."""
+    responses = []
+    for i in range(n_pages):
+        data = {
+            "text_content": f"Page {i} text content here.",
+            "visual_description": f"Diagram on page {i}" if i % 3 == 0 else "",
+            "summary": f"This page covers topic {'A' if i < n_pages // 2 else 'B'}.",
+            "keywords": ["topicA" if i < n_pages // 2 else "topicB", f"page{i}"],
+        }
+        responses.append(json.dumps(data))
+    return responses
+
+
 def test_full_pipeline_build_store_retrieve(tmp_path):
     doc_name = "technical_manual.pdf"
-    n_pages = 10
+    n_pages = 6
     pages = [_blank_page() for _ in range(n_pages)]
+    _UUID5 = "deadbeef-0000-0000-0000-000000000001"
 
-    # Page label map: physical index → printed label (offset: preface uses i/ii/iii)
-    page_label_map = {
-        0: "i", 1: "ii", 2: "iii",
-        3: "1",  # chapter starts at physical page 3
-        4: "2",
-        5: "3",
-        6: "4",
-        7: "5",
-        8: "6",
-        9: "7",
-    }
+    # Pre-computed page keys
+    page_keys = [_page_key(_UUID5, i) for i in range(n_pages)]
 
-    # Adjust toc entries to match this label map
-    responses = [f"Page {i} text" for i in range(3)] + [
-        json.dumps({
-            "has_toc": True,
-            "entries": [
-                {"title": "Introduction", "level": 1, "page_label": "1"},
-                {"title": "Methods", "level": 1, "page_label": "4"},
-                {"title": "Results", "level": 1, "page_label": "6"},
-            ],
-        }),
-        "A technical manual covering procedures.",
-        "Intro summary.",
-        "Methods summary.",
-        "Results summary.",
-    ]
+    # Build VLM responses: n_pages extraction + 1 doc description + 1 topic clustering
+    page_responses = _make_page_record_responses(n_pages)
+    doc_description_response = "A technical manual covering procedures A and B."
+    topic_response = json.dumps([
+        {
+            "theme": "Topic A",
+            "description": "Pages about topic A",
+            "keywords": ["topicA"],
+            "page_indices": list(range(n_pages // 2)),
+        },
+        {
+            "theme": "Topic B",
+            "description": "Pages about topic B",
+            "keywords": ["topicB"],
+            "page_indices": list(range(n_pages // 2, n_pages)),
+        },
+    ])
 
-    vlm_build = _SequentialVLM(responses)
-    builder = HierarchyBuilder(
-        vlm_fn=vlm_build,
-        page_label_map=page_label_map,
-        toc_scan_pages=3,
-        add_node_summaries=True,
-    )
+    vlm_build = _SequentialVLM(page_responses + [doc_description_response, topic_response])
+    builder = HierarchyBuilder(vlm_fn=vlm_build)
 
     # 1. Build
-    hier = builder.build(doc_name, pages)
+    hier = builder.build(doc_name, pages, page_keys=page_keys)
     assert hier.page_count == n_pages
-    assert len(hier.nodes) == 3
+    assert len(hier.page_records) == n_pages
+    assert len(hier.topics) == 2
+    assert hier.doc_description == doc_description_response
 
-    # 2. Store — populate page_keys (normally done by RAGImg._build_hindex_for_doc)
-    _FAKE_UUID5 = "deadbeef-0000-0000-0000-000000000001"
-    hier.page_keys = [_page_key(_FAKE_UUID5, i) for i in range(n_pages)]
+    # Verify per-page records
+    assert hier.page_records[0].text_content == "Page 0 text content here."
+    assert hier.page_records[0].keywords == ["topicA", "page0"]
 
+    # 2. Store
     store = HierarchyStore(tmp_path)
     store.save(hier)
     assert store.exists(doc_name)
@@ -138,50 +121,81 @@ def test_full_pipeline_build_store_retrieve(tmp_path):
     # Verify round-trip fidelity
     loaded = store.load(doc_name)
     assert loaded.doc_name == doc_name
-    assert len(loaded.nodes) == 3
-    assert loaded.nodes[0].title == "Introduction"
-    assert loaded.nodes[1].title == "Methods"
+    assert len(loaded.page_records) == n_pages
+    assert loaded.page_records[2].summary == hier.page_records[2].summary
+    assert loaded.topics[0].theme == "Topic A"
+    assert loaded.topics[1].page_indices == list(range(n_pages // 2, n_pages))
 
     # 3. Retrieve
-    all_keys = set(hier.page_keys)
-    kvstore = _FakeKVStore(all_keys)
-    vlm_retrieve = _SequentialVLM(['["0002"]'])  # select Methods node
+    kvstore = _FakeKVStore(set(page_keys))
+    vlm_retrieve = _SequentialVLM(['["T02"]'])  # select Topic B (pages 3-5)
 
-    retriever = HierarchyRetriever(store, kvstore, vlm_retrieve, top_k=5)
-    result = retriever.invoke("How were the experiments conducted?")
+    retriever = HierarchyRetriever(store, kvstore, vlm_retrieve, top_k=8)
+    result = retriever.invoke("How were the procedures B conducted?")
 
-    # Output must be compatible with RAGImgRetriever format
+    # Output format must match RAGImgRetriever
     assert "ids" in result
     assert "distances" in result
     assert "metadatas" in result
-    assert isinstance(result["ids"], list)
-    assert isinstance(result["ids"][0], list)
 
     ids = result["ids"][0]
     assert len(ids) > 0
+    # All retrieved keys must be from Topic B pages (3-5)
+    for key in ids:
+        base = key.split("_crop_")[0]
+        assert any(base == _page_key(_UUID5, p) for p in range(3, 6))
+
+    # Metadata should include pre-extracted fields
     for meta in result["metadatas"][0]:
         assert meta["retrieval_source"] == "hindex"
-        assert meta["source"] == doc_name
+        if meta["crop_label"] == "full_page":
+            assert "summary" in meta
+            assert "text_content" in meta
 
 
 def test_pipeline_output_is_compatible_with_ragimg_format(tmp_path):
     """The dict keys and value shapes must match what RAGImgRetriever returns."""
     store = HierarchyStore(tmp_path)
-    from colette.backends.hf.hindex.hierarchy_builder import DocumentHierarchy, HierarchyNode
-
     _UUID = "cafebabe-0000-0000-0000-000000000001"
-    node = HierarchyNode("Chapter 1", "0001", 0, 2)
-    hier = DocumentHierarchy("compat.pdf", "Compatibility test", 3, nodes=[node],
-                             page_keys=[_page_key(_UUID, i) for i in range(3)])
-    store.save(hier)
+    page_keys = [_page_key(_UUID, i) for i in range(3)]
 
-    kvstore = _FakeKVStore(set(hier.page_keys))
-    vlm = _SequentialVLM(['["0001"]'])
-    retriever = HierarchyRetriever(store, kvstore, vlm, top_k=3)
+    hier_data = {
+        "doc_name": "compat.pdf",
+        "doc_description": "Compatibility test",
+        "page_count": 3,
+        "page_keys": page_keys,
+        "page_records": [
+            {
+                "page_idx": i,
+                "page_key": page_keys[i],
+                "text_content": f"text {i}",
+                "visual_description": "",
+                "summary": f"summary {i}",
+                "keywords": ["test"],
+                "crop_keys": [],
+            }
+            for i in range(3)
+        ],
+        "topics": [
+            {
+                "topic_id": "T01",
+                "theme": "All",
+                "description": "All pages",
+                "keywords": ["test"],
+                "page_indices": [0, 1, 2],
+            }
+        ],
+        "nodes": [],
+    }
+    from colette.backends.hf.hindex.hierarchy_builder import DocumentHierarchy
+    store.save(DocumentHierarchy.from_dict(hier_data))
+
+    kvstore = _FakeKVStore(set(page_keys))
+    vlm = _SequentialVLM(['["T01"]'])
+    retriever = HierarchyRetriever(store, kvstore, vlm, top_k=5)
 
     result = retriever.invoke("Anything")
 
-    # Must have exactly these keys (subset of what RAGImgRetriever may return)
     assert set(result.keys()) >= {"ids", "distances", "metadatas"}
     assert len(result["ids"]) == 1
     assert len(result["distances"]) == 1

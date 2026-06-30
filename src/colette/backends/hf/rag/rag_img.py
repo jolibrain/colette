@@ -948,13 +948,14 @@ class RAGImg:
                     document["npages"] = len(document["images"])
                     page_texts = self._extract_page_texts(document["source"])
 
-                    # Hierarchical index — build tree from page images using VLM OCR
-                    if retrieval_mode_uses_hindex(rag_config.retrieval_mode, rag_config.hindex):
-                        self._build_hindex_for_doc(document, rag_config)
-
-                    # Augment document with crops/chunks
+                    # Augment document with crops/chunks (must run before hindex so
+                    # crop keys are available for per-page records)
                     image_processor.preprocess_images([document])
                     self.logger.info(f"\t{len(document['parts'])} parts generated")
+
+                    # Hierarchical index — runs after preprocessing so crop keys are known
+                    if retrieval_mode_uses_hindex(rag_config.retrieval_mode, rag_config.hindex):
+                        self._build_hindex_for_doc(document, rag_config)
 
                     # Text search engine: one document per page (page-level text, not per-crop)
                     # Indexing per-crop would duplicate the same page text N times and
@@ -1099,7 +1100,11 @@ class RAGImg:
         return merge_rag_config(self.ad.rag, request_rag)
 
     def _build_hindex_for_doc(self, document: dict, rag_config: RAGObj) -> None:
-        """Build and persist the hierarchy tree for one document."""
+        """Build and persist the hierarchy for one document.
+
+        Must be called AFTER image_processor.preprocess_images() so that
+        document["parts"] is populated with crop keys.
+        """
         doc_name = str(document["source"])
         if self.hindex_store.exists(doc_name) and not self.rag_reindex:
             self.logger.info(f"[hindex] Hierarchy already exists for '{doc_name}', skipping")
@@ -1111,33 +1116,40 @@ class RAGImg:
             )
             return
 
-        page_label_map = self._extract_page_labels(document["source"])
-        builder = HierarchyBuilder(
-            vlm_fn=self.vlm_fn,
-            page_label_map=page_label_map,
-            toc_scan_pages=rag_config.hindex.toc_scan_pages,
-            add_node_summaries=rag_config.hindex.add_node_summaries,
-            logger=self.logger,
-        )
-        # document["images"] is a list of {"image": PIL.Image, "metadata": {...}} dicts;
-        # HierarchyBuilder.build() expects plain PIL.Image objects.
-        page_images = [img_dict["image"] for img_dict in document["images"]]
-        hierarchy = builder.build(doc_name, page_images)
-
-        # Populate page_keys: one kvstore key per physical page.
-        # Must match the key format used by ImageProcessor.preprocess_images():
-        # basename = f"{doc['uuid5']}_{img_idx:04d}" for full-page (overview) parts.
+        # Compute per-page kvstore keys (full-page images)
         uuid5_val = document.get("uuid5")
         if uuid5_val is None:
             uuid5_val = str(_uuid5(NAMESPACE_URL, str(document["source"])))
-        hierarchy.page_keys = [
-            _page_key(uuid5_val, i) for i in range(hierarchy.page_count)
-        ]
+
+        page_count = len(document["images"])
+        page_keys = [_page_key(uuid5_val, i) for i in range(page_count)]
+
+        # Build the hierarchy (Phase 1 + 2 happen inside builder.build())
+        page_images = [img_dict["image"] for img_dict in document["images"]]
+        builder = HierarchyBuilder(
+            vlm_fn=self.vlm_fn,
+            logger=self.logger,
+        )
+        hierarchy = builder.build(doc_name, page_images, page_keys=page_keys)
+
+        # Phase 3 — Populate crop_keys on each PageRecord from document["parts"].
+        # parts[*]["metadata"]["page_number"] is 1-indexed, so subtract 1.
+        from collections import defaultdict
+        crops_by_page: dict[int, list[str]] = defaultdict(list)
+        for part in document.get("parts", []):
+            page_num_1idx = part["metadata"].get("page_number", 1)
+            page_idx = page_num_1idx - 1
+            crops_by_page[page_idx].append(
+                part["name"].encode("utf-8", "replace").decode()
+            )
+        for record in hierarchy.page_records:
+            record.crop_keys = crops_by_page.get(record.page_idx, [])
 
         self.hindex_store.save(hierarchy)
         self.logger.info(
             f"[hindex] Hierarchy saved for '{doc_name}' "
-            f"({len(hierarchy.flat_nodes())} nodes, {hierarchy.page_count} pages)"
+            f"({len(hierarchy.topics)} topics, {page_count} pages, "
+            f"{sum(len(r.crop_keys) for r in hierarchy.page_records)} crops)"
         )
 
     def _extract_page_labels(self, source: Path | str) -> dict[int, str]:

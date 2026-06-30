@@ -1,18 +1,29 @@
 """Vision-first hierarchical document index builder.
 
-Inspired by the PageIndex concept (VectifyAI/PageIndex) but implemented
-from scratch using Colette's existing VLM infrastructure:
+Build strategy (bottom-up):
 
-  1. Page images are already rendered by the preprocessing pipeline (300 DPI).
-  2. The VLM (Qwen2-VL / Qwen3-VL via vLLM) performs OCR on each page image
-     to extract clean text — no separate OCR library needed.
-  3. Extracted text is processed to detect and parse the document's table of
-     contents (TOC) into a hierarchical JSON tree.
-  4. Page-number-to-physical-index mapping is resolved from PDF metadata at
-     preprocessing time, so the VLM never has to read printed page numbers.
+  Phase 1 — Per-page extraction (one rich VLM call per page)
+    For each page image the VLM extracts:
+      • text_content      : verbatim OCR of all text
+      • visual_description: description of diagrams / charts / figures
+      • summary           : 2-3 sentence condensed meaning
+      • keywords          : 3-6 thematic tags
 
-The output is a JSON tree stored by HierarchyStore and consumed by
-HierarchyRetriever at query time.
+  Phase 2 — Document-level synthesis (one VLM call over all summaries)
+    • doc_description: what the whole document is about
+    • topics: thematic clusters of pages (pages may belong to multiple topics)
+
+  Phase 3 — Crop key assignment (no VLM, after preprocessing)
+    Caller passes the parts list from preprocessing; each PageRecord gets the
+    kvstore keys of all crops belonging to its page.
+
+At query time the retriever can use:
+  • Topic navigation: VLM picks a topic → returns pages in that topic
+  • Summary search : query matched against pre-extracted summaries / keywords
+  • Both together  : search to rank, topics to expand / re-rank
+
+The pre-extracted per-page data is also returned alongside page images so the
+answering LLM gets richer context without re-reading from scratch.
 """
 
 from __future__ import annotations
@@ -20,7 +31,6 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from PIL import Image
@@ -32,13 +42,85 @@ from PIL import Image
 
 
 @dataclass
+class PageRecord:
+    """Rich per-page extracted information."""
+
+    page_idx: int            # 0-based physical page index
+    page_key: str            # kvstore key for the full-page image
+    text_content: str        # verbatim OCR
+    visual_description: str  # description of diagrams / figures / charts
+    summary: str             # 2-3 sentence condensed meaning
+    keywords: list[str]      # thematic tags (3-6)
+    crop_keys: list[str] = field(default_factory=list)
+    """Kvstore keys of all layout-detected crops for this page.
+    Populated by the caller (RAGImg._build_hindex_for_doc) after
+    preprocessing so the key format matches the stored crops exactly."""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "page_idx": self.page_idx,
+            "page_key": self.page_key,
+            "text_content": self.text_content,
+            "visual_description": self.visual_description,
+            "summary": self.summary,
+            "keywords": self.keywords,
+            "crop_keys": self.crop_keys,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "PageRecord":
+        return cls(
+            page_idx=d["page_idx"],
+            page_key=d.get("page_key", ""),
+            text_content=d.get("text_content", ""),
+            visual_description=d.get("visual_description", ""),
+            summary=d.get("summary", ""),
+            keywords=d.get("keywords", []),
+            crop_keys=d.get("crop_keys", []),
+        )
+
+
+@dataclass
+class TopicNode:
+    """A thematic cluster of pages.
+
+    Pages may belong to multiple topics (this is a DAG, not a strict tree).
+    """
+
+    topic_id: str
+    theme: str               # short label, e.g. "RAG Architecture"
+    description: str         # what this topic covers
+    keywords: list[str]
+    page_indices: list[int]  # 0-based; a page can appear in multiple topics
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "topic_id": self.topic_id,
+            "theme": self.theme,
+            "description": self.description,
+            "keywords": self.keywords,
+            "page_indices": self.page_indices,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "TopicNode":
+        return cls(
+            topic_id=d["topic_id"],
+            theme=d["theme"],
+            description=d.get("description", ""),
+            keywords=d.get("keywords", []),
+            page_indices=d.get("page_indices", []),
+        )
+
+
+@dataclass
 class HierarchyNode:
-    """One node in the document hierarchy tree."""
+    """Legacy node kept for backward compatibility with existing JSON files."""
 
     title: str
     node_id: str
-    start_page: int  # 0-based physical page index
-    end_page: int    # 0-based physical page index (inclusive)
+    start_page: int
+    end_page: int
     summary: str = ""
     children: list["HierarchyNode"] = field(default_factory=list)
 
@@ -67,16 +149,26 @@ class HierarchyNode:
 
 @dataclass
 class DocumentHierarchy:
-    """Root of the hierarchy tree for a single document."""
+    """Root of the hierarchy for a single document."""
 
     doc_name: str
     doc_description: str
     page_count: int
-    nodes: list[HierarchyNode] = field(default_factory=list)
+
+    # Rich per-page records (new model)
+    page_records: list[PageRecord] = field(default_factory=list)
+    # Thematic topic clusters (new model)
+    topics: list[TopicNode] = field(default_factory=list)
+
+    # Flat list of kvstore keys (one per physical page, 0-indexed)
     page_keys: list[str] = field(default_factory=list)
-    """Kvstore key for each physical page (0-indexed).  Set by RAGImg.index()
-    after preprocessing so the key format matches the actual stored images
-    (``{uuid5}_{page_idx:04d}`` for full-page entries)."""
+
+    # Legacy TOC-based nodes (kept for backward compat with old JSON files)
+    nodes: list[HierarchyNode] = field(default_factory=list)
+
+    # ------------------------------------------------------------------
+    # Serialisation
+    # ------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -84,6 +176,8 @@ class DocumentHierarchy:
             "doc_description": self.doc_description,
             "page_count": self.page_count,
             "page_keys": self.page_keys,
+            "page_records": [r.to_dict() for r in self.page_records],
+            "topics": [t.to_dict() for t in self.topics],
             "nodes": [n.to_dict() for n in self.nodes],
         }
 
@@ -95,11 +189,17 @@ class DocumentHierarchy:
             page_count=d["page_count"],
             page_keys=d.get("page_keys", []),
         )
+        obj.page_records = [PageRecord.from_dict(r) for r in d.get("page_records", [])]
+        obj.topics = [TopicNode.from_dict(t) for t in d.get("topics", [])]
         obj.nodes = [HierarchyNode.from_dict(n) for n in d.get("nodes", [])]
         return obj
 
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
     def flat_nodes(self) -> list[HierarchyNode]:
-        """Return all nodes in document order (pre-order traversal)."""
+        """Legacy: all HierarchyNodes in pre-order (for backward compat)."""
         result: list[HierarchyNode] = []
 
         def _walk(nodes: list[HierarchyNode]) -> None:
@@ -111,60 +211,95 @@ class DocumentHierarchy:
         return result
 
     def as_text_tree(self) -> str:
-        """Compact text representation of the tree for LLM context."""
+        """Compact text representation for LLM context and debugging."""
         lines: list[str] = [f"Document: {self.doc_name} ({self.page_count} pages)"]
+        if self.doc_description:
+            lines.append(f"  {self.doc_description}")
 
-        def _fmt(nodes: list[HierarchyNode], indent: int = 0) -> None:
-            for n in nodes:
-                prefix = "  " * indent
-                lines.append(
-                    f"{prefix}[{n.node_id}] {n.title} (pages {n.start_page}–{n.end_page})"
-                )
-                _fmt(n.children, indent + 1)
+        if self.topics:
+            lines.append("")
+            lines.append("Topics:")
+            for t in self.topics:
+                pages_str = ", ".join(str(p) for p in t.page_indices)
+                lines.append(f"  [{t.topic_id}] {t.theme}  (pages: {pages_str})")
+                if t.description:
+                    lines.append(f"       {t.description}")
+        elif self.nodes:
+            # Legacy fallback
+            def _fmt(nodes: list[HierarchyNode], indent: int = 0) -> None:
+                for n in nodes:
+                    prefix = "  " * indent
+                    lines.append(
+                        f"{prefix}[{n.node_id}] {n.title} "
+                        f"(pages {n.start_page}–{n.end_page})"
+                    )
+                    _fmt(n.children, indent + 1)
 
-        _fmt(self.nodes)
+            lines.append("")
+            _fmt(self.nodes)
+
+        if self.page_records:
+            lines.append("")
+            lines.append("Pages:")
+            for r in self.page_records:
+                kw = ", ".join(r.keywords)
+                lines.append(f"  p{r.page_idx:02d}: {r.summary[:80]}…  [{kw}]")
+
         return "\n".join(lines)
+
+    def pages_for_topic(self, topic_id: str) -> list[int]:
+        """Return page indices belonging to a topic."""
+        for t in self.topics:
+            if t.topic_id == topic_id:
+                return list(t.page_indices)
+        return []
+
+    def record_for_page(self, page_idx: int) -> PageRecord | None:
+        """Return the PageRecord for a given 0-based page index."""
+        for r in self.page_records:
+            if r.page_idx == page_idx:
+                return r
+        return None
 
 
 # ---------------------------------------------------------------------------
 # Builder
 # ---------------------------------------------------------------------------
 
-# Number of pages to scan when looking for a TOC.
-_DEFAULT_TOC_SCAN_PAGES = 20
+_DEFAULT_TOC_SCAN_PAGES = 20  # kept for API compatibility
+_SUMMARY_MAX_WORDS = 50       # kept for legacy _add_summaries
 
-# JSON schema hint injected into prompts so the VLM emits structured output.
-_TOC_JSON_SCHEMA = """
-{
-  "has_toc": true | false,
-  "entries": [
-    {"title": "Section title", "level": 1, "page_label": "1"},
-    ...
-  ]
-}
-""".strip()
+_PAGE_EXTRACT_SCHEMA = """{
+  "text_content": "all text visible on the page, verbatim",
+  "visual_description": "describe any diagrams, charts, figures, images (empty string if none)",
+  "summary": "2-3 sentence summary of what this page is about",
+  "keywords": ["keyword1", "keyword2", "keyword3"]
+}"""
 
-_SUMMARY_MAX_WORDS = 50
+_TOPIC_SCHEMA = """[
+  {
+    "theme": "Short theme label (2-4 words)",
+    "description": "One sentence describing what this topic covers",
+    "keywords": ["kw1", "kw2"],
+    "page_indices": [0, 2, 5]
+  }
+]"""
 
 
 class HierarchyBuilder:
-    """Builds a DocumentHierarchy from page images using a VLM as OCR + reasoner.
+    """Builds a DocumentHierarchy from page images using a VLM.
 
     Parameters
     ----------
     vlm_fn:
         Callable(images: list[PIL.Image], prompt: str) -> str.
-        Wraps whatever VLM backend is active (vLLM, HF, …).  The caller is
-        responsible for wiring the correct model; HierarchyBuilder is backend-
-        agnostic.
     page_label_map:
-        Mapping from physical page index (0-based) to the printed page label
-        (e.g. {"0": "i", "4": "1"}).  Built from PDF metadata at preprocessing
-        time by DocumentProcessor — avoids asking the VLM to read page numbers.
+        Mapping from physical page index to printed page label (unused in the
+        new bottom-up build; kept for API compatibility).
     toc_scan_pages:
-        How many pages to inspect when searching for a TOC.
+        Unused in the new build (kept for API compatibility).
     add_node_summaries:
-        Whether to generate a one-line summary for each node via the VLM.
+        Unused in the new build (kept for API compatibility).
     logger:
         Standard Python logger or any object with .info / .warning / .debug.
     """
@@ -191,6 +326,7 @@ class HierarchyBuilder:
         self,
         doc_name: str,
         page_images: list[Image.Image],
+        page_keys: list[str] | None = None,
     ) -> DocumentHierarchy:
         """Build the full hierarchy for *doc_name* from its rendered page images.
 
@@ -200,204 +336,175 @@ class HierarchyBuilder:
             Display name / filename of the document.
         page_images:
             Ordered list of PIL images — one per physical page (0-indexed).
+        page_keys:
+            Optional pre-computed kvstore keys for each page.  If omitted,
+            keys are derived from the document uuid5 by the caller and set
+            on the returned hierarchy afterwards.
         """
         page_count = len(page_images)
-        self.logger.info(f"[hindex] Building hierarchy for '{doc_name}' ({page_count} pages)")
+        self.logger.info(
+            f"[hindex] Building hierarchy for '{doc_name}' ({page_count} pages)"
+        )
 
-        # Step 1 — OCR first N pages and look for a TOC.
-        # We keep the per-page texts so they can be reused in _infer_structure
-        # if no TOC is found — avoiding a second full-document OCR pass.
-        scan_count = min(self.toc_scan_pages, page_count)
-        scan_images = page_images[:scan_count]
-        scan_texts = self._ocr_pages_list(scan_images)
-        toc_text = "\n\n".join(scan_texts)
-        toc_data = self._detect_and_parse_toc(toc_text, scan_images)
+        # Phase 1 — Rich per-page extraction
+        page_records: list[PageRecord] = []
+        for idx, img in enumerate(page_images):
+            self.logger.info(f"[hindex] Extracting page {idx}/{page_count - 1}")
+            record = self._extract_page_record(img, idx, page_keys[idx] if page_keys else "")
+            page_records.append(record)
 
-        # Step 2 — Map TOC entries to physical page indices
-        if toc_data and toc_data.get("has_toc") and toc_data.get("entries"):
-            self.logger.info(f"[hindex] TOC detected with {len(toc_data['entries'])} entries")
-            nodes = self._map_toc_to_pages(toc_data["entries"], page_count)
-        else:
-            self.logger.info("[hindex] No TOC found — inferring structure from content")
-            # OCR pages beyond the scan window (if any) — scan_texts are already cached
-            remaining_texts: list[str] = []
-            ocr_prompt = (
-                "Read and transcribe all text visible in this document page exactly as it appears. "
-                "Preserve line breaks and indentation. Output only the transcribed text."
-            )
-            for idx, img in enumerate(page_images[scan_count:], start=scan_count):
-                self.logger.debug(f"[hindex] OCR page {idx}")
-                remaining_texts.append(self.vlm_fn([img], ocr_prompt))
-            all_texts = scan_texts + remaining_texts
-            nodes = self._infer_structure(all_texts, page_images, page_count)
-
-        # Step 3 — Generate a document-level description
-        doc_description = self._generate_doc_description(page_images[:3], doc_name)
-
-        # Step 4 — Optionally generate per-node summaries
-        if self.add_node_summaries:
-            self._add_summaries(nodes, page_images)
+        # Phase 2 — Document description + topic clustering
+        doc_description = self._generate_doc_description(page_records)
+        topics = self._cluster_into_topics(page_records)
 
         return DocumentHierarchy(
             doc_name=doc_name,
             doc_description=doc_description,
             page_count=page_count,
-            nodes=nodes,
+            page_records=page_records,
+            topics=topics,
+            page_keys=page_keys or [""] * page_count,
         )
 
     # ------------------------------------------------------------------
-    # Internal steps
+    # Phase 1 — Per-page extraction
+    # ------------------------------------------------------------------
+
+    def _extract_page_record(
+        self, image: Image.Image, page_idx: int, page_key: str = ""
+    ) -> PageRecord:
+        """One rich VLM call per page → structured PageRecord."""
+        prompt = (
+            "Analyze this document page carefully and output a JSON object with "
+            "exactly these keys:\n"
+            f"{_PAGE_EXTRACT_SCHEMA}\n\n"
+            "Rules:\n"
+            "- text_content: transcribe every word visible, preserve structure\n"
+            "- visual_description: if no visual elements (diagrams/charts/figures), "
+            "write an empty string\n"
+            "- summary: 2-3 sentences on the meaning/purpose of this page\n"
+            "- keywords: 3-6 thematic terms (not generic words like 'page' or 'slide')\n"
+            "Output ONLY the JSON object, no markdown fences, no other text."
+        )
+        raw = self.vlm_fn([image], prompt)
+        data = _parse_json_response(raw, self.logger) or {}
+
+        return PageRecord(
+            page_idx=page_idx,
+            page_key=page_key,
+            text_content=str(data.get("text_content", "")),
+            visual_description=str(data.get("visual_description", "")),
+            summary=str(data.get("summary", "")),
+            keywords=list(data.get("keywords", [])),
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 2 — Document synthesis
+    # ------------------------------------------------------------------
+
+    def _generate_doc_description(self, page_records: list[PageRecord]) -> str:
+        """One VLM call over all summaries → single-sentence document description."""
+        combined = "\n".join(
+            f"Page {r.page_idx}: {r.summary}  [{', '.join(r.keywords)}]"
+            for r in page_records
+            if r.summary
+        )[:6000]
+        prompt = (
+            "Below are per-page summaries of a document.\n"
+            "Write a single sentence that describes the overall document topic and purpose.\n"
+            "Output only that sentence.\n\n"
+            f"{combined}"
+        )
+        return self.vlm_fn([], prompt).strip()
+
+    def _cluster_into_topics(self, page_records: list[PageRecord]) -> list[TopicNode]:
+        """One VLM call over all summaries → thematic topic clusters."""
+        page_count = len(page_records)
+        combined = "\n".join(
+            f"Page {r.page_idx}: {r.summary}  Keywords: {', '.join(r.keywords)}"
+            for r in page_records
+        )[:8000]
+        last = page_count - 1
+        prompt = (
+            f"A document has {page_count} pages (indices 0 to {last}).\n"
+            "Group them into 3-7 thematic topics. A page may belong to multiple topics.\n"
+            f"Every page index (0 to {last}) must appear in at least one topic.\n"
+            "Output ONLY a JSON array matching this schema:\n"
+            f"{_TOPIC_SCHEMA}\n\n"
+            "Rules:\n"
+            "- theme: 2-4 words, descriptive, not generic ('Introduction', 'Conclusion' are ok)\n"
+            "- page_indices: use 0-based integer indices\n"
+            "- Output ONLY the JSON array, no other text\n\n"
+            f"Page summaries:\n{combined}"
+        )
+        raw = self.vlm_fn([], prompt)
+        data = _parse_json_response(raw, self.logger)
+
+        topics: list[TopicNode] = []
+        if isinstance(data, list):
+            for i, item in enumerate(data):
+                try:
+                    indices = [
+                        int(p) for p in item.get("page_indices", [])
+                        if 0 <= int(p) < page_count
+                    ]
+                    if not indices:
+                        continue
+                    topics.append(TopicNode(
+                        topic_id=f"T{i + 1:02d}",
+                        theme=str(item.get("theme", f"Topic {i + 1}")),
+                        description=str(item.get("description", "")),
+                        keywords=list(item.get("keywords", [])),
+                        page_indices=indices,
+                    ))
+                except (TypeError, ValueError):
+                    continue
+
+        if not topics:
+            self.logger.warning(
+                "[hindex] Topic clustering failed; falling back to single topic"
+            )
+            topics = [TopicNode(
+                topic_id="T01",
+                theme="Document",
+                description="All pages of the document",
+                keywords=[],
+                page_indices=list(range(page_count)),
+            )]
+
+        # Ensure every page is covered by at least one topic
+        covered = {p for t in topics for p in t.page_indices}
+        missing = [p for p in range(page_count) if p not in covered]
+        if missing:
+            self.logger.warning(
+                f"[hindex] {len(missing)} page(s) not assigned to any topic; "
+                "adding catch-all topic"
+            )
+            topics.append(TopicNode(
+                topic_id=f"T{len(topics) + 1:02d}",
+                theme="Additional Pages",
+                description="Pages not grouped into other topics",
+                keywords=[],
+                page_indices=missing,
+            ))
+
+        return topics
+
+    # ------------------------------------------------------------------
+    # Legacy helpers (kept for backward compatibility / tests)
     # ------------------------------------------------------------------
 
     def _ocr_pages_list(self, images: list[Image.Image]) -> list[str]:
-        """OCR each image and return one string per page."""
+        """OCR each image and return one string per page (legacy)."""
         prompt = (
             "Read and transcribe all text visible in this document page exactly as it appears. "
             "Preserve line breaks and indentation. Output only the transcribed text."
         )
-        texts: list[str] = []
-        for i, img in enumerate(images):
-            self.logger.debug(f"[hindex] OCR page {i}")
-            texts.append(self.vlm_fn([img], prompt))
-        return texts
+        return [self.vlm_fn([img], prompt) for img in images]
 
     def _ocr_pages(self, images: list[Image.Image]) -> str:
-        """OCR a list of page images and return the joined text (kept for compatibility)."""
+        """OCR and return joined text (legacy)."""
         return "\n\n".join(self._ocr_pages_list(images))
-
-    def _detect_and_parse_toc(
-        self, ocr_text: str, scan_images: list[Image.Image]
-    ) -> dict[str, Any] | None:
-        """Ask the VLM to find and extract a TOC from the OCR'd text."""
-        prompt = (
-            "You are analyzing the text extracted from the first pages of a document.\n"
-            "Determine if there is a Table of Contents (TOC).\n"
-            "If yes, extract all entries as a JSON object matching this schema:\n"
-            f"{_TOC_JSON_SCHEMA}\n\n"
-            "Rules:\n"
-            "- 'level' is the heading depth (1 = top-level chapter, 2 = section, 3 = subsection).\n"
-            "- 'page_label' is the printed page number/label string exactly as it appears (may be Roman).\n"
-            "- If no TOC exists set has_toc to false and entries to [].\n"
-            "Output ONLY the JSON object, no markdown fences.\n\n"
-            f"Extracted text:\n{ocr_text[:8000]}"
-        )
-        raw = self.vlm_fn(scan_images[:1], prompt)
-        return _parse_json_response(raw, self.logger)
-
-    def _map_toc_to_pages(
-        self, entries: list[dict[str, Any]], page_count: int
-    ) -> list[HierarchyNode]:
-        """Convert flat TOC entries (with printed page labels) to HierarchyNodes."""
-        # Invert page_label_map: printed label → physical index
-        label_to_phys: dict[str, int] = {v: k for k, v in self.page_label_map.items()}
-
-        nodes_flat: list[HierarchyNode] = []
-        for i, entry in enumerate(entries):
-            label = str(entry.get("page_label", "")).strip()
-            phys = label_to_phys.get(label)
-            if phys is None:
-                # Fallback: try numeric parse
-                try:
-                    phys = int(label) - 1
-                except (ValueError, TypeError):
-                    phys = 0
-            node_id = f"{i + 1:04d}"
-            nodes_flat.append(
-                HierarchyNode(
-                    title=entry.get("title", f"Section {node_id}"),
-                    node_id=node_id,
-                    start_page=max(0, phys),
-                    end_page=max(0, phys),  # end_page filled in below
-                )
-            )
-
-        # Assign end_page: each node ends where the next one begins
-        for j in range(len(nodes_flat) - 1):
-            nodes_flat[j].end_page = max(nodes_flat[j].start_page, nodes_flat[j + 1].start_page - 1)
-        if nodes_flat:
-            nodes_flat[-1].end_page = page_count - 1
-
-        return _nest_by_level(entries, nodes_flat)
-
-    def _infer_structure(
-        self,
-        ocr_texts: list[str],
-        page_images: list[Image.Image],
-        page_count: int,
-    ) -> list[HierarchyNode]:
-        """Infer document structure from pre-computed OCR texts (no re-OCR)."""
-        parts = [f"--- Page {i} ---\n{t}" for i, t in enumerate(ocr_texts)]
-        combined = "\n\n".join(parts)[:12000]
-        last_page = page_count - 1
-        prompt = (
-            f"The document has {page_count} pages numbered 0 to {last_page} (0-based).\n"
-            "Identify the main sections. Every page must belong to exactly one section.\n"
-            "Output a JSON array that covers all pages from 0 to {last}:\n"
-            '[{{"title": "...", "start_page": 0, "end_page": 3}}, ...]\n'
-            "Rules:\n"
-            "- Use 0-based integer page indices.\n"
-            "- Sections must be contiguous and non-overlapping.\n"
-            "- The last section must end on page {last}.\n"
-            "- Output ONLY the JSON array, no other text.\n\n"
-            "Page content:\n{combined}"
-        ).format(last=last_page, combined=combined)
-        raw = self.vlm_fn(page_images[:1], prompt)
-        data = _parse_json_response(raw, self.logger)
-
-        nodes: list[HierarchyNode] = []
-        if isinstance(data, list):
-            for i, item in enumerate(data):
-                try:
-                    start = max(0, int(item.get("start_page", 0)))
-                    end = min(last_page, int(item.get("end_page", last_page)))
-                    nodes.append(
-                        HierarchyNode(
-                            title=item.get("title", f"Section {i + 1}"),
-                            node_id=f"{i + 1:04d}",
-                            start_page=start,
-                            end_page=end,
-                        )
-                    )
-                except (TypeError, ValueError):
-                    continue
-
-        if not nodes:
-            self.logger.warning("[hindex] Could not infer structure; falling back to single root node")
-            return [HierarchyNode("Document", "0001", 0, last_page)]
-
-        # Guarantee every page is covered; fill any gaps the VLM left
-        return _fill_coverage_gaps(nodes, page_count)
-
-    def _generate_doc_description(self, first_pages: list[Image.Image], doc_name: str) -> str:
-        prompt = (
-            f"You are reading the first pages of a document named '{doc_name}'.\n"
-            "Write a single sentence that describes what this document is about.\n"
-            "Output only the sentence."
-        )
-        return self.vlm_fn(first_pages, prompt).strip()
-
-    def _add_summaries(
-        self, nodes: list[HierarchyNode], page_images: list[Image.Image]
-    ) -> None:
-        """Generate a short summary for each leaf/top-level node."""
-
-        def _summarise(node: HierarchyNode) -> None:
-            imgs = page_images[node.start_page : node.end_page + 1]
-            if not imgs:
-                return
-            # Use only first image to keep cost low; enough for a short summary
-            prompt = (
-                f"You are reading pages {node.start_page}–{node.end_page} of a document "
-                f"(section: '{node.title}').\n"
-                f"Write a summary in at most {_SUMMARY_MAX_WORDS} words.\n"
-                "Output only the summary."
-            )
-            node.summary = self.vlm_fn(imgs[:1], prompt).strip()
-            for child in node.children:
-                _summarise(child)
-
-        for n in nodes:
-            _summarise(n)
 
 
 # ---------------------------------------------------------------------------
@@ -407,12 +514,12 @@ class HierarchyBuilder:
 
 def _parse_json_response(raw: str, logger) -> Any:
     """Extract JSON from a VLM response that may contain surrounding prose."""
-    # Strip markdown fences if present
+    if not raw:
+        return None
     raw = re.sub(r"```(?:json)?", "", raw).strip().strip("`").strip()
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        # Try to extract the first {...} or [...] block
         m = re.search(r"(\{.*\}|\[.*\])", raw, re.DOTALL)
         if m:
             try:
@@ -423,54 +530,9 @@ def _parse_json_response(raw: str, logger) -> Any:
     return None
 
 
-def _nest_by_level(
-    entries: list[dict[str, Any]], flat_nodes: list[HierarchyNode]
-) -> list[HierarchyNode]:
-    """Reconstruct a tree from flat nodes using the 'level' field in entries."""
-    if not flat_nodes:
-        return []
-
-    levels = [int(e.get("level", 1)) for e in entries]
-    stack: list[tuple[int, HierarchyNode]] = []  # (level, node)
-    roots: list[HierarchyNode] = []
-
-    for level, node in zip(levels, flat_nodes):
-        while stack and stack[-1][0] >= level:
-            stack.pop()
-        if not stack:
-            roots.append(node)
-        else:
-            stack[-1][1].children.append(node)
-        stack.append((level, node))
-
-    return roots
-
-
-def _fill_coverage_gaps(nodes: list[HierarchyNode], page_count: int) -> list[HierarchyNode]:
-    """Add catch-all nodes for any pages the inferred structure left uncovered."""
-    covered: set[int] = set()
-    for n in nodes:
-        covered.update(range(n.start_page, n.end_page + 1))
-
-    missing = sorted(set(range(page_count)) - covered)
-    if not missing:
-        return sorted(nodes, key=lambda n: n.start_page)
-
-    extra_id = len(nodes) + 1
-    gap_nodes: list[HierarchyNode] = []
-    start = missing[0]
-    prev = start
-    for p in missing[1:]:
-        if p != prev + 1:
-            label = f"Pages {start + 1}–{prev + 1}" if start != prev else f"Page {start + 1}"
-            gap_nodes.append(HierarchyNode(label, f"{extra_id:04d}", start, prev))
-            extra_id += 1
-            start = p
-        prev = p
-    label = f"Pages {start + 1}–{prev + 1}" if start != prev else f"Page {start + 1}"
-    gap_nodes.append(HierarchyNode(label, f"{extra_id:04d}", start, prev))
-
-    return sorted(nodes + gap_nodes, key=lambda n: n.start_page)
+def _page_key(uuid5_val: str, page_idx: int) -> str:
+    """Kvstore key for a full-page image."""
+    return f"{uuid5_val}_{page_idx:04d}"
 
 
 class _NullLogger:
