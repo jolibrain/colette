@@ -400,6 +400,8 @@ class HierarchyBuilder:
             "Output ONLY the JSON, nothing else."
         )
 
+        image = _cap_image_size(image, max_pixels=_MAX_EXTRACT_PIXELS)
+
         max_retries = 2
         for attempt in range(max_retries + 1):
             prompt = prompt_simple if attempt == max_retries else prompt_full
@@ -611,6 +613,23 @@ class HierarchyBuilder:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+# Maximum pixel count for images passed to the per-page extraction VLM.
+# Very large pages (e.g. 4001×2250 = ~9 MP) generate so many visual tokens
+# that Qwen3-VL may truncate the response before the JSON is complete.
+# 1280×720 = ~0.9 MP is plenty of detail for OCR + visual description.
+_MAX_EXTRACT_PIXELS = 1280 * 720
+
+
+def _cap_image_size(image: Image.Image, max_pixels: int = _MAX_EXTRACT_PIXELS) -> Image.Image:
+    """Return *image* scaled down so its total pixel count is ≤ *max_pixels*."""
+    w, h = image.size
+    if w * h <= max_pixels:
+        return image
+    scale = (max_pixels / (w * h)) ** 0.5
+    new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
+    return image.resize(new_size, Image.LANCZOS)
 
 
 def _parse_json_response(raw: str, logger) -> Any:
