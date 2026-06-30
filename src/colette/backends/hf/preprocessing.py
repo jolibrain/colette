@@ -18,6 +18,33 @@ from .layout_detector import LayoutDetector
 from .word_detector import WordDetector
 
 
+# Maximum length of the longest side of any page image, in pixels.
+# PDF pages can have wildly different physical dimensions (e.g. 4:3 slides at
+# ~2400 px wide vs 16:9 slides at 4001 px wide in the same document), causing
+# downstream VLM calls to receive images of unpredictable size.  Capping here —
+# at the point where every page image is first created — gives all consumers
+# (kvstore, embedding model, answer VLM, hindex extraction) a consistent budget.
+# 1536 px on the longest side → ≤ 2.4 MP for 4:3, ≤ 2.1 MP for 16:9.
+_MAX_PAGE_SIDE = 1536
+
+
+def _normalize_page_image(image: Image.Image) -> Image.Image:
+    """Cap size and ensure RGB mode for a freshly-rendered page image.
+
+    Called immediately after creating an image from a PDF page or opening an
+    image file, before the image enters ``doc["images"]`` and the kvstore.
+    """
+    # Ensure RGB — pypdfium2 defaults to RGB but some PDF pages with
+    # transparency layers can produce RGBA; model backends vary in tolerance.
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    # Cap the longest side without distortion.
+    if max(image.size) > _MAX_PAGE_SIDE:
+        image = image.copy()  # thumbnail() is in-place; avoid mutating the original
+        image.thumbnail((_MAX_PAGE_SIDE, _MAX_PAGE_SIDE), Image.LANCZOS)
+    return image
+
+
 def _is_soffice_running():
     for proc in psutil.process_iter():
         try:
@@ -236,7 +263,7 @@ class DocumentProcessor:
             for page_index in range(len(pdf)):
                 page = pdf.get_page(page_index)
                 bitmap = page.render(scale=scale)
-                pil_image = bitmap.to_pil()
+                pil_image = _normalize_page_image(bitmap.to_pil())
                 doc["images"].append(
                     dict(
                         image=pil_image,
@@ -278,7 +305,7 @@ class DocumentProcessor:
             if doc["ext"] in self.IM_EXTENSIONS:
                 doc["images"].append(
                     dict(
-                        image=Image.open(doc["source"]),
+                        image=_normalize_page_image(Image.open(doc["source"])),
                         metadata=dict(
                             source=str(doc["source"])
                         )
