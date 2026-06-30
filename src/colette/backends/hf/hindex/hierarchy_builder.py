@@ -414,7 +414,9 @@ class HierarchyBuilder:
             "exactly these keys:\n"
             f"{_PAGE_EXTRACT_SCHEMA}\n\n"
             "Rules:\n"
-            "- text_content: transcribe every word visible, preserve structure\n"
+            "- text_content: key text visible on the page, MAX 300 characters; "
+            "capture the most important content and truncate if necessary — "
+            "do NOT transcribe every word verbatim\n"
             "- visual_description: if no visual elements (diagrams/charts/figures), "
             "write an empty string\n"
             "- summary: 2-3 sentences on the meaning/purpose of this page\n"
@@ -424,7 +426,7 @@ class HierarchyBuilder:
         # Simplified prompt used on the last retry attempt
         prompt_simple = (
             "Look at this document page and respond with a JSON object:\n"
-            '{"text_content": "<all visible text>", '
+            '{"text_content": "<key visible text, max 200 chars>", '
             '"visual_description": "<describe any charts/diagrams, or empty string>", '
             '"summary": "<2-3 sentences about this page>", '
             '"keywords": ["<kw1>", "<kw2>", "<kw3>"]}\n'
@@ -664,19 +666,64 @@ def _cap_image_size(image: Image.Image, max_pixels: int = _MAX_EXTRACT_PIXELS) -
 
 
 def _parse_json_response(raw: str, logger) -> Any:
-    """Extract JSON from a VLM response that may contain surrounding prose."""
+    """Extract JSON from a VLM response that may contain surrounding prose.
+
+    Falls back to field-by-field salvage when the model's output is truncated
+    mid-string (the most common failure mode: text_content is too long and
+    max_new_tokens is exhausted before the JSON object closes).
+    """
     if not raw:
         return None
-    raw = re.sub(r"```(?:json)?", "", raw).strip().strip("`").strip()
+    cleaned = re.sub(r"```(?:json)?", "", raw).strip().strip("`").strip()
+
+    # Happy path: valid JSON
     try:
-        return json.loads(raw)
+        return json.loads(cleaned)
     except json.JSONDecodeError:
-        m = re.search(r"(\{.*\}|\[.*\])", raw, re.DOTALL)
-        if m:
+        pass
+
+    # Try extracting the outermost {...} or [...] block
+    m = re.search(r"(\{.*\}|\[.*\])", cleaned, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    # Salvage truncated JSON objects: pull out individual string fields and
+    # the keywords array even when the closing brace was never generated.
+    # Pattern: "key": "value"  — value may be cut off (no closing quote).
+    if cleaned.lstrip().startswith("{"):
+        salvaged: dict[str, Any] = {}
+        for key in ("text_content", "visual_description", "summary"):
+            m = re.search(
+                rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)',
+                cleaned,
+                re.DOTALL,
+            )
+            if m:
+                # Unescape the captured fragment (may be incomplete)
+                salvaged[key] = (
+                    m.group(1)
+                    .replace('\\"', '"')
+                    .replace("\\n", "\n")
+                    .replace("\\t", "\t")
+                )
+        kw_m = re.search(r'"keywords"\s*:\s*(\[[^\]]*\]?)', cleaned, re.DOTALL)
+        if kw_m:
             try:
-                return json.loads(m.group(1))
+                kw_raw = kw_m.group(1)
+                if not kw_raw.endswith("]"):
+                    kw_raw += "]"
+                salvaged["keywords"] = json.loads(kw_raw)
             except json.JSONDecodeError:
                 pass
+        if salvaged:
+            logger.warning(
+                f"[hindex] JSON truncated — salvaged fields: {list(salvaged)}"
+            )
+            return salvaged
+
     logger.warning(f"[hindex] Could not parse JSON from VLM response: {raw[:200]}")
     return None
 
