@@ -113,16 +113,33 @@ class HierarchyRetriever:
             key = hier.page_keys[page_idx]
             try:
                 if self.kvstore.has_key(key):
-                    ids.append(key)
-                    distances.append(0.0)  # hierarchy retrieval has no distance score
-                    metadatas.append(
-                        {
-                            "source": doc_name,
-                            "page_number": page_idx,
-                            "crop_label": "full_page",
-                            "retrieval_source": "hindex",
-                        }
-                    )
+                    resolved_key = key
+                    crop_label = "full_page"
+                else:
+                    # Full-page image not stored (layout detector found a single region
+                    # and stored only a crop). Fall back to the first crop key.
+                    fallback = f"{key}_crop_0000"
+                    if self.kvstore.has_key(fallback):
+                        resolved_key = fallback
+                        crop_label = "crop"
+                        self.logger.debug(
+                            f"[hindex] Full-page key '{key}' missing; using crop fallback"
+                        )
+                    else:
+                        self.logger.warning(
+                            f"[hindex] Key '{key}' not found in kvstore (no crop fallback either)"
+                        )
+                        continue
+                ids.append(resolved_key)
+                distances.append(0.0)
+                metadatas.append(
+                    {
+                        "source": doc_name,
+                        "page_number": page_idx,
+                        "crop_label": crop_label,
+                        "retrieval_source": "hindex",
+                    }
+                )
             except Exception as exc:
                 self.logger.warning(f"[hindex] Could not check kvstore key '{key}': {exc}")
 
