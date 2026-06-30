@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -311,12 +312,17 @@ class HierarchyBuilder:
         toc_scan_pages: int = _DEFAULT_TOC_SCAN_PAGES,
         add_node_summaries: bool = True,
         logger=None,
+        max_workers: int = 1,
     ):
         self.vlm_fn = vlm_fn
         self.page_label_map: dict[int, str] = page_label_map or {}
         self.toc_scan_pages = toc_scan_pages
         self.add_node_summaries = add_node_summaries
         self.logger = logger or _NullLogger()
+        # Workers > 1 enables parallel Phase 1 page extraction.
+        # Safe for vllm_client (HTTP, stateless); for in-process HF/vLLM models
+        # the ModelCache lock serialises calls anyway so this has no effect.
+        self.max_workers = max(1, max_workers)
 
     # ------------------------------------------------------------------
     # Public API
@@ -347,11 +353,36 @@ class HierarchyBuilder:
         )
 
         # Phase 1 — Rich per-page extraction
-        page_records: list[PageRecord] = []
-        for idx, img in enumerate(page_images):
-            self.logger.info(f"[hindex] Extracting page {idx}/{page_count - 1}")
-            record = self._extract_page_record(img, idx, page_keys[idx] if page_keys else "")
-            page_records.append(record)
+        # Sequential by default (max_workers=1).  When max_workers > 1 all pages
+        # are submitted to a thread pool simultaneously — effective for vllm_client
+        # where each call is an independent HTTP request and the external vLLM server
+        # batches them.  In-process models (hf, vllm) are serialised by ModelCache
+        # regardless, so max_workers has no effect on them.
+        page_records: list[PageRecord | None] = [None] * page_count
+
+        def _extract_one(idx: int) -> tuple[int, PageRecord]:
+            key = page_keys[idx] if page_keys else ""
+            return idx, self._extract_page_record(page_images[idx], idx, key)
+
+        n_workers = min(self.max_workers, page_count)
+        if n_workers > 1:
+            self.logger.info(
+                f"[hindex] Phase 1: extracting {page_count} pages "
+                f"with {n_workers} parallel workers"
+            )
+            with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                futures = {pool.submit(_extract_one, i): i for i in range(page_count)}
+                for fut in as_completed(futures):
+                    idx, record = fut.result()
+                    page_records[idx] = record
+                    self.logger.info(
+                        f"[hindex] Page {idx} done "
+                        f"({sum(1 for r in page_records if r is not None)}/{page_count})"
+                    )
+        else:
+            for i in range(page_count):
+                self.logger.info(f"[hindex] Extracting page {i}/{page_count - 1}")
+                _, page_records[i] = _extract_one(i)
 
         # Phase 2 — Document description + topic clustering
         doc_description = self._generate_doc_description(page_records)

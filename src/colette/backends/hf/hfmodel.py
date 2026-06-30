@@ -542,7 +542,10 @@ class HFModel(LLMModel):
 
         try:
             # generate output
-            if self.shared:
+            # vllm_client is a pure HTTP client pointing at an external server —
+            # the server handles concurrency natively; no local lock needed.
+            needs_lock = self.shared and self.llm_type != "vllm_client"
+            if needs_lock:
                 cache_key = (self.llm_lib, self.llm_source)
                 ModelCache.acquire_lock(cache_key)
             with torch.inference_mode():
@@ -676,7 +679,7 @@ class HFModel(LLMModel):
 
             return decoded, new_message, None
         finally:
-            if self.shared:
+            if needs_lock:
                 ModelCache.release_lock(cache_key)
 
     def delete_model(self):

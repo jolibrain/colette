@@ -52,6 +52,12 @@ class HFLib(LLMLib):
             # building (OCR + structure extraction) and tree navigation at query time.
             if self.inputc is not None and getattr(self.inputc, "ragobj", None) is not None:
                 self.inputc.ragobj.vlm_fn = self._make_hindex_vlm_fn(self.llmmodel)
+                # vllm_client fires concurrent HTTP requests to an external server that
+                # batches them natively — use multiple workers.  In-process models (hf,
+                # vllm) hold a GPU lock per call so extra workers have no effect.
+                self.inputc.ragobj.hindex_max_workers = (
+                    8 if self.llmmodel.llm_type == "vllm_client" else 1
+                )
 
         # chat history sessions
         self.sessions = SessionCache(max_sessions=100)
