@@ -21,6 +21,10 @@ from typing import Any
 from .hierarchy_builder import DocumentHierarchy, PageRecord
 from .hierarchy_store import HierarchyStore
 
+# Navigation calls produce short JSON lists (["T01", "T02"] or ["doc.pdf"]).
+# 256 tokens is more than enough and avoids wasting budget on thinking tokens.
+_NAV_TOKENS = 256
+
 
 class HierarchyRetriever:
     """Retrieves page images by navigating the document topic structure.
@@ -111,21 +115,6 @@ class HierarchyRetriever:
 
         return {"ids": [ids], "distances": [distances], "metadatas": [metadatas]}
 
-    def select_pages(self, question: str) -> list[tuple[str, int]]:
-        """Navigate the hierarchy to candidate (doc_name, page_idx) pairs.
-
-        Navigation-only step for guided embedding retrieval — does not fetch
-        images from the kvstore.  The caller uses these pairs to restrict a
-        ChromaDB similarity query to the relevant pages.
-
-        Returns an empty list when the store is empty or nothing matches.
-        """
-        hierarchies = self.store.load_all()
-        if not hierarchies:
-            self.logger.warning("[hindex] No document hierarchies found in store")
-            return []
-        return self._navigate(question, hierarchies)
-
     # ------------------------------------------------------------------
     # Navigation steps
     # ------------------------------------------------------------------
@@ -169,7 +158,7 @@ class HierarchyRetriever:
             f"Question: {question}\n\n"
             f"Documents:\n{doc_list}"
         )
-        raw = self.vlm_fn([], prompt)
+        raw = self.vlm_fn([], prompt, _NAV_TOKENS)
         selected_names = set(_parse_json_list(raw, self.logger))
         matched = [h for h in hierarchies if h.doc_name in selected_names]
         return matched or hierarchies[:1]
@@ -211,7 +200,7 @@ class HierarchyRetriever:
             f"Topics:\n{topic_list}\n\n"
             f"Page summaries:\n{page_summaries}"
         )
-        raw = self.vlm_fn([], prompt)
+        raw = self.vlm_fn([], prompt, _NAV_TOKENS)
         selected_ids = set(_parse_json_list(raw, self.logger))
 
         pages: list[int] = []
@@ -245,7 +234,7 @@ class HierarchyRetriever:
             f"Question: {question}\n\n"
             f"Structure:\n{tree_text}"
         )
-        raw = self.vlm_fn([], prompt)
+        raw = self.vlm_fn([], prompt, _NAV_TOKENS)
         selected_ids = set(_parse_json_list(raw, self.logger))
 
         pages: list[int] = []
@@ -292,7 +281,7 @@ class HierarchyRetriever:
     ) -> dict[str, Any]:
         meta: dict[str, Any] = {
             "source": doc_name,
-            "page_number": page_idx,
+            "page_number": page_idx + 1,  # 1-indexed, consistent with ChromaDB convention
             "crop_label": crop_label,
             "retrieval_source": "hindex",
         }
@@ -322,7 +311,7 @@ def _parse_json_list(raw: str, logger) -> list[str]:
         if isinstance(result, list):
             return [str(x) for x in result]
     except json.JSONDecodeError:
-        m = re.search(r"\[.*?\]", raw, re.DOTALL)
+        m = re.search(r"\[.*\]", raw, re.DOTALL)
         if m:
             try:
                 result = json.loads(m.group(0))

@@ -10,8 +10,11 @@ hierarchy building is a sequential step in the offline indexing pipeline.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from .hierarchy_builder import DocumentHierarchy
 
@@ -67,8 +70,8 @@ class HierarchyStore:
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
                 hierarchies.append(DocumentHierarchy.from_dict(data))
-            except Exception:
-                pass  # corrupted file — skip silently
+            except Exception as exc:
+                logger.warning("[hindex] Skipping corrupted hierarchy file '%s': %s", p, exc)
         return hierarchies
 
     def exists(self, doc_name: str) -> bool:

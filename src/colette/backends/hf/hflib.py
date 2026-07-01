@@ -58,6 +58,11 @@ class HFLib(LLMLib):
                 self.inputc.ragobj.hindex_max_workers = (
                     8 if self.llmmodel.llm_type == "vllm_client" else 1
                 )
+                # vllm_client parallelises via workers (one request per page);
+                # in-process models batch multiple pages in a single forward pass.
+                self.inputc.ragobj.hindex_batch_size = (
+                    1 if self.llmmodel.llm_type == "vllm_client" else 4
+                )
 
         # chat history sessions
         self.sessions = SessionCache(max_sessions=100)

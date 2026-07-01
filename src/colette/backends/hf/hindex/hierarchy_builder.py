@@ -473,7 +473,7 @@ class HierarchyBuilder:
         max_retries = 2
         for attempt in range(max_retries + 1):
             prompt = prompt_simple if attempt == max_retries else prompt_full
-            raw = self.vlm_fn([image], prompt)
+            raw = self.vlm_fn([image], prompt, _SINGLE_PAGE_TOKENS)
             data = _parse_json_response(raw, self.logger)
             if data and isinstance(data, dict):
                 break
@@ -549,7 +549,7 @@ class HierarchyBuilder:
             "Output only that sentence.\n\n"
             f"{combined}"
         )
-        return self.vlm_fn([], prompt).strip()
+        return self.vlm_fn([], prompt, _DOC_DESC_TOKENS).strip()
 
     def _cluster_into_topics(self, page_records: list[PageRecord]) -> list[TopicNode]:
         """One VLM call over all summaries → thematic topic clusters."""
@@ -571,7 +571,7 @@ class HierarchyBuilder:
             "- Output ONLY the JSON array, no other text\n\n"
             f"Page summaries:\n{combined}"
         )
-        raw = self.vlm_fn([], prompt)
+        raw = self.vlm_fn([], prompt, _TOPIC_CLUSTER_TOKENS)
         data = _parse_json_response(raw, self.logger)
 
         topics: list[TopicNode] = []
@@ -728,10 +728,11 @@ class HierarchyBuilder:
 # 1280×720 = ~0.9 MP is plenty of detail for OCR + visual description.
 _MAX_EXTRACT_PIXELS = 1280 * 720
 
-# Token budget per page when batching.  The JSON output for one page is
-# typically 200-350 tokens (visual_description + summary + keywords +
-# text_content at 300-char cap).  400 gives comfortable headroom.
-_BATCH_TOKENS_PER_PAGE = 400
+# Per-call token budgets — sized to the actual output, not a single ceiling.
+_SINGLE_PAGE_TOKENS = 512    # one page JSON: ~250 tokens typical
+_BATCH_TOKENS_PER_PAGE = 350  # per-page budget when batching (tighter than single)
+_DOC_DESC_TOKENS = 128        # one sentence
+_TOPIC_CLUSTER_TOKENS = 1024  # 3-7 topics × ~120 tokens each
 
 
 def _batch_prompt(n: int) -> str:

@@ -55,7 +55,9 @@ _STOP_WORDS = frozenset({
 
 
 def retrieval_mode_uses_embedding_retrieval(retrieval_mode: str) -> bool:
-    return retrieval_mode in {"embedding_retrieval", "hybrid"}
+    # vision_hierarchical also runs embedding retrieval so crops are ranked by
+    # semantic similarity before hindex full-page results are appended.
+    return retrieval_mode in {"embedding_retrieval", "hybrid", "vision_hierarchical"}
 
 
 def retrieval_mode_uses_text_search_engine(retrieval_mode: str) -> bool:
