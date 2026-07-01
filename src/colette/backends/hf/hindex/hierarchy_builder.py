@@ -271,10 +271,10 @@ _DEFAULT_TOC_SCAN_PAGES = 20  # kept for API compatibility
 _SUMMARY_MAX_WORDS = 50       # kept for legacy _add_summaries
 
 _PAGE_EXTRACT_SCHEMA = """{
-  "text_content": "all text visible on the page, verbatim",
   "visual_description": "describe any diagrams, charts, figures, images (empty string if none)",
   "summary": "2-3 sentence summary of what this page is about",
-  "keywords": ["keyword1", "keyword2", "keyword3"]
+  "keywords": ["keyword1", "keyword2", "keyword3"],
+  "text_content": "key text visible on the page, MAX 300 characters"
 }"""
 
 _TOPIC_SCHEMA = """[
@@ -414,22 +414,22 @@ class HierarchyBuilder:
             "exactly these keys:\n"
             f"{_PAGE_EXTRACT_SCHEMA}\n\n"
             "Rules:\n"
-            "- text_content: key text visible on the page, MAX 300 characters; "
-            "capture the most important content and truncate if necessary — "
-            "do NOT transcribe every word verbatim\n"
             "- visual_description: if no visual elements (diagrams/charts/figures), "
             "write an empty string\n"
             "- summary: 2-3 sentences on the meaning/purpose of this page\n"
             "- keywords: 3-6 thematic terms (not generic words like 'page' or 'slide')\n"
+            "- text_content: key text visible on the page, MAX 300 characters; "
+            "capture the most important content and truncate if necessary — "
+            "do NOT transcribe every word verbatim\n"
             "Output ONLY the JSON object, no markdown fences, no other text."
         )
         # Simplified prompt used on the last retry attempt
         prompt_simple = (
             "Look at this document page and respond with a JSON object:\n"
-            '{"text_content": "<key visible text, max 200 chars>", '
-            '"visual_description": "<describe any charts/diagrams, or empty string>", '
+            '{"visual_description": "<describe any charts/diagrams, or empty string>", '
             '"summary": "<2-3 sentences about this page>", '
-            '"keywords": ["<kw1>", "<kw2>", "<kw3>"]}\n'
+            '"keywords": ["<kw1>", "<kw2>", "<kw3>"], '
+            '"text_content": "<key visible text, max 200 chars>"}\n'
             "Output ONLY the JSON, nothing else."
         )
 
@@ -682,11 +682,18 @@ def _parse_json_response(raw: str, logger) -> Any:
     except json.JSONDecodeError:
         pass
 
-    # Try extracting the outermost {...} or [...] block
-    m = re.search(r"(\{.*\}|\[.*\])", cleaned, re.DOTALL)
+    # Try extracting the outermost {...} or [...] block.
+    # When the string starts with '{', only match '{...}' — a truncated object may
+    # have inner arrays (e.g. keywords) that would otherwise be matched and returned
+    # as a list before the field-by-field salvage path has a chance to run.
+    if cleaned.lstrip().startswith("{"):
+        pattern = r"\{.*\}"
+    else:
+        pattern = r"(\{.*\}|\[.*\])"
+    m = re.search(pattern, cleaned, re.DOTALL)
     if m:
         try:
-            return json.loads(m.group(1))
+            return json.loads(m.group(0))
         except json.JSONDecodeError:
             pass
 
@@ -695,7 +702,7 @@ def _parse_json_response(raw: str, logger) -> Any:
     # Pattern: "key": "value"  — value may be cut off (no closing quote).
     if cleaned.lstrip().startswith("{"):
         salvaged: dict[str, Any] = {}
-        for key in ("text_content", "visual_description", "summary"):
+        for key in ("visual_description", "summary", "text_content"):
             m = re.search(
                 rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)',
                 cleaned,
