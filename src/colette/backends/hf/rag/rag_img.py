@@ -379,15 +379,21 @@ class ImageEmbeddingFunction(EmbeddingFunction):
         for item in input:
             if type(item) is dict:
                 label = item.get("label", None)
+                hindex_text = item.get("text", "")
                 item = item.get("doc", None)
             else:
                 label = None
+                hindex_text = ""
             if "PIL" in str(type(item)):  # or "Png" in str(type(item)) or "Jpeg" in str(type(item)):
                 if self.rag_image_width and self.rag_image_height:
                     width, height = item.size
                     if width > self.rag_image_width or height > self.rag_image_height:
                         item.thumbnail((self.rag_image_width, self.rag_image_height))
-                question = "What is the content of this image?"
+                if self.rag_auto_scale_for_font and (self.rag_image_width or self.rag_image_height):
+                    self.logger.warn("Auto scaling for font is enabled. image_width and image_height are ignored")
+                # hindex_text carries VLM-extracted page context (summary, keywords, OCR);
+                # the embedding then captures semantic meaning, not just visual appearance.
+                question = hindex_text if hindex_text else "What is the content of this image?"
                 if label:
                     question = "This image has a " + label + ". " + question
                 placeholder = "<|image_pad|>"
@@ -432,16 +438,20 @@ class ImageEmbeddingFunction(EmbeddingFunction):
             # if is_image(input): ##XXX: fails to detect PIL image, checks for np array...
             if type(item) is dict:
                 label = item.get("label", None)
+                hindex_text = item.get("text", "")
                 item = item.get("doc", None)
             else:
                 label = None
+                hindex_text = ""
             if "PIL" in str(type(item)):  # or "Png" in str(type(item)) or "Jpeg" in str(type(item)):
                 if self.rag_image_width and self.rag_image_height:
                     width, height = item.size
                     if width > self.rag_image_width or height > self.rag_image_height:
                         item.thumbnail((self.rag_image_width, self.rag_image_height))
 
-                embed_prompt = ""  # gme-Qwen2-VL does not have a user prompt by default
+                # hindex_text carries VLM-extracted page context (summary, keywords, OCR);
+                # the embedding then captures semantic meaning, not just visual appearance.
+                embed_prompt = hindex_text  # gme-Qwen2-VL: text follows the image token
                 if label:
                     embed_prompt = "This image has a " + label + ". " + embed_prompt
                 message = [
@@ -496,7 +506,7 @@ class ImageEmbeddingFunction(EmbeddingFunction):
         with torch.no_grad():
             # If the model implements an `embed` method, use it (some wrappers provide it).
             if hasattr(self.model, "embed"):
-                outputs = self.model.embed(inputs)
+                outputs = self.model.embed(doc_inputs)
                 # model.embed may return a list-like of outputs with .outputs.embedding
                 try:
                     embeddings = [o.outputs.embedding for o in outputs]
@@ -512,7 +522,7 @@ class ImageEmbeddingFunction(EmbeddingFunction):
                 else:
                     src = output.hidden_states[-1]
                 doc_embeddings = self.get_embedding(src)
-        del output
+                del output
         # output = None
         db_embeddings = cast(Embedding, doc_embeddings.squeeze().tolist())  ##TODO: beware multiple docs...
 
@@ -908,7 +918,7 @@ class RAGImg:
                     len(result["ids"]) > 0
                 ):
                     files.update([f["source"] for f in result["metadatas"]])
-                    offset += len(result["ids"][0])
+                    offset += len(result["ids"])
             self.logger.info(f"Existing index contains {len(files)} elements")
         elif self.rag_reindex:
             files = set()
@@ -1089,17 +1099,12 @@ class RAGImg:
                         top_k=rag_config.top_k,
                         logger=self.logger,
                     )
-                # Guided retrieval: hindex navigation selects candidate pages,
-                # then ChromaDB ranks crops within those pages by embedding similarity.
-                # Falls back to hindex-only when no vector index is available.
-                if self.has_existing_vector_index and self.rag_indexdb_collection is not None:
-                    hindex_docs = self._hindex_guided_embedding_retrieve(
-                        rag_question, rag_config.top_k
-                    )
-                    if not hindex_docs.get("ids", [[]])[0]:
-                        hindex_docs = self.hindex_retriever.invoke(rag_question)
-                else:
-                    hindex_docs = self.hindex_retriever.invoke(rag_question)
+                # hindex navigation: VLM selects relevant topics → page images and
+                # crops (full-page views + per-page crops) are added to the context.
+                # invoke() contributes full-page image keys from the kvstore, which
+                # give the answering VLM holistic page context that crop-level
+                # ChromaDB results cannot provide.
+                hindex_docs = self.hindex_retriever.invoke(rag_question)
                 docs = _merge_hindex_results(docs, hindex_docs)
 
         if retrieval_mode_uses_text_search_engine(rag_config.retrieval_mode):
@@ -1118,131 +1123,6 @@ class RAGImg:
 
     def _get_effective_rag_config_for_request(self, request_rag: RAGObj | None) -> RAGObj:
         return merge_rag_config(self.ad.rag, request_rag)
-
-    def _hindex_guided_embedding_retrieve(
-        self, question: str, top_k: int
-    ) -> dict[str, Any]:
-        """hindex navigation → embedding-ranked crop selection within candidate pages.
-
-        Flow:
-          1. hindex VLM navigation → candidate (doc_name, page_idx) pairs.
-          2. Build a ChromaDB where-filter restricted to those pages.
-          3. Query ChromaDB by text-embedding similarity → top-k crops.
-          4. Enrich returned metadata with hindex page records.
-
-        Returns an empty result dict on any failure so the caller can fall back
-        to hindex-only retrieval.
-        """
-        _empty: dict[str, Any] = {"ids": [[]], "distances": [[]], "metadatas": [[]]}
-        try:
-            candidate_pages = self.hindex_retriever.select_pages(question)
-            if not candidate_pages:
-                self.logger.warning(
-                    "[hindex] Guided retrieval: navigation returned no candidate pages"
-                )
-                return _empty
-
-            self.logger.info(
-                "[hindex] Guided retrieval: %d candidate page(s) — %s",
-                len(candidate_pages),
-                ", ".join(f"{Path(d).name}:p{p}" for d, p in candidate_pages),
-            )
-
-            # Build where-filter.
-            # page_number in ChromaDB is 1-indexed; hindex page_idx is 0-indexed.
-            pages_by_doc: dict[str, list[int]] = {}
-            for doc_name, page_idx in candidate_pages:
-                pages_by_doc.setdefault(doc_name, []).append(page_idx + 1)
-
-            if len(pages_by_doc) == 1:
-                doc_name, page_nums = next(iter(pages_by_doc.items()))
-                where: dict = (
-                    {
-                        "$and": [
-                            {"source": {"$eq": doc_name}},
-                            {"page_number": {"$eq": page_nums[0]}},
-                        ]
-                    }
-                    if len(page_nums) == 1
-                    else {
-                        "$and": [
-                            {"source": {"$eq": doc_name}},
-                            {"page_number": {"$in": page_nums}},
-                        ]
-                    }
-                )
-            else:
-                where = {
-                    "$or": [
-                        {
-                            "$and": [
-                                {"source": {"$eq": dn}},
-                                (
-                                    {"page_number": {"$in": pn}}
-                                    if len(pn) > 1
-                                    else {"page_number": {"$eq": pn[0]}}
-                                ),
-                            ]
-                        }
-                        for dn, pn in pages_by_doc.items()
-                    ]
-                }
-
-            # Embedding-ranked query within candidate pages.
-            try:
-                results = self.rag_indexdb_collection.query(
-                    query_texts=[question],
-                    n_results=top_k,
-                    where=where,
-                )
-            except ValueError:
-                # n_results exceeds the filtered set size; count then retry.
-                filtered_ids = self.rag_indexdb_collection.get(
-                    where=where, include=[]
-                )["ids"]
-                count = len(filtered_ids)
-                if count == 0:
-                    self.logger.warning(
-                        "[hindex] Guided retrieval: no crops match the page filter"
-                    )
-                    return _empty
-                results = self.rag_indexdb_collection.query(
-                    query_texts=[question],
-                    n_results=count,
-                    where=where,
-                )
-
-            if not results or not results.get("ids", [[]])[0]:
-                self.logger.warning(
-                    "[hindex] Guided retrieval: ChromaDB returned no results for filter"
-                )
-                return _empty
-
-            # Enrich metadata with hindex page records (summary, keywords, etc.)
-            hier_by_name = {h.doc_name: h for h in self.hindex_store.load_all()}
-            for meta in results["metadatas"][0]:
-                doc_name = meta.get("source", "")
-                page_number = meta.get("page_number", 1)
-                page_idx = page_number - 1  # ChromaDB 1-indexed → 0-indexed
-                meta["retrieval_source"] = "hindex"
-                hier = hier_by_name.get(doc_name)
-                if hier:
-                    rec = hier.record_for_page(page_idx)
-                    if rec:
-                        meta.setdefault("summary", rec.summary)
-                        meta.setdefault("keywords", rec.keywords)
-                        meta.setdefault("text_content", rec.text_content)
-                        meta.setdefault("visual_description", rec.visual_description)
-
-            return results
-
-        except Exception as exc:
-            self.logger.warning(
-                "[hindex] Guided embedding retrieval failed (%s); "
-                "caller will fall back to hierarchy-only retrieval",
-                exc,
-            )
-            return _empty
 
     def _build_hindex_for_doc(self, document: dict, rag_config: RAGObj) -> None:
         """Build and persist the hierarchy for one document.
@@ -1297,6 +1177,98 @@ class RAGImg:
             f"[hindex] Hierarchy saved for '{doc_name}' "
             f"({len(hierarchy.topics)} topics, {page_count} pages, "
             f"{sum(len(r.crop_keys) for r in hierarchy.page_records)} crops)"
+        )
+
+        # Re-embed crops with VLM-extracted text so that text queries match by
+        # semantic meaning (summary / keywords / OCR) rather than visual appearance.
+        if self.rag_indexdb_collection is not None:
+            self._enrich_embeddings_for_doc(doc_name, hierarchy)
+
+    def _enrich_embeddings_for_doc(
+        self, doc_name: str, hierarchy: "DocumentHierarchy"
+    ) -> None:
+        """Re-embed all crops of *doc_name* with VLM-extracted page descriptions.
+
+        Each crop's ChromaDB embedding is updated so that it encodes the semantic
+        content of its parent page (summary + keywords + OCR text +
+        visual_description) rather than just the raw pixel appearance.  After this
+        step, ``query_texts=[question]`` finds crops by meaning, not by how they
+        look.
+
+        Must be called after the hindex hierarchy is built and saved, so that
+        ``hierarchy.page_records`` is populated.
+        """
+        result = self.rag_indexdb_collection.get(
+            where={"source": {"$eq": doc_name}},
+            include=["metadatas"],
+        )
+        crop_ids: list[str] = result["ids"]
+        metas: list[dict] = result["metadatas"]
+
+        if not crop_ids:
+            self.logger.info(
+                "[hindex] No crops in ChromaDB for '%s'; skipping embedding enrichment",
+                doc_name,
+            )
+            return
+
+        self.logger.info(
+            "[hindex] Enriching embeddings for %d crop(s) of '%s'",
+            len(crop_ids),
+            doc_name,
+        )
+
+        records_by_page = {r.page_idx: r for r in hierarchy.page_records}
+
+        _BATCH = 8  # keep GPU memory pressure low during upsert
+        n_done = 0
+        for start in range(0, len(crop_ids), _BATCH):
+            batch_ids = crop_ids[start : start + _BATCH]
+            batch_metas = metas[start : start + _BATCH]
+
+            image_dicts: list[dict] = []
+            for crop_id, meta in zip(batch_ids, batch_metas):
+                try:
+                    img = self.kvstore.retrieve_image(crop_id)
+                except Exception as exc:
+                    self.logger.warning(
+                        "[hindex] Cannot load crop '%s' for enrichment: %s", crop_id, exc
+                    )
+                    img = Image.new("RGB", (28, 28))
+
+                # page_number in ChromaDB metadata is 1-indexed
+                page_idx = meta.get("page_number", 1) - 1
+                rec = records_by_page.get(page_idx)
+
+                parts: list[str] = []
+                if rec:
+                    if rec.summary:
+                        parts.append(rec.summary)
+                    if rec.text_content:
+                        parts.append(rec.text_content[:300])
+                    if rec.keywords:
+                        parts.append(", ".join(rec.keywords))
+                    if rec.visual_description:
+                        parts.append(rec.visual_description)
+
+                image_dicts.append({
+                    "doc": img,
+                    "label": meta.get("crop_label"),
+                    "text": " | ".join(parts),
+                })
+
+            self.rag_indexdb_collection.upsert(
+                images=image_dicts,
+                ids=batch_ids,
+                metadatas=batch_metas,
+            )
+            n_done += len(batch_ids)
+
+        self.logger.info(
+            "[hindex] Embedding enrichment done: %d/%d crops updated for '%s'",
+            n_done,
+            len(crop_ids),
+            doc_name,
         )
 
     def _extract_page_labels(self, source: Path | str) -> dict[int, str]:
