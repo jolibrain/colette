@@ -70,6 +70,11 @@ def _merge_hindex_results(docs: dict, hindex_docs: dict) -> dict:
     docs["ids"][0].extend(hindex_docs["ids"][0])
     docs["distances"][0].extend(hindex_docs["distances"][0])
     docs["metadatas"][0].extend(hindex_docs["metadatas"][0])
+    # hindex returns multiple images per page (full-page + crops); thinking mode
+    # frequently overflows the token budget before </think> when many images are
+    # present.  The pre-extracted summaries and keywords in the metadata already
+    # provide rich context without a thinking trace.
+    docs["_disable_thinking"] = True
     return docs
 
 
@@ -883,7 +888,12 @@ class RAGImg:
                     kvstore=self.kvstore,
                 )
             else:
-                self.rag_indexdb_collection = None
+                # vector_requested=False (e.g. hindex-only or text-only build).
+                # Preserve an existing ChromaDB collection reference so a subsequent
+                # hybrid query can still use it.  Only clear when there was never a
+                # vector index to begin with.
+                if not self.has_existing_vector_index:
+                    self.rag_indexdb_collection = None
 
         # save state for for multiple index queries
         self.has_existing_index = True
@@ -1079,7 +1089,17 @@ class RAGImg:
                         top_k=rag_config.top_k,
                         logger=self.logger,
                     )
-                hindex_docs = self.hindex_retriever.invoke(rag_question)
+                # Guided retrieval: hindex navigation selects candidate pages,
+                # then ChromaDB ranks crops within those pages by embedding similarity.
+                # Falls back to hindex-only when no vector index is available.
+                if self.has_existing_vector_index and self.rag_indexdb_collection is not None:
+                    hindex_docs = self._hindex_guided_embedding_retrieve(
+                        rag_question, rag_config.top_k
+                    )
+                    if not hindex_docs.get("ids", [[]])[0]:
+                        hindex_docs = self.hindex_retriever.invoke(rag_question)
+                else:
+                    hindex_docs = self.hindex_retriever.invoke(rag_question)
                 docs = _merge_hindex_results(docs, hindex_docs)
 
         if retrieval_mode_uses_text_search_engine(rag_config.retrieval_mode):
@@ -1098,6 +1118,131 @@ class RAGImg:
 
     def _get_effective_rag_config_for_request(self, request_rag: RAGObj | None) -> RAGObj:
         return merge_rag_config(self.ad.rag, request_rag)
+
+    def _hindex_guided_embedding_retrieve(
+        self, question: str, top_k: int
+    ) -> dict[str, Any]:
+        """hindex navigation → embedding-ranked crop selection within candidate pages.
+
+        Flow:
+          1. hindex VLM navigation → candidate (doc_name, page_idx) pairs.
+          2. Build a ChromaDB where-filter restricted to those pages.
+          3. Query ChromaDB by text-embedding similarity → top-k crops.
+          4. Enrich returned metadata with hindex page records.
+
+        Returns an empty result dict on any failure so the caller can fall back
+        to hindex-only retrieval.
+        """
+        _empty: dict[str, Any] = {"ids": [[]], "distances": [[]], "metadatas": [[]]}
+        try:
+            candidate_pages = self.hindex_retriever.select_pages(question)
+            if not candidate_pages:
+                self.logger.warning(
+                    "[hindex] Guided retrieval: navigation returned no candidate pages"
+                )
+                return _empty
+
+            self.logger.info(
+                "[hindex] Guided retrieval: %d candidate page(s) — %s",
+                len(candidate_pages),
+                ", ".join(f"{Path(d).name}:p{p}" for d, p in candidate_pages),
+            )
+
+            # Build where-filter.
+            # page_number in ChromaDB is 1-indexed; hindex page_idx is 0-indexed.
+            pages_by_doc: dict[str, list[int]] = {}
+            for doc_name, page_idx in candidate_pages:
+                pages_by_doc.setdefault(doc_name, []).append(page_idx + 1)
+
+            if len(pages_by_doc) == 1:
+                doc_name, page_nums = next(iter(pages_by_doc.items()))
+                where: dict = (
+                    {
+                        "$and": [
+                            {"source": {"$eq": doc_name}},
+                            {"page_number": {"$eq": page_nums[0]}},
+                        ]
+                    }
+                    if len(page_nums) == 1
+                    else {
+                        "$and": [
+                            {"source": {"$eq": doc_name}},
+                            {"page_number": {"$in": page_nums}},
+                        ]
+                    }
+                )
+            else:
+                where = {
+                    "$or": [
+                        {
+                            "$and": [
+                                {"source": {"$eq": dn}},
+                                (
+                                    {"page_number": {"$in": pn}}
+                                    if len(pn) > 1
+                                    else {"page_number": {"$eq": pn[0]}}
+                                ),
+                            ]
+                        }
+                        for dn, pn in pages_by_doc.items()
+                    ]
+                }
+
+            # Embedding-ranked query within candidate pages.
+            try:
+                results = self.rag_indexdb_collection.query(
+                    query_texts=[question],
+                    n_results=top_k,
+                    where=where,
+                )
+            except ValueError:
+                # n_results exceeds the filtered set size; count then retry.
+                filtered_ids = self.rag_indexdb_collection.get(
+                    where=where, include=[]
+                )["ids"]
+                count = len(filtered_ids)
+                if count == 0:
+                    self.logger.warning(
+                        "[hindex] Guided retrieval: no crops match the page filter"
+                    )
+                    return _empty
+                results = self.rag_indexdb_collection.query(
+                    query_texts=[question],
+                    n_results=count,
+                    where=where,
+                )
+
+            if not results or not results.get("ids", [[]])[0]:
+                self.logger.warning(
+                    "[hindex] Guided retrieval: ChromaDB returned no results for filter"
+                )
+                return _empty
+
+            # Enrich metadata with hindex page records (summary, keywords, etc.)
+            hier_by_name = {h.doc_name: h for h in self.hindex_store.load_all()}
+            for meta in results["metadatas"][0]:
+                doc_name = meta.get("source", "")
+                page_number = meta.get("page_number", 1)
+                page_idx = page_number - 1  # ChromaDB 1-indexed → 0-indexed
+                meta["retrieval_source"] = "hindex"
+                hier = hier_by_name.get(doc_name)
+                if hier:
+                    rec = hier.record_for_page(page_idx)
+                    if rec:
+                        meta.setdefault("summary", rec.summary)
+                        meta.setdefault("keywords", rec.keywords)
+                        meta.setdefault("text_content", rec.text_content)
+                        meta.setdefault("visual_description", rec.visual_description)
+
+            return results
+
+        except Exception as exc:
+            self.logger.warning(
+                "[hindex] Guided embedding retrieval failed (%s); "
+                "caller will fall back to hierarchy-only retrieval",
+                exc,
+            )
+            return _empty
 
     def _build_hindex_for_doc(self, document: dict, rag_config: RAGObj) -> None:
         """Build and persist the hierarchy for one document.

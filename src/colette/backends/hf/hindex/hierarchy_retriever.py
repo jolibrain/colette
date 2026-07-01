@@ -61,35 +61,15 @@ class HierarchyRetriever:
             self.logger.warning("[hindex] No document hierarchies found in store")
             return _empty_docs()
 
-        # Step 1 — Select relevant document(s)
-        relevant_docs = self._select_documents(question, hierarchies)
-        if not relevant_docs:
-            self.logger.warning("[hindex] Navigator found no relevant documents")
+        candidate_pages = self._navigate(question, hierarchies)
+        if not candidate_pages:
             return _empty_docs()
 
-        # Step 2 — For each doc, select relevant topics → collect page indices
-        selected_pages: list[tuple[str, int]] = []  # (doc_name, page_idx)
-        for hierarchy in relevant_docs:
-            page_indices = self._select_pages(question, hierarchy)
-            for page_idx in page_indices:
-                selected_pages.append((hierarchy.doc_name, page_idx))
-
-        if not selected_pages:
-            return _empty_docs()
-
-        # Deduplicate, preserve order
-        seen: set[tuple[str, int]] = set()
-        unique: list[tuple[str, int]] = []
-        for item in selected_pages:
-            if item not in seen:
-                seen.add(item)
-                unique.append(item)
-
-        # Step 3 — Build result items (page image + crops, enriched metadata)
+        # Build result items (page image + crops, enriched metadata)
         hier_by_name = {h.doc_name: h for h in hierarchies}
         ids, distances, metadatas = [], [], []
 
-        for doc_name, page_idx in unique:
+        for doc_name, page_idx in candidate_pages:
             if len(ids) >= self.top_k:
                 break
             hier = hier_by_name.get(doc_name)
@@ -131,9 +111,46 @@ class HierarchyRetriever:
 
         return {"ids": [ids], "distances": [distances], "metadatas": [metadatas]}
 
+    def select_pages(self, question: str) -> list[tuple[str, int]]:
+        """Navigate the hierarchy to candidate (doc_name, page_idx) pairs.
+
+        Navigation-only step for guided embedding retrieval — does not fetch
+        images from the kvstore.  The caller uses these pairs to restrict a
+        ChromaDB similarity query to the relevant pages.
+
+        Returns an empty list when the store is empty or nothing matches.
+        """
+        hierarchies = self.store.load_all()
+        if not hierarchies:
+            self.logger.warning("[hindex] No document hierarchies found in store")
+            return []
+        return self._navigate(question, hierarchies)
+
     # ------------------------------------------------------------------
     # Navigation steps
     # ------------------------------------------------------------------
+
+    def _navigate(
+        self, question: str, hierarchies: list[DocumentHierarchy]
+    ) -> list[tuple[str, int]]:
+        """Document + topic navigation → deduplicated (doc_name, page_idx) pairs."""
+        relevant_docs = self._select_documents(question, hierarchies)
+        if not relevant_docs:
+            self.logger.warning("[hindex] Navigator found no relevant documents")
+            return []
+
+        selected: list[tuple[str, int]] = []
+        for hierarchy in relevant_docs:
+            for page_idx in self._select_pages(question, hierarchy):
+                selected.append((hierarchy.doc_name, page_idx))
+
+        seen: set[tuple[str, int]] = set()
+        unique: list[tuple[str, int]] = []
+        for item in selected:
+            if item not in seen:
+                seen.add(item)
+                unique.append(item)
+        return unique
 
     def _select_documents(
         self, question: str, hierarchies: list[DocumentHierarchy]
