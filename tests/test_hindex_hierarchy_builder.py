@@ -16,6 +16,7 @@ from colette.backends.hf.hindex.hierarchy_builder import (
     HierarchyNode,
     PageRecord,
     TopicNode,
+    _parse_batch_response,
     _parse_json_response,
 )
 
@@ -41,7 +42,7 @@ class _FixedVLM:
         self._idx = 0
         self.calls: list[tuple[list, str]] = []
 
-    def __call__(self, images, prompt: str) -> str:
+    def __call__(self, images, prompt: str, max_new_tokens: int = 512) -> str:
         self.calls.append((images, prompt))
         if self._idx < len(self._responses):
             resp = self._responses[self._idx]
@@ -390,3 +391,155 @@ def test_build_single_page():
     assert hier.page_count == 1
     assert len(hier.page_records) == 1
     assert len(hier.topics) == 1
+
+
+# ---------------------------------------------------------------------------
+# _parse_batch_response
+# ---------------------------------------------------------------------------
+
+
+def test_parse_batch_response_clean_array():
+    logger = _LogCapture()
+    raw = json.dumps([
+        {"visual_description": "", "summary": "p0", "keywords": ["a"], "text_content": "t0"},
+        {"visual_description": "chart", "summary": "p1", "keywords": ["b"], "text_content": "t1"},
+    ])
+    result = _parse_batch_response(raw, 2, logger)
+    assert len(result) == 2
+    assert result[0]["summary"] == "p0"
+    assert result[1]["summary"] == "p1"
+    assert not logger.warnings
+
+
+def test_parse_batch_response_embedded_in_prose():
+    logger = _LogCapture()
+    raw = (
+        "Here are the results:\n"
+        + json.dumps([{"summary": "p0", "keywords": []}, {"summary": "p1", "keywords": []}])
+        + "\nDone."
+    )
+    result = _parse_batch_response(raw, 2, logger)
+    assert result[0]["summary"] == "p0"
+    assert result[1]["summary"] == "p1"
+
+
+def test_parse_batch_response_pads_short_array():
+    """Model returns fewer objects than expected — missing slots become None."""
+    logger = _LogCapture()
+    raw = json.dumps([{"summary": "p0", "keywords": []}])
+    result = _parse_batch_response(raw, 3, logger)
+    assert len(result) == 3
+    assert result[0] is not None
+    assert result[1] is None
+    assert result[2] is None
+
+
+def test_parse_batch_response_empty_returns_nones():
+    logger = _LogCapture()
+    result = _parse_batch_response("", 4, logger)
+    assert result == [None, None, None, None]
+
+
+def test_parse_batch_response_invalid_returns_nones():
+    logger = _LogCapture()
+    result = _parse_batch_response("not json at all", 2, logger)
+    assert result == [None, None]
+    assert logger.warnings
+
+
+# ---------------------------------------------------------------------------
+# HierarchyBuilder.build() — batch_size > 1
+# ---------------------------------------------------------------------------
+
+
+def _batch_json(n: int) -> str:
+    """Fake VLM response for a batch of N pages."""
+    return json.dumps([
+        {
+            "visual_description": "" if i % 2 == 0 else f"Chart on page {i}",
+            "summary": f"Page {i} covers topic {i % 2}.",
+            "keywords": [f"kw{i}", "colette"],
+            "text_content": f"Key text on page {i}",
+        }
+        for i in range(n)
+    ])
+
+
+def test_build_batch_returns_correct_structure():
+    n = 6
+    # With batch_size=3: 2 batch calls + 1 doc-desc + 1 topics call
+    batch_resp_0 = _batch_json(3)   # pages 0-2
+    batch_resp_1 = _batch_json(3)   # pages 3-5 (indices shifted by 3 in real builder)
+    doc_desc = "A six-page test document."
+    topics = _topics_json(n)
+    vlm = _FixedVLM([batch_resp_0, batch_resp_1, doc_desc, topics])
+
+    builder = HierarchyBuilder(vlm_fn=vlm, batch_size=3)
+    hier = builder.build("batch.pdf", _make_pages(n))
+
+    assert hier.page_count == n
+    assert len(hier.page_records) == n
+    assert hier.doc_description == doc_desc
+    assert len(hier.topics) == 2
+
+
+def test_build_batch_max_new_tokens_passed():
+    """vlm_fn receives a scaled token budget for batch calls."""
+    n = 4
+    received_tokens: list[int] = []
+
+    class _TokenCapture:
+        def __call__(self, images, prompt: str, max_new_tokens: int = 512) -> str:
+            received_tokens.append(max_new_tokens)
+            # Return valid batch JSON for the first call; Phase 2 calls use []
+            if images:
+                return _batch_json(len(images))
+            return "A document."  # doc_description or topics fallback
+
+        def _topics_call(self):
+            return _topics_json(n)
+
+    vlm = _TokenCapture()
+    # Monkey-patch topic call to return valid JSON
+    call_count = [0]
+    orig = vlm.__call__
+
+    def patched(images, prompt, max_new_tokens=512):
+        call_count[0] += 1
+        if not images and call_count[0] > 1:
+            if call_count[0] == 2:
+                return "A four-page document."
+            return _topics_json(n)
+        return orig(images, prompt, max_new_tokens)
+
+    vlm.__call__ = patched
+    builder = HierarchyBuilder(vlm_fn=vlm, batch_size=4)
+    builder.build("tok.pdf", _make_pages(n))
+
+    # The batch call should have used a token budget > 512 (the single-page default)
+    batch_call_tokens = [t for t in received_tokens if t > 512]
+    assert batch_call_tokens, f"Expected scaled token budget; got {received_tokens}"
+
+
+def test_build_batch_falls_back_on_parse_failure():
+    """When a batch slot fails to parse, single-page fallback is used."""
+    n = 3
+    # Batch response: only first object is valid, rest is garbage
+    bad_batch = json.dumps([{"summary": "p0", "keywords": ["a"], "text_content": "t",
+                              "visual_description": ""}]) + " GARBAGE"
+    # Single-page fallbacks for pages 1 and 2
+    page1 = _page_json(1)
+    page2 = _page_json(2)
+    doc_desc = "Three pages."
+    topics = _topics_json(n)
+
+    vlm = _FixedVLM([bad_batch, page1, page2, doc_desc, topics])
+    logger = _LogCapture()
+    builder = HierarchyBuilder(vlm_fn=vlm, batch_size=3, logger=logger)
+    hier = builder.build("fallback.pdf", _make_pages(n))
+
+    assert hier.page_count == n
+    assert len(hier.page_records) == n
+    # Page 0 came from the batch, pages 1-2 from single-page fallback
+    assert hier.page_records[0].summary == "p0"
+    assert any("falling back" in w for w in logger.warnings)

@@ -32,6 +32,7 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from time import time
 from typing import Any
 
 from PIL import Image
@@ -313,6 +314,7 @@ class HierarchyBuilder:
         add_node_summaries: bool = True,
         logger=None,
         max_workers: int = 1,
+        batch_size: int = 1,
     ):
         self.vlm_fn = vlm_fn
         self.page_label_map: dict[int, str] = page_label_map or {}
@@ -323,6 +325,10 @@ class HierarchyBuilder:
         # Safe for vllm_client (HTTP, stateless); for in-process HF/vLLM models
         # the ModelCache lock serialises calls anyway so this has no effect.
         self.max_workers = max(1, max_workers)
+        # batch_size > 1 sends multiple page images in a single VLM call and
+        # parses the JSON array response.  More efficient for HF/local models
+        # where per-call overhead (prefill, KV-cache setup) dominates.
+        self.batch_size = max(1, batch_size)
 
     # ------------------------------------------------------------------
     # Public API
@@ -348,45 +354,74 @@ class HierarchyBuilder:
             on the returned hierarchy afterwards.
         """
         page_count = len(page_images)
+        t0 = time()
         self.logger.info(
-            f"[hindex] Building hierarchy for '{doc_name}' ({page_count} pages)"
+            f"[hindex] Building hierarchy for '{doc_name}' "
+            f"({page_count} pages, batch_size={self.batch_size}, workers={self.max_workers})"
         )
 
         # Phase 1 — Rich per-page extraction
-        # Sequential by default (max_workers=1).  When max_workers > 1 all pages
-        # are submitted to a thread pool simultaneously — effective for vllm_client
-        # where each call is an independent HTTP request and the external vLLM server
-        # batches them.  In-process models (hf, vllm) are serialised by ModelCache
-        # regardless, so max_workers has no effect on them.
+        # Three modes:
+        #   batch_size > 1  : N pages per VLM call (best for HF/local GPU models)
+        #   max_workers > 1 : parallel single-page calls (best for vllm_client)
+        #   default         : sequential single-page calls
         page_records: list[PageRecord | None] = [None] * page_count
 
-        def _extract_one(idx: int) -> tuple[int, PageRecord]:
-            key = page_keys[idx] if page_keys else ""
-            return idx, self._extract_page_record(page_images[idx], idx, key)
-
-        n_workers = min(self.max_workers, page_count)
-        if n_workers > 1:
-            self.logger.info(
-                f"[hindex] Phase 1: extracting {page_count} pages "
-                f"with {n_workers} parallel workers"
-            )
-            with ThreadPoolExecutor(max_workers=n_workers) as pool:
-                futures = {pool.submit(_extract_one, i): i for i in range(page_count)}
-                for fut in as_completed(futures):
-                    idx, record = fut.result()
-                    page_records[idx] = record
-                    self.logger.info(
-                        f"[hindex] Page {idx} done "
-                        f"({sum(1 for r in page_records if r is not None)}/{page_count})"
-                    )
+        if self.batch_size > 1:
+            for batch_start in range(0, page_count, self.batch_size):
+                batch_end = min(batch_start + self.batch_size, page_count)
+                idxs = list(range(batch_start, batch_end))
+                imgs = [page_images[i] for i in idxs]
+                keys_b = [page_keys[i] if page_keys else "" for i in idxs]
+                self.logger.info(
+                    f"[hindex] Phase 1 batch: pages {batch_start}–{batch_end - 1}"
+                )
+                t_b = time()
+                batch_recs = self._extract_batch(imgs, idxs, keys_b)
+                elapsed = time() - t_b
+                self.logger.info(
+                    f"[hindex] Phase 1 batch done in {elapsed:.1f}s "
+                    f"({elapsed / len(idxs):.1f}s/page)"
+                )
+                for i, rec in zip(idxs, batch_recs):
+                    page_records[i] = rec
         else:
-            for i in range(page_count):
-                self.logger.info(f"[hindex] Extracting page {i}/{page_count - 1}")
-                _, page_records[i] = _extract_one(i)
+            def _extract_one(idx: int) -> tuple[int, PageRecord]:
+                key = page_keys[idx] if page_keys else ""
+                return idx, self._extract_page_record(page_images[idx], idx, key)
+
+            n_workers = min(self.max_workers, page_count)
+            if n_workers > 1:
+                self.logger.info(
+                    f"[hindex] Phase 1: {page_count} pages, {n_workers} workers"
+                )
+                with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                    futures = {pool.submit(_extract_one, i): i for i in range(page_count)}
+                    for fut in as_completed(futures):
+                        idx, record = fut.result()
+                        page_records[idx] = record
+                        self.logger.info(
+                            f"[hindex] Page {idx} done "
+                            f"({sum(1 for r in page_records if r is not None)}/{page_count})"
+                        )
+            else:
+                for i in range(page_count):
+                    t_p = time()
+                    self.logger.info(
+                        f"[hindex] Phase 1: page {i}/{page_count - 1}"
+                    )
+                    _, page_records[i] = _extract_one(i)
+                    self.logger.info(
+                        f"[hindex] Page {i} done in {time() - t_p:.1f}s"
+                    )
+
+        self.logger.info(f"[hindex] Phase 1 done in {time() - t0:.1f}s")
 
         # Phase 2 — Document description + topic clustering
+        t_p2 = time()
         doc_description = self._generate_doc_description(page_records)
         topics = self._cluster_into_topics(page_records)
+        self.logger.info(f"[hindex] Phase 2 done in {time() - t_p2:.1f}s")
 
         return DocumentHierarchy(
             doc_name=doc_name,
@@ -457,6 +492,45 @@ class HierarchyBuilder:
             summary=str(data.get("summary", "")),
             keywords=list(data.get("keywords", [])),
         )
+
+    def _extract_batch(
+        self,
+        images: list[Image.Image],
+        idxs: list[int],
+        keys: list[str],
+    ) -> list[PageRecord]:
+        """Extract PageRecords for N pages in a single VLM call.
+
+        Sends all N page images together with a prompt asking for a JSON array
+        of N objects.  For any page whose slot parses as None, falls back to
+        single-page extraction so no page is silently dropped.
+        """
+        n = len(images)
+        capped = [_cap_image_size(img, max_pixels=_MAX_EXTRACT_PIXELS) for img in images]
+        prompt = _batch_prompt(n)
+        # Token budget: each page needs ~350 output tokens; cap at 2048.
+        batch_tokens = min(2048, _BATCH_TOKENS_PER_PAGE * n)
+        raw = self.vlm_fn(capped, prompt, batch_tokens)
+        parsed = _parse_batch_response(raw, n, self.logger)
+
+        records: list[PageRecord] = []
+        for i, (data, idx, key) in enumerate(zip(parsed, idxs, keys)):
+            if data and isinstance(data, dict):
+                records.append(PageRecord(
+                    page_idx=idx,
+                    page_key=key,
+                    text_content=str(data.get("text_content", "")),
+                    visual_description=str(data.get("visual_description", "")),
+                    summary=str(data.get("summary", "")),
+                    keywords=list(data.get("keywords", [])),
+                ))
+            else:
+                self.logger.warning(
+                    f"[hindex] Batch slot {i} (page {idx}) empty — "
+                    "falling back to single-page extraction"
+                )
+                records.append(self._extract_page_record(images[i], idx, key))
+        return records
 
     # ------------------------------------------------------------------
     # Phase 2 — Document synthesis
@@ -653,6 +727,83 @@ class HierarchyBuilder:
 # that Qwen3-VL may truncate the response before the JSON is complete.
 # 1280×720 = ~0.9 MP is plenty of detail for OCR + visual description.
 _MAX_EXTRACT_PIXELS = 1280 * 720
+
+# Token budget per page when batching.  The JSON output for one page is
+# typically 200-350 tokens (visual_description + summary + keywords +
+# text_content at 300-char cap).  400 gives comfortable headroom.
+_BATCH_TOKENS_PER_PAGE = 400
+
+
+def _batch_prompt(n: int) -> str:
+    """Prompt asking the VLM to extract structured info from N pages at once."""
+    return (
+        f"Analyze these {n} document pages (images are in order, one page each).\n"
+        f"Output a JSON array of exactly {n} objects, one per page, in the same order.\n"
+        "Each object must contain exactly these keys:\n"
+        f"{_PAGE_EXTRACT_SCHEMA}\n\n"
+        "Rules (apply independently to each page):\n"
+        "- visual_description: if no visual elements (diagrams/charts/figures), "
+        "write an empty string\n"
+        "- summary: 2-3 sentences on the meaning/purpose of that page\n"
+        "- keywords: 3-6 thematic terms per page\n"
+        "- text_content: key text visible on that page, MAX 300 characters; "
+        "do NOT transcribe every word verbatim\n"
+        f"Output ONLY the JSON array of exactly {n} objects. "
+        "No markdown fences, no extra text."
+    )
+
+
+def _parse_batch_response(
+    raw: str, expected_count: int, logger
+) -> list[dict | None]:
+    """Parse a JSON array of page-extraction dicts from a batch VLM call.
+
+    Returns a list of length *expected_count*: each element is either a dict
+    (successful parse for that page) or None (caller should fall back to
+    single-page extraction for that slot).
+    """
+    if not raw:
+        return [None] * expected_count
+
+    cleaned = re.sub(r"```(?:json)?", "", raw).strip().strip("`").strip()
+
+    def _to_results(lst: list) -> list[dict | None]:
+        results: list[dict | None] = [
+            d if isinstance(d, dict) else None for d in lst
+        ]
+        while len(results) < expected_count:
+            results.append(None)
+        return results[:expected_count]
+
+    # Happy path: the whole output is a valid JSON array
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, list):
+            return _to_results(data)
+    except json.JSONDecodeError:
+        pass
+
+    # Try extracting the outermost [...] block (handles leading/trailing prose)
+    m = re.search(r"\[.*\]", cleaned, re.DOTALL)
+    if m:
+        try:
+            data = json.loads(m.group(0))
+            if isinstance(data, list):
+                results = _to_results(data)
+                n_ok = sum(1 for r in results if r is not None)
+                logger.warning(
+                    f"[hindex] Batch parse: extracted {n_ok}/{expected_count} "
+                    "objects from [...] block"
+                )
+                return results
+        except json.JSONDecodeError:
+            pass
+
+    logger.warning(
+        f"[hindex] Batch parse: could not extract JSON array "
+        f"(response len={len(raw)}): {raw[:200]!r}"
+    )
+    return [None] * expected_count
 
 
 def _cap_image_size(image: Image.Image, max_pixels: int = _MAX_EXTRACT_PIXELS) -> Image.Image:

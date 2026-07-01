@@ -1275,6 +1275,7 @@ class RAGImg:
             vlm_fn=self.vlm_fn,
             logger=self.logger,
             max_workers=getattr(self, "hindex_max_workers", 1),
+            batch_size=getattr(self, "hindex_batch_size", 4),
         )
         hierarchy = builder.build(doc_name, page_images, page_keys=page_keys)
 

@@ -189,7 +189,9 @@ class HFLib(LLMLib):
         """
         logger = self.logger
 
-        def vlm_fn(images, prompt: str) -> str:
+        def vlm_fn(images, prompt: str, max_new_tokens: int = 512) -> str:
+            # 512 tokens is enough for single-page JSON extraction (~250 tokens
+            # typical output).  Batch callers pass a larger budget explicitly.
             docs = {
                 "ids": [[""] * len(images)],
                 "images": [list(images)],
@@ -197,14 +199,14 @@ class HFLib(LLMLib):
                     [{"source": "hindex", "page_number": i, "crop_label": "full_page"}
                      for i in range(len(images))]
                 ],
-                # hindex tasks (OCR, TOC extraction, node selection) produce short
+                # hindex tasks (OCR, extraction, navigation) produce short
                 # structured answers — disable thinking to avoid token overflow.
                 "_disable_thinking": True,
             }
             try:
                 response, _, _ = llmmodel.generate(
                     prompt,
-                    2048,
+                    max_new_tokens,
                     docs,
                     [],
                     streaming=False,

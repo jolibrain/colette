@@ -30,7 +30,7 @@ class _FixedVLM:
         self._idx = 0
         self.calls: list[tuple[list, str]] = []
 
-    def __call__(self, images, prompt: str) -> str:
+    def __call__(self, images, prompt: str, max_new_tokens: int = 512) -> str:
         self.calls.append((images, prompt))
         if self._idx < len(self._responses):
             resp = self._responses[self._idx]
