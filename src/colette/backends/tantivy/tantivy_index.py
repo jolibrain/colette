@@ -5,8 +5,53 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-# Tantivy query-syntax special characters that must be escaped in raw user text.
-_TANTIVY_SPECIAL_RE = re.compile(r'([+\-!(){}\[\]^"~*?:\\/])')
+# Stop words to strip before building a BM25 keyword query.
+# Covers English and French; all checked against t.lower() so case doesn't matter.
+# Keeping only content-bearing tokens (product codes, technical terms) avoids
+# high-frequency domain words swamping the rare, high-IDF product-code tokens.
+_STOP_WORDS = frozenset({
+    # ── English ──────────────────────────────────────────────────────────────
+    'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+    'should', 'may', 'might', 'shall', 'can', 'to', 'of', 'in', 'for',
+    'on', 'with', 'at', 'by', 'from', 'as', 'or', 'and', 'but', 'if',
+    'we', 'our', 'you', 'your', 'it', 'its', 'this', 'that', 'these',
+    'those', 'i', 'what', 'which', 'who', 'how', 'when', 'where', 'why',
+    'not', 'no', 'nor', 'so', 'yet', 'either', 'neither',
+    'each', 'few', 'more', 'most', 'other', 'some', 'such', 'than',
+    'too', 'very', 'just', 'also', 'about', 'into', 'through', 'during',
+    'up', 'down', 'out', 'off', 'over', 'under', 'again', 'then', 'once',
+    'here', 'there', 'all', 'any', 'both',
+    # ── French ───────────────────────────────────────────────────────────────
+    # articles & determiners
+    'le', 'la', 'les', 'un', 'une', 'des', 'du', 'de', 'au', 'aux',
+    'ce', 'cet', 'cette', 'ces', 'mon', 'ton', 'son', 'ma', 'ta', 'sa',
+    'nos', 'vos', 'leur', 'leurs',
+    # pronouns
+    'je', 'tu', 'il', 'elle', 'on', 'nous', 'vous', 'ils', 'elles',
+    'me', 'te', 'se', 'lui', 'eux',
+    # prepositions
+    'en', 'dans', 'sur', 'sous', 'par', 'pour', 'avec', 'sans', 'entre',
+    'vers', 'chez', 'selon', 'lors', 'depuis', 'pendant', 'contre',
+    'avant', 'apres',          # stripped of accents by Tantivy's tokeniser
+    # conjunctions & relative pronouns
+    'et', 'ou', 'mais', 'donc', 'or', 'ni', 'car', 'que', 'qui', 'quoi',
+    'dont', 'si', 'comme', 'puisque', 'parce', 'afin', 'lorsque', 'quand',
+    'ainsi', 'sinon', 'sauf',
+    # common auxiliary / copula conjugations
+    'est', 'sont', 'etait', 'etaient', 'etre', 'avoir',
+    'ai', 'as', 'avons', 'avez', 'ont',
+    'sera', 'serait', 'ete', 'fait', 'fais', 'font',
+    # adverbs & quantifiers
+    'ne', 'pas', 'plus', 'tres', 'aussi', 'bien', 'meme', 'alors', 'puis',
+    'encore', 'deja', 'jamais', 'toujours', 'souvent', 'parfois',
+    'peu', 'tout', 'tous', 'toute', 'toutes', 'trop', 'moins', 'assez',
+    'beaucoup', 'plusieurs', 'certain', 'certains', 'certaines',
+    # other common function words
+    'voici', 'voila', 'notamment', 'quant', 'suite', 'soit',
+    'nous', 'developpons', 'actuellement', 'nouveau', 'avons', 'retenu',
+    'suivante', 'filtre', 'limiteur', 'isole',  # domain-generic French
+})
 
 
 def retrieval_mode_uses_embedding_retrieval(retrieval_mode: str) -> bool:
@@ -146,20 +191,15 @@ class TantivyIndex:
             tantivy_query = index.parse_query(parsed_query, search_fields)
         except ValueError:
             self.logger.warning(
-                "Tantivy could not parse query (special chars?); falling back to '*'",
+                "Tantivy could not parse keyword query '%s' (original: '%s'); returning no text hits",
+                parsed_query,
+                query[:120],
             )
-            tantivy_query = index.parse_query("*", search_fields)
+            return []
         results = searcher.search(tantivy_query, limit=limit)
 
-        # Fallback for low-recall/strict queries: return top documents so text-only
-        # retrieval modes still provide context instead of an empty result set.
-        if not results.hits and parsed_query != "*":
-            self.logger.warning(
-                "Tantivy returned no hits for query '%s'; falling back to '*'",
-                query,
-            )
-            fallback_query = index.parse_query("*", search_fields)
-            results = searcher.search(fallback_query, limit=limit)
+        if not results.hits:
+            self.logger.debug("Tantivy returned no hits for keyword query '%s'", parsed_query)
 
         hits: list[dict[str, Any]] = []
         for score, address in results.hits:
@@ -189,12 +229,26 @@ class TantivyIndex:
         schema_builder.add_text_field("content", stored=True)
         return schema_builder.build()
 
-    def _escape_query(self, query: str) -> str:
-        """Escape Tantivy query-syntax special characters in a raw user string."""
-        return _TANTIVY_SPECIAL_RE.sub(r"\\\1", query)
+    def _extract_keywords(self, query: str) -> str:
+        """Extract meaningful BM25 keywords from a natural language query.
+
+        Hyphens are replaced with spaces so product codes like ``MGDD-08-N-E``
+        expand into individual tokens (``MGDD``, ``08``) that the Tantivy
+        tokeniser has already indexed separately.  English stop words and
+        single-character tokens are removed so that high-frequency domain words
+        (e.g. "isolation" in safety-standards PDFs) do not drown out the rare,
+        high-IDF product-code tokens.
+
+        Returns ``None`` when nothing survives, so the caller can skip the
+        search entirely rather than issue a ``*`` wildcard that returns garbage.
+        """
+        normalized = re.sub(r'[-]', ' ', query)
+        tokens = re.findall(r'[A-Za-z0-9]+', normalized)
+        keywords = [t for t in tokens if t.lower() not in _STOP_WORDS and len(t) > 1]
+        return ' '.join(keywords) if keywords else ''
 
     def _build_query_text(self, query: str, crop_label: str | list[str] | None) -> str:
-        base_query = self._escape_query(query.strip()) or "*"
+        base_query = self._extract_keywords(query.strip()) or "*"
         filters: list[str] = []
 
         if crop_label is not None:

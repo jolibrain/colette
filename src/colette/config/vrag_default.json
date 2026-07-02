@@ -9,13 +9,13 @@
             "lib": "hf",
             "rag": {
                 "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
-                "gpu_id": 0,
+                "gpu_id": 2,
                 "top_k": 4,
                 "retrieval_mode": "embedding_retrieval",
                 "text_search_engine_top_k": 4,
                 "text_search_engine_fields": ["content", "source"],
-                "text_search_engine_max_chars_per_doc": 1500,
-                "text_search_engine_max_total_chars": 6000,
+                "text_search_engine_max_chars_per_doc": 4000,
+                "text_search_engine_max_total_chars": 16000,
                 "ragm": {
                     "layout_detection": true,
                     "image_width": 512,
@@ -27,7 +27,7 @@
         },
         "llm": {
             "source": "Qwen/Qwen3.5-9B",
-            "gpu_ids": [1],
+            "gpu_ids": [3],
             "image_width": 320,
             "image_height": 480,
             "adjust_aspect_ratio": true,                        

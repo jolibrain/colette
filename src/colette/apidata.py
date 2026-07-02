@@ -87,9 +87,9 @@ class RAGObj(BaseModel):
     """ Tantivy-only: number of text hits retrieved from the Tantivy index """
     text_search_engine_fields: list[str] = Field(default_factory=lambda: ["content", "source"])
     """ Tantivy-only: fields queried during full-text search """
-    text_search_engine_max_chars_per_doc: int = 1500
+    text_search_engine_max_chars_per_doc: int = 4000
     """ Tantivy-only: max number of characters kept per retrieved text hit """
-    text_search_engine_max_total_chars: int = 6000
+    text_search_engine_max_total_chars: int = 16000
     """ Tantivy-only: total character budget contributed by Tantivy to the LLM context """
     reindex: bool = False
     """ Whether to allow full reindexing of an existing RAG """
