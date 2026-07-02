@@ -69,6 +69,8 @@ tests/pipeline_debug_qwen2vl.log
 
 # Gaia-converter demo stuff/
 docs/gaia_converter/
-docs/gaia_converter_flat/
+docs/gaia_converter_flat*
 app_colette_demo_gaia_converter/
 app_colette_demo_gaia_converter_v0/
+app_colette_demo_gaia_converter_v1/
+app_colette_demo_gaia_converter_v2/
