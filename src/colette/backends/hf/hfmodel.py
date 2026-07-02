@@ -68,7 +68,10 @@ class HFModel(LLMModel):
         self.device = torch.device(self.gpu_ids[0] if not self.cpu else -1)
         self.stitch_crops = ad.stitch_crops
         self.load_in_8bit = ad.load_in_8bit
+        self.system_prompt = ad.system_prompt or "You are a helpful assistant."
+        self.disable_thinking = ad.disable_thinking
         self.query_rephrasing = ad.query_rephrasing
+        self.use_hyde = ad.use_hyde
         self.vllm_memory_utilization = ad.vllm_memory_utilization
         self.vllm_quantization = ad.vllm_quantization
         self.vllm_context_size = ad.context_size
@@ -366,8 +369,11 @@ class HFModel(LLMModel):
                 # an empty answer.  Text-only (text_search_retrieval) also disables thinking
                 # because there are no images.
                 has_images = any(c.get("type") == "image" for c in content)
-                has_text_context = bool(docs.get("text_context"))
-                thinking_enabled = has_images and not has_text_context
+                # Use key presence, not truthiness: in hybrid/text_search modes the
+                # "text_context" key is always set (even when Tantivy returns 0 hits),
+                # so bool([]) would wrongly re-enable thinking on an empty result set.
+                has_text_context = "text_context" in docs
+                thinking_enabled = has_images and not has_text_context and not self.disable_thinking
                 chat_template_kwargs["enable_thinking"] = thinking_enabled
             text = self.processor.apply_chat_template(messages, **chat_template_kwargs)
             image_inputs, video_inputs = process_vision_info(messages)
@@ -458,7 +464,7 @@ class HFModel(LLMModel):
             messages = [
                 {
                     "role": "system",
-                    "content": [{"type": "text", "text": "You are a helpful assistant."}],
+                    "content": [{"type": "text", "text": self.system_prompt}],
                 },
                 new_message,
             ]
