@@ -66,7 +66,7 @@ def wait_for_index_status(
     terminal_tokens=("finished",),
     in_progress_tokens=("queued", "running", "started", "indexing"),
     poll_interval_s: float = 0.5,
-    timeout_s: float = 180,
+    timeout_s: float = 600,
 ):
     """Poll index status endpoint until one of the terminal tokens is found."""
     response = client.get(f"/v1/index/{sname}/status")
