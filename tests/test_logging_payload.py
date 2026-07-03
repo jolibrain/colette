@@ -7,6 +7,8 @@ from utils import compare_dicts, pretty_print_response, wait_for_index_status
 
 pytestmark = [pytest.mark.integration, pytest.mark.e2e]
 
+models_repo = os.getenv("MODELS_REPO", "models")
+
 
 def generic_index(client, sname, index_json):
     response = client.put(f"/v1/index/{sname}", json=index_json)
@@ -24,7 +26,7 @@ def test_logging_payload(client):
 
         # Step 2: Create a service
         json_create_img_hf = {
-            "app": {"repository": "test_logging_payload_2", "verbose": "debug"},
+            "app": {"repository": "test_logging_payload_2", "models_repository": models_repo, "verbose": "debug"},
             "parameters": {
                 "input": {
                     "lib": "hf",
