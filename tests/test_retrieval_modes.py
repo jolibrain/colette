@@ -1,3 +1,4 @@
+import pytest
 from types import SimpleNamespace
 
 from langchain_core.documents import Document
@@ -46,6 +47,7 @@ class _DummyLogger:
         return None
 
 
+@pytest.mark.smoke
 def test_hf_retriever_vector_mode_uses_only_vector_search():
     indexdb = _DummyIndexDB()
     tantivy = _DummyTantivy()
@@ -70,6 +72,7 @@ def test_hf_retriever_vector_mode_uses_only_vector_search():
     assert "text_context" not in docs
 
 
+@pytest.mark.smoke
 def test_hf_retriever_text_search_mode_uses_only_text_search():
     indexdb = _DummyIndexDB()
     tantivy = _DummyTantivy()
@@ -94,6 +97,7 @@ def test_hf_retriever_text_search_mode_uses_only_text_search():
     assert len(docs["text_context"]) == 1
 
 
+@pytest.mark.smoke
 def test_hf_retriever_both_mode_uses_both_searches():
     indexdb = _DummyIndexDB()
     tantivy = _DummyTantivy()
@@ -118,6 +122,7 @@ def test_hf_retriever_both_mode_uses_both_searches():
     assert len(docs["text_context"]) == 1
 
 
+@pytest.mark.smoke
 def test_rag_txt_retrieve_merges_embedding_and_text_search_documents():
     rag_txt = RAGTxt()
     rag_txt.ad = SimpleNamespace(rag=RAGObj(retrieval_mode="hybrid", text_search_engine_top_k=2))
