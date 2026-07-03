@@ -22,15 +22,21 @@ https://github.com/user-attachments/assets/7e36b4af-880a-4260-af61-3041b7d60439
 
 ## Key Features
 
-- 📊 Vision Retrieval-Augmented Generation (V-RAG) system by combining the Document Screenshot Embedding/ColPali retrievers for document retrieval with Vision Language Model (VLM).
+- 📊 **Vision RAG (V-RAG)** — treats every document page as an image; preserves tables, figures, diagrams and spatial layout that text extraction loses. Powered by vision embedding models (e.g. `gme-Qwen2-VL`) and VLMs (e.g. `Qwen3-VL`).
 
-- 📚 Text based RAG system by combining unstructured based text extraction, text embedding and common LLMs
+- 🔍 **Hybrid retrieval** — runs vector embedding search and BM25 lexical search (Tantivy) in parallel. Especially effective for technical documents with product codes, part numbers, or rare identifiers.
 
-- 🚀 Multi-Model Support for both embedders and inference VLLMs
+- 💡 **HyDE (Hypothetical Document Embeddings)** — optionally generates a short hypothetical answer passage before retrieval (`llm.use_hyde: true`). The passage is embedded instead of the raw question, landing closer in vector space to real document content.
 
-- 🎨 Image Generation Integration with diffusers
+- 📚 **Text RAG** — classical text-extraction pipeline using `unstructured` + `langchain` for text-only documents.
 
-- 🚀 Effortless Setup, dockerized and our tests show decent results on many corpuses, including technical documentations with images, figure and shemas
+- 🚀 **Multi-backend support** — `huggingface`, `vllm`, `ollama`, `vllm_client` for LLM inference; `chromadb` or `coldb` for vector storage.
+
+- 🎨 **Image generation** integration with diffusers.
+
+- 🧩 **Layout detection** — automatically segments pages into typed crops (`text`, `figure`, `table`, `full_page`) for fine-grained retrieval filtering.
+
+- 🚀 **Effortless setup** — Dockerised; decent out-of-the-box results on technical documentation corpora.
 
 
 ## System Architecture
@@ -158,6 +164,19 @@ colette_cli chat --app-dir app_colette --msg "What are the identified sources of
 The example below is also available in `examples/get_start_python_api.py`.
 There is also a Jupyter notebook version in `examples/get_start_python_api.ipynb`.
 For text-search-only examples, see `examples/text_search_demo.py` and `examples/text_search_demo.ipynb`.
+
+#### Example notebooks
+
+The `examples/` directory contains several Jupyter notebooks for exploring and debugging a colette index:
+
+| Notebook | Description |
+|---|---|
+| `get_start_python_api.ipynb` | End-to-end quickstart: index PDFs, run a RAG query via the Python API |
+| `retrieval_debugger.ipynb` | Step-by-step retrieval debugger: embedding search, HyDE comparison, BM25 inspection, PCA visualisation |
+| `crop_viewer.ipynb` | Browse every indexed image crop by page and crop type |
+| `visualize_embeddings.ipynb` | PCA scatter of the full ChromaDB embedding index |
+
+All notebooks default to `app_colette/` and `docs/pdf/` — run `get_start_python_api.ipynb` first to populate the index.
 
 ##### Index PDFs and query
 
@@ -341,11 +360,25 @@ query_both_modes = {
 
 `parameters.input.rag.retrieval_mode` supports:
 
-- `embedding_retrieval`
-- `text_search_retrieval`
-- `hybrid`
+- `embedding_retrieval` — vector embedding search only (default)
+- `text_search_retrieval` — BM25 keyword search only
+- `hybrid` — both in parallel
 
 See [Text Search Engine](https://colette.chat/doc/users/text_search_engine.html) for details.
+
+### HyDE — Hypothetical Document Embeddings
+
+Enable with `llm.use_hyde: true`. The LLM generates a short hypothetical answer passage before retrieval; that passage is embedded instead of the raw question, improving recall on technical queries where question phrasing differs greatly from document language.
+
+```json
+"llm": {
+    "use_hyde": true,
+    "hyde_num_tokens": 256,
+    "disable_thinking": true
+}
+```
+
+See [Configuration](https://colette.chat/doc/users/configuration.html) for the full option reference.
 
 ## Configurations
 

@@ -1,1 +1,1551 @@
-{"openapi":"3.1.0","info":{"title":"Colette v2 server","description":"*commit:* [ead58e014096805984d58edaa8326eb19b006773]\n\nThis is the Colette v2 API server\n    ","version":"0.1.0"},"paths":{"/v2/info":{"get":{"summary":"Info","operationId":"info_v2_info_get","responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/APIResponse"}}}}}}},"/v2/app/{sname}":{"put":{"summary":"Create Service","operationId":"create_service_v2_app__sname__put","parameters":[{"name":"sname","in":"path","required":true,"schema":{"type":"string","title":"Sname"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/APIData"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/APIResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}},"post":{"summary":"Create Service","operationId":"create_service_v2_app__sname__put","parameters":[{"name":"sname","in":"path","required":true,"schema":{"type":"string","title":"Sname"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/APIData"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/APIResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}},"delete":{"summary":"Delete Service","operationId":"delete_service_v2_app__sname__delete","parameters":[{"name":"sname","in":"path","required":true,"schema":{"type":"string","title":"Sname"}}],"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/APIResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/v2/predict/{sname}":{"post":{"summary":"Predict Service","operationId":"predict_service_v2_predict__sname__post","parameters":[{"name":"sname","in":"path","required":true,"schema":{"type":"string","title":"Sname"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/APIData"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/APIResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/v2/index/{sname}":{"post":{"summary":"Index Service","operationId":"index_service_v2_index__sname__post","parameters":[{"name":"sname","in":"path","required":true,"schema":{"type":"string","title":"Sname"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/APIData"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/APIResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}}},"components":{"schemas":{"APIData":{"properties":{"description":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Description"},"app":{"anyOf":[{"$ref":"#/components/schemas/AppObj"},{"type":"null"}]},"parameters":{"$ref":"#/components/schemas/ParametersObj"}},"type":"object","title":"APIData"},"APIResponse":{"properties":{"version":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Version"},"status_code":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Status Code"},"status":{"anyOf":[{"$ref":"#/components/schemas/StatusObj"},{"type":"null"}]},"info":{"anyOf":[{"$ref":"#/components/schemas/InfoObj"},{"type":"null"}]},"service_name":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Service Name"},"full_prompt":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Full Prompt"},"full_response":{"anyOf":[{"type":"object"},{"type":"null"}],"title":"Full Response"},"sources":{"anyOf":[{"additionalProperties":{"items":{"type":"object"},"type":"array"},"type":"object"},{"type":"null"}],"title":"Sources"},"message":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Message"},"output":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Output"}},"type":"object","title":"APIResponse"},"AppObj":{"properties":{"repository":{"anyOf":[{"type":"string","format":"directory-path"},{"type":"string","format":"path"}],"title":"Repository"},"create_repository":{"type":"boolean","title":"Create Repository","default":true},"models_repository":{"type":"string","title":"Models Repository"},"init":{"anyOf":[{"type":"string","minLength":1,"format":"uri"},{"type":"null"}],"title":"Init"},"verbose":{"anyOf":[{"$ref":"#/components/schemas/VerboseEnum"},{"type":"null"}],"default":"info"}},"type":"object","title":"AppObj"},"HTTPValidationError":{"properties":{"detail":{"items":{"$ref":"#/components/schemas/ValidationError"},"type":"array","title":"Detail"}},"type":"object","title":"HTTPValidationError"},"IndexObj":{"properties":{"files":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}],"title":"Files","default":["pdf"]},"indexer":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Indexer","default":"colpali"}},"type":"object","title":"IndexObj"},"InfoObj":{"properties":{"services":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}],"title":"Services"}},"type":"object","title":"InfoObj"},"InputConnectorObj":{"properties":{"lib":{"type":"string","title":"Lib","default":"langchain"},"preprocessing":{"anyOf":[{"$ref":"#/components/schemas/PreprocessingObj"},{"type":"null"}]},"rag":{"anyOf":[{"$ref":"#/components/schemas/RAGObj"},{"type":"null"}]},"data_output_type":{"type":"string","title":"Data Output Type","default":"txt"},"template":{"anyOf":[{"$ref":"#/components/schemas/TemplatePromptObj"},{"type":"null"}]},"message":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Message"},"data":{"anyOf":[{"items":{"type":"string","format":"directory-path"},"type":"array"},{"type":"null"}],"title":"Data"},"session_id":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Session Id"},"summarize":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Summarize"},"index":{"anyOf":[{"$ref":"#/components/schemas/IndexObj"},{"type":"null"}]},"query_depth_mult":{"type":"integer","title":"Query Depth Mult","default":200}},"type":"object","title":"InputConnectorObj"},"LLMInferenceObj":{"properties":{"lib":{"type":"string","title":"Lib"},"sampling_params":{"type":"object","title":"Sampling Params","default":{"temperature":0}}},"type":"object","title":"LLMInferenceObj"},"LLMModelObj":{"properties":{"source":{"type":"string","title":"Source"},"filename":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Filename"},"shared":{"type":"boolean","title":"Shared","default":false},"inference":{"$ref":"#/components/schemas/LLMInferenceObj"},"context_size":{"type":"integer","title":"Context Size","default":2048},"quantization":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Quantization"},"gpu_ids":{"anyOf":[{"items":{"type":"integer"},"type":"array"},{"type":"null"}],"title":"Gpu Ids"},"memory_utilization":{"type":"number","title":"Memory Utilization","default":0.9},"image_width":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Image Width"},"image_height":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Image Height"},"dtype":{"type":"string","title":"Dtype","default":"auto"},"host":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Host"},"port":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Port"},"conversational":{"type":"boolean","title":"Conversational","default":false},"stitch_crops":{"type":"boolean","title":"Stitch Crops","default":false},"load_in_8bit":{"type":"boolean","title":"Load In 8Bit","default":false}},"type":"object","title":"LLMModelObj"},"OutputConnectorObj":{"properties":{"postprocessing":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}],"title":"Postprocessing"},"output_format":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Output Format","default":"json"}},"type":"object","title":"OutputConnectorObj"},"ParametersObj":{"properties":{"input":{"$ref":"#/components/schemas/InputConnectorObj"},"llm":{"$ref":"#/components/schemas/LLMModelObj"},"output":{"anyOf":[{"$ref":"#/components/schemas/OutputConnectorObj"},{"type":"null"}]}},"type":"object","title":"ParametersObj"},"PreprocessingObj":{"properties":{"files":{"items":{"type":"string"},"type":"array","title":"Files"},"lib":{"type":"string","title":"Lib"},"save_output":{"type":"boolean","title":"Save Output","default":false},"strict":{"type":"boolean","title":"Strict","default":false},"filters":{"items":{"type":"string"},"type":"array","title":"Filters"},"strategy":{"type":"string","title":"Strategy","default":"auto"},"cleaning":{"type":"boolean","title":"Cleaning","default":true},"dpi":{"type":"integer","title":"Dpi","default":300}},"type":"object","title":"PreprocessingObj"},"RAGMultimodalObj":{"properties":{"image_embedding_size":{"type":"integer","title":"Image Embedding Size","default":1536},"layout_detection":{"type":"boolean","title":"Layout Detection","default":true},"layout_detector_gpu_id":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Layout Detector Gpu Id"},"image_width":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Image Width"},"image_height":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Image Height"},"auto_scale_for_font":{"type":"boolean","title":"Auto Scale For Font","default":false},"min_font_size":{"type":"integer","title":"Min Font Size","default":24},"filter_width":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Filter Width"},"filter_height":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Filter Height"},"index_overview":{"type":"boolean","title":"Index Overview","default":true}},"type":"object","title":"RAGMultimodalObj"},"RAGObj":{"properties":{"indexdb_lib":{"type":"string","title":"Indexdb Lib","default":"chromadb"},"embedding_lib":{"type":"string","enum":["gpt4all","huggingface","colbert"],"title":"Embedding Lib","default":"colbert"},"embedding_model":{"type":"string","title":"Embedding Model"},"embedding_model_path":{"type":"string","title":"Embedding Model Path"},"shared_model":{"type":"boolean","title":"Shared Model","default":false},"chunk_size":{"type":"integer","title":"Chunk Size","default":250},"chunk_overlap":{"type":"integer","title":"Chunk Overlap","default":0},"chunk_num":{"type":"integer","title":"Chunk Num","default":1},"gpu_id":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Gpu Id","default":-1},"search":{"type":"boolean","title":"Search","default":false},"reindex":{"type":"boolean","title":"Reindex","default":false},"index_protection":{"type":"boolean","title":"Index Protection","default":true},"top_k":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Top K","default":4},"num_partitions":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Num Partitions","default":-1},"index_bsize":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Index Bsize","default":2},"ragm":{"$ref":"#/components/schemas/RAGMultimodalObj","default":{"image_embedding_size":1536,"layout_detection":true,"auto_scale_for_font":false,"min_font_size":24,"index_overview":true}}},"type":"object","title":"RAGObj"},"StatusObj":{"properties":{"code":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Code"},"status":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Status"},"colette_code":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Colette Code"},"colette_message":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Colette Message"}},"type":"object","title":"StatusObj"},"TemplatePromptObj":{"properties":{"template_prompt":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Template Prompt"},"template_prompt_variables":{"anyOf":[{"items":{"type":"string"},"type":"array"},{"type":"null"}],"title":"Template Prompt Variables"}},"type":"object","title":"TemplatePromptObj"},"ValidationError":{"properties":{"loc":{"items":{"anyOf":[{"type":"string"},{"type":"integer"}]},"type":"array","title":"Location"},"msg":{"type":"string","title":"Message"},"type":{"type":"string","title":"Error Type"}},"type":"object","required":["loc","msg","type"],"title":"ValidationError"},"VerboseEnum":{"type":"string","enum":["info","debug","warning","error","critical"],"title":"VerboseEnum"}}}}
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Colette {VERSION} server",
+    "description": "*commit:* [57ba8099172c6b2a855c6776e6e8801247d80e95]\n\nThis is the Colette v1 API server",
+    "version": "v1"
+  },
+  "paths": {
+    "/v1/info": {
+      "get": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Info",
+        "operationId": "info_v1_info_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/app/{sname}": {
+      "put": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Create Service",
+        "description": "Create a new service",
+        "operationId": "create_service_v1_app__sname__put",
+        "parameters": [
+          {
+            "name": "sname",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sname"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/APIData"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Create Service",
+        "description": "Create a new service",
+        "operationId": "create_service_v1_app__sname__put",
+        "parameters": [
+          {
+            "name": "sname",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sname"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/APIData"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Delete Service",
+        "operationId": "delete_service_v1_app__sname__delete",
+        "parameters": [
+          {
+            "name": "sname",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sname"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/predict/{sname}": {
+      "post": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Predict Service",
+        "operationId": "predict_service_v1_predict__sname__post",
+        "parameters": [
+          {
+            "name": "sname",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sname"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/APIData"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/streaming/{sname}": {
+      "post": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Streaming Service",
+        "operationId": "streaming_service_v1_streaming__sname__post",
+        "parameters": [
+          {
+            "name": "sname",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sname"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/APIData"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/index/{sname}": {
+      "put": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Index Service",
+        "operationId": "index_service_v1_index__sname__put",
+        "parameters": [
+          {
+            "name": "sname",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sname"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/APIData"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/upload/{sname}": {
+      "put": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Upload Service",
+        "operationId": "upload_service_v1_upload__sname__put",
+        "parameters": [
+          {
+            "name": "sname",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sname"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_service_v1_upload__sname__put"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/index/{sname}/status": {
+      "get": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Index Status",
+        "operationId": "index_status_v1_index__sname__status_get",
+        "parameters": [
+          {
+            "name": "sname",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sname"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "APIData": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "app": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AppObj"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "parameters": {
+            "$ref": "#/components/schemas/ParametersObj"
+          }
+        },
+        "type": "object",
+        "title": "APIData",
+        "description": "Main API object"
+      },
+      "APIResponse": {
+        "properties": {
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "status_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Code"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StatusObj"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "info": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InfoObj"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "service_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Name"
+          },
+          "full_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Prompt"
+          },
+          "full_response": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Response"
+          },
+          "sources": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sources"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          }
+        },
+        "type": "object",
+        "title": "APIResponse",
+        "description": "Main API Response object to all calls"
+      },
+      "AppObj": {
+        "properties": {
+          "repository": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "directory-path"
+              },
+              {
+                "type": "string",
+                "format": "path"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repository"
+          },
+          "create_repository": {
+            "type": "boolean",
+            "title": "Create Repository",
+            "default": true
+          },
+          "models_repository": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Models Repository"
+          },
+          "verbose": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerboseEnum"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "info"
+          },
+          "log_in_app_dir": {
+            "type": "boolean",
+            "title": "Log In App Dir",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "AppObj",
+        "description": "Application information and settings"
+      },
+      "Body_upload_service_v1_upload__sname__put": {
+        "properties": {
+          "ad": {
+            "type": "string",
+            "title": "Ad"
+          },
+          "files": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "binary"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ad"
+        ],
+        "title": "Body_upload_service_v1_upload__sname__put"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "InfoObj": {
+        "properties": {
+          "services": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Services"
+          }
+        },
+        "type": "object",
+        "title": "InfoObj",
+        "description": "System info response object"
+      },
+      "InputConnectorObj": {
+        "properties": {
+          "lib": {
+            "type": "string",
+            "enum": [
+              "coldb",
+              "diffusr",
+              "hf",
+              "langchain"
+            ],
+            "title": "Lib",
+            "default": "hf"
+          },
+          "preprocessing": {
+            "$ref": "#/components/schemas/PreprocessingObj"
+          },
+          "rag": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RAGObj"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "template": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TemplatePromptObj"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "directory-path"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "summarize": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summarize"
+          },
+          "query_depth_mult": {
+            "type": "integer",
+            "title": "Query Depth Mult",
+            "default": 200
+          },
+          "streaming": {
+            "type": "boolean",
+            "title": "Streaming",
+            "default": false
+          },
+          "crop_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crop Label"
+          }
+        },
+        "type": "object",
+        "title": "InputConnectorObj",
+        "description": "Input connector, get data into the proper shape for indexing, searching and answering"
+      },
+      "LLMInferenceObj": {
+        "properties": {
+          "lib": {
+            "type": "string",
+            "enum": [
+              "diffusers",
+              "huggingface",
+              "llamacpp",
+              "ollama",
+              "vllm",
+              "vllm_client"
+            ],
+            "title": "Lib",
+            "default": "huggingface"
+          },
+          "sampling_params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Sampling Params",
+            "default": {
+              "temperature": 0
+            }
+          }
+        },
+        "type": "object",
+        "title": "LLMInferenceObj",
+        "description": "LLM and multimodal LLM inference parameters"
+      },
+      "LLMModelObj": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "Qwen/Qwen3-VL-30B-A3B-Instruct-FP8"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "shared_model": {
+            "type": "boolean",
+            "title": "Shared Model",
+            "default": true
+          },
+          "inference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LLMInferenceObj"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "context_size": {
+            "type": "integer",
+            "title": "Context Size",
+            "default": 2048
+          },
+          "gpu_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gpu Ids"
+          },
+          "vllm_quantization": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vllm Quantization"
+          },
+          "vllm_memory_utilization": {
+            "type": "number",
+            "title": "Vllm Memory Utilization",
+            "default": 0.9
+          },
+          "vllm_enforce_eager": {
+            "type": "boolean",
+            "title": "Vllm Enforce Eager",
+            "default": true
+          },
+          "image_width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Width"
+          },
+          "image_height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Height"
+          },
+          "adjust_aspect_ratio": {
+            "type": "boolean",
+            "title": "Adjust Aspect Ratio",
+            "default": true
+          },
+          "dtype": {
+            "type": "string",
+            "title": "Dtype",
+            "default": "auto"
+          },
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "conversational": {
+            "type": "boolean",
+            "title": "Conversational",
+            "default": false
+          },
+          "stitch_crops": {
+            "type": "boolean",
+            "title": "Stitch Crops",
+            "default": false
+          },
+          "load_in_8bit": {
+            "type": "boolean",
+            "title": "Load In 8Bit",
+            "default": false
+          },
+          "query_rephrasing": {
+            "type": "boolean",
+            "title": "Query Rephrasing",
+            "default": false
+          },
+          "query_rephrasing_num_tok": {
+            "type": "integer",
+            "title": "Query Rephrasing Num Tok",
+            "default": 2048
+          },
+          "external_vllm_server": {
+            "$ref": "#/components/schemas/VLLMServerObj"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          },
+          "disable_thinking": {
+            "type": "boolean",
+            "title": "Disable Thinking",
+            "default": false
+          },
+          "use_hyde": {
+            "type": "boolean",
+            "title": "Use Hyde",
+            "default": false
+          },
+          "hyde_num_tokens": {
+            "type": "integer",
+            "title": "Hyde Num Tokens",
+            "default": 256
+          }
+        },
+        "type": "object",
+        "title": "LLMModelObj",
+        "description": "Main LLM parameters for answering"
+      },
+      "OutputConnectorObj": {
+        "properties": {
+          "postprocessing": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Postprocessing"
+          },
+          "output_format": {
+            "type": "string",
+            "const": "json",
+            "title": "Output Format",
+            "default": "json"
+          },
+          "base64": {
+            "type": "boolean",
+            "title": "Base64",
+            "default": true
+          },
+          "num_tokens": {
+            "type": "integer",
+            "title": "Num Tokens",
+            "default": 2048
+          }
+        },
+        "type": "object",
+        "title": "OutputConnectorObj",
+        "description": "Output connector for post-processing parameters"
+      },
+      "ParametersObj": {
+        "properties": {
+          "input": {
+            "$ref": "#/components/schemas/InputConnectorObj"
+          },
+          "llm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LLMModelObj"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "output": {
+            "$ref": "#/components/schemas/OutputConnectorObj"
+          }
+        },
+        "type": "object",
+        "title": "ParametersObj",
+        "description": "Global (input, llm, output) parameters holder"
+      },
+      "PreprocessingObj": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Files",
+            "default": [
+              "all"
+            ]
+          },
+          "lib": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lib"
+          },
+          "save_output": {
+            "type": "boolean",
+            "title": "Save Output",
+            "default": false
+          },
+          "strict": {
+            "type": "boolean",
+            "title": "Strict",
+            "default": false
+          },
+          "filters": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Filters"
+          },
+          "strategy": {
+            "type": "string",
+            "title": "Strategy",
+            "default": "auto"
+          },
+          "cleaning": {
+            "type": "boolean",
+            "title": "Cleaning",
+            "default": true
+          },
+          "dpi": {
+            "type": "integer",
+            "title": "Dpi",
+            "default": 300
+          }
+        },
+        "type": "object",
+        "title": "PreprocessingObj",
+        "description": "Preprocessing options for indexing calls"
+      },
+      "RAGMultimodalObj": {
+        "properties": {
+          "layout_detection": {
+            "type": "boolean",
+            "title": "Layout Detection",
+            "default": true
+          },
+          "layout_detector_gpu_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Layout Detector Gpu Id"
+          },
+          "layout_detector_model_path": {
+            "type": "string",
+            "title": "Layout Detector Model Path",
+            "default": "https://colette.chat/models/layout/layout_detector_publaynet_merged_6000.pt"
+          },
+          "image_width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Width"
+          },
+          "image_height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Height"
+          },
+          "auto_scale_for_font": {
+            "type": "boolean",
+            "title": "Auto Scale For Font",
+            "default": false
+          },
+          "min_font_size": {
+            "type": "integer",
+            "title": "Min Font Size",
+            "default": 24
+          },
+          "filter_width": {
+            "type": "integer",
+            "title": "Filter Width",
+            "default": -1
+          },
+          "filter_height": {
+            "type": "integer",
+            "title": "Filter Height",
+            "default": -1
+          },
+          "index_overview": {
+            "type": "boolean",
+            "title": "Index Overview",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "RAGMultimodalObj",
+        "description": "Multimodal RAG parameters"
+      },
+      "RAGObj": {
+        "properties": {
+          "indexdb_lib": {
+            "type": "string",
+            "enum": [
+              "chromadb",
+              "coldb"
+            ],
+            "title": "Indexdb Lib",
+            "default": "chromadb"
+          },
+          "retrieval_mode": {
+            "type": "string",
+            "enum": [
+              "embedding_retrieval",
+              "text_search_retrieval",
+              "hybrid"
+            ],
+            "title": "Retrieval Mode",
+            "default": "embedding_retrieval"
+          },
+          "embedding_lib": {
+            "type": "string",
+            "enum": [
+              "huggingface",
+              "colbert",
+              "vllm"
+            ],
+            "title": "Embedding Lib",
+            "default": "huggingface"
+          },
+          "embedding_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding Model"
+          },
+          "embedding_model_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding Model Path"
+          },
+          "shared_model": {
+            "type": "boolean",
+            "title": "Shared Model",
+            "default": true
+          },
+          "chunk_size": {
+            "type": "integer",
+            "title": "Chunk Size",
+            "default": 250
+          },
+          "chunk_overlap": {
+            "type": "integer",
+            "title": "Chunk Overlap",
+            "default": 0
+          },
+          "chunk_num": {
+            "type": "integer",
+            "title": "Chunk Num",
+            "default": 1
+          },
+          "gpu_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gpu Id",
+            "default": -1
+          },
+          "search": {
+            "type": "boolean",
+            "title": "Search",
+            "default": false
+          },
+          "text_search_engine_top_k": {
+            "type": "integer",
+            "title": "Text Search Engine Top K",
+            "default": 4
+          },
+          "text_search_engine_fields": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Text Search Engine Fields"
+          },
+          "text_search_engine_max_chars_per_doc": {
+            "type": "integer",
+            "title": "Text Search Engine Max Chars Per Doc",
+            "default": 4000
+          },
+          "text_search_engine_max_total_chars": {
+            "type": "integer",
+            "title": "Text Search Engine Max Total Chars",
+            "default": 16000
+          },
+          "reindex": {
+            "type": "boolean",
+            "title": "Reindex",
+            "default": false
+          },
+          "index_protection": {
+            "type": "boolean",
+            "title": "Index Protection",
+            "default": true
+          },
+          "update_index": {
+            "type": "boolean",
+            "title": "Update Index",
+            "default": false
+          },
+          "top_k": {
+            "type": "integer",
+            "title": "Top K",
+            "default": 4
+          },
+          "remove_duplicates": {
+            "type": "boolean",
+            "title": "Remove Duplicates",
+            "default": false
+          },
+          "num_partitions": {
+            "type": "integer",
+            "title": "Num Partitions",
+            "default": -1
+          },
+          "index_bsize": {
+            "type": "integer",
+            "title": "Index Bsize",
+            "default": 2
+          },
+          "ragm": {
+            "$ref": "#/components/schemas/RAGMultimodalObj"
+          },
+          "vllm_rag_quantization": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vllm Rag Quantization"
+          },
+          "vllm_rag_memory_utilization": {
+            "type": "number",
+            "title": "Vllm Rag Memory Utilization",
+            "default": 0.4
+          },
+          "vllm_rag_enforce_eager": {
+            "type": "boolean",
+            "title": "Vllm Rag Enforce Eager",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "RAGObj",
+        "description": "Main RAG parameters"
+      },
+      "StatusObj": {
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "colette_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colette Code"
+          },
+          "colette_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colette Message"
+          }
+        },
+        "type": "object",
+        "title": "StatusObj",
+        "description": "System status response object"
+      },
+      "TemplatePromptObj": {
+        "properties": {
+          "template_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Prompt"
+          },
+          "template_prompt_variables": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Template Prompt Variables"
+          }
+        },
+        "type": "object",
+        "title": "TemplatePromptObj",
+        "description": "Template prompt object"
+      },
+      "VLLMServerObj": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "default": "http://localhost:8000/v1"
+          },
+          "api_key": {
+            "type": "string",
+            "title": "Api Key",
+            "default": "token-abc123"
+          }
+        },
+        "type": "object",
+        "title": "VLLMServerObj"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "VerboseEnum": {
+        "type": "string",
+        "enum": [
+          "info",
+          "debug",
+          "warning",
+          "error",
+          "critical"
+        ],
+        "title": "VerboseEnum",
+        "description": "Logging verbosity options"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "info",
+      "description": "Service and version information"
+    },
+    {
+      "name": "app",
+      "description": "Service lifecycle (create, delete)"
+    },
+    {
+      "name": "predict",
+      "description": "Model prediction"
+    },
+    {
+      "name": "streaming",
+      "description": "Streaming model prediction"
+    },
+    {
+      "name": "index",
+      "description": "Indexing documents"
+    }
+  ]
+}
