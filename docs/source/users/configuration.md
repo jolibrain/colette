@@ -125,8 +125,8 @@ The `parameters` section defines how **data is processed, indexed, and retrieved
         "gpu_id": 0,
         "text_search_engine_top_k": 4,
         "text_search_engine_fields": ["content", "source"],
-        "text_search_engine_max_chars_per_doc": 1500,
-        "text_search_engine_max_total_chars": 6000,
+        "text_search_engine_max_chars_per_doc": 4000,
+        "text_search_engine_max_total_chars": 16000,
         "search": true,
         "reindex": false
     },
@@ -153,8 +153,8 @@ Controls settings for **retrieval and vector database indexing**:
 - **`gpu_id`**: Specifies which GPU to use (`0` means the first available GPU).
 - **`text_search_engine_top_k`**: Number of text-search hits to fetch.
 - **`text_search_engine_fields`**: Indexed fields queried by the text search engine.
-- **`text_search_engine_max_chars_per_doc`**: Max chars per retrieved text hit added to prompt context.
-- **`text_search_engine_max_total_chars`**: Global char cap added to prompt context from text search hits.
+- **`text_search_engine_max_chars_per_doc`**: Max characters kept per retrieved text hit (default: 4000). Increase if pages are being truncated.
+- **`text_search_engine_max_total_chars`**: Total character budget contributed by text search to the LLM context (default: 16000).
 - **`search`**: If `true`, retrieval is enabled.
 - **`reindex`**: If `false`, existing indexes are used instead of re-processing everything.
 
@@ -175,13 +175,47 @@ Defines **where Colette retrieves documents** for processing:
     "source": "llama3.1:latest",
     "inference": {
         "lib": "ollama"
-    }
+    },
+    "system_prompt": null,
+    "disable_thinking": false,
+    "use_hyde": false,
+    "hyde_num_tokens": 256,
+    "query_rephrasing": false,
+    "query_rephrasing_num_tok": 2048
 }
 ```
 This section defines **the language model used for answering queries**:
-- **`source`**: The LLM model version (`llama3.1:latest`).
+- **`source`**: The LLM model version (e.g. `llama3.1:latest`, `Qwen/Qwen3-VL-7B-Instruct`).
 - **`inference`**:
-  - **`lib`**: The inference library (`ollama`).
+  - **`lib`**: The inference library (`ollama`, `huggingface`, `vllm`).
+- **`system_prompt`**: Optional system prompt inserted before the user turn. Useful for enforcing strict RAG behaviour (e.g. `"Answer only using the provided context. If the answer is not in the context, say so."`). Defaults to `null` (model default).
+- **`disable_thinking`**: Set to `true` to force thinking off for Qwen3 models regardless of retrieval mode. Prevents thinking token overflow on long technical queries. Default: `false`.
+- **`use_hyde`**: Enable **HyDE (Hypothetical Document Embeddings)**. When `true`, the LLM generates a short hypothetical answer passage before retrieval; that passage is embedded instead of the raw question, landing closer in vector space to real document content. Default: `false`. See [HyDE](#hyde-hypothetical-document-embeddings) below.
+- **`hyde_num_tokens`**: Token budget for the HyDE passage generation step. Default: `256`.
+- **`query_rephrasing`**: Enable query rephrasing before retrieval (V-RAG only). The LLM rewrites the user question into a form better suited for embedding search. Default: `false`.
+- **`query_rephrasing_num_tok`**: Token budget for query rephrasing. Default: `2048`.
+
+---
+
+### HyDE — Hypothetical Document Embeddings
+
+**Why it helps:** A raw question is linguistically far from how the answer appears in a document. The embedding model was trained on document-to-document similarity, so a *hypothetical answer passage* — even if factually imprecise — lands in a much closer region of the embedding space than the bare question.
+
+**How it works:**
+1. The LLM generates a short passage that *hypothetically* answers the question.
+2. That passage is embedded and used for vector retrieval.
+3. The original question (unchanged) is still sent to the LLM for final answer generation.
+
+**Enable it:**
+```json
+"llm": {
+    "use_hyde": true,
+    "hyde_num_tokens": 256,
+    "disable_thinking": true
+}
+```
+
+> **Note:** HyDE adds one LLM call per query. Set `hyde_num_tokens` to a low value (128–256) to keep latency low. Enabling `disable_thinking` is recommended for Qwen3 models to avoid thinking token overhead during passage generation.
 
 ---
 
