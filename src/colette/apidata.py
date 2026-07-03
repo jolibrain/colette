@@ -24,7 +24,7 @@ class PreprocessingObj(BaseModel):
     strict: bool = False  # do not stop on preprocessing failures
     """ Text-RAG only: whether to fail on preprocessing errors """
     filters: list[str] = Field(default_factory=list)  # list of patterns for filtering data out
-    """ Input preprocessing regex filters, e.g. ["\/~[^\/]*$"] """
+    """ Input preprocessing regex filters, e.g. ["/~[^/]*$"] """
     strategy: str = "auto"
     """ Text-RAG only: text extraction strategy, e.g. auto, fast, hi_res """
     cleaning: bool = True
