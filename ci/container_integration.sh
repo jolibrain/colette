@@ -43,6 +43,8 @@ if [ -z "${GPU_BASE_IMAGE}" ]; then
     exit 1
 fi
 
+mkdir -p "${MODELS_PATH}"
+
 bash "$(dirname "$0")/container_preflight.sh" integration
 
 echo "=== Container integration tests ==="

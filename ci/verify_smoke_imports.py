@@ -27,6 +27,8 @@ SMOKE_TEST_FILES = [
     "tests/test_logger_smoke.py",
     "tests/test_jsonapi_service_smoke.py",
     "tests/test_core_services_smoke.py",
+    "tests/test_apidata_rag_merge.py",
+    "tests/test_retrieval_modes.py",
 ]
 
 
