@@ -230,6 +230,14 @@ class LLMModelObj(BaseModel):
     """ Number of token for rephrasing queries (V-RAG) only """
     external_vllm_server: VLLMServerObj = Field(default_factory=VLLMServerObj)
     """ vllm server parameters """
+    system_prompt: str | None = None
+    """ Optional system prompt sent to the model before the user turn """
+    disable_thinking: bool = False
+    """ Force thinking off for qwen3-vl models regardless of retrieval mode """
+    use_hyde: bool = False
+    """ Use HyDE (Hypothetical Document Embeddings): generate a hypothetical answer before retrieval """
+    hyde_num_tokens: int = 256
+    """ Number of tokens for HyDE hypothetical answer generation """
 
 
 class OutputConnectorObj(BaseModel):

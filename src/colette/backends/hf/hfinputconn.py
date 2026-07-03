@@ -37,11 +37,15 @@ class HFInputConn(InputConnector):
             self.ragobj.init(self.ad, self.app_repository, self.models_repository, self.cpu, self.logger, self.kvstore)
             self.rag = True
 
-    def transform(self, ad: InputConnectorObj, query_rephraser=None):
+    def transform(self, ad: InputConnectorObj, query_rephraser=None, retrieval_query: str | None = None):
         """
         Transform the input data into a template prompt and
 
         :param ad: InputConnectorObj
+        :param query_rephraser: optional QueryRephraser applied after retrieval
+        :param retrieval_query: optional override for the embedding retrieval query
+            (e.g. a HyDE-generated passage); the original message is still used
+            as the prompt sent to the LLM.
         :return: message, template_prompt, full_prompt, docs_source
         """
         message = ad.message
@@ -51,7 +55,7 @@ class HFInputConn(InputConnector):
         if self.ragobj is not None:
             request_rag = merge_rag_config(self.ad.rag, ad.rag)
             docs = self.ragobj.retrieve(
-                message,
+                retrieval_query if retrieval_query is not None else message,
                 ad.query_depth_mult,
                 crop_label=ad.crop_label,
                 request_rag=request_rag,

@@ -10,6 +10,7 @@ from colette.llmlib import LLMLib
 from colette.llmmodel import LLMModel
 from colette.outputconnector import OutputConnector
 
+from .hyde_generator import HyDEGenerator
 from .query_rephraser import QueryRephraser
 from .session_cache import SessionCache
 
@@ -63,11 +64,27 @@ class HFLib(LLMLib):
         else:
             self.query_rephraser = None
 
+        # optional HyDE (Hypothetical Document Embeddings)
+        if self.llmmodel is not None and self.llmmodel.use_hyde:
+            self.hyde_generator = HyDEGenerator(
+                self.llmmodel,
+                ad.parameters.llm.hyde_num_tokens,
+                self.logger,
+            )
+        else:
+            self.hyde_generator = None
+
     def predict(self, ad: APIData) -> APIResponse:
         # - input connector transform()
         try:
             time_start = time.time()
-            message, docs_source, _ = self.inputc.transform(ad.parameters.input, self.query_rephraser)
+            # optional HyDE: replace retrieval query with a hypothetical answer
+            retrieval_query = None
+            if self.hyde_generator:
+                retrieval_query = self.hyde_generator.generate(ad.parameters.input.message)
+            message, docs_source, _ = self.inputc.transform(
+                ad.parameters.input, self.query_rephraser, retrieval_query=retrieval_query
+            )
             time_end = time.time()
             self.logger.info(f"Input transform and document retrieval took {time_end - time_start:.2f} seconds")
             self.logger.debug(f"message: {message}")
