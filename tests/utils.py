@@ -65,16 +65,25 @@ def wait_for_index_status(
     sname: str,
     terminal_tokens=("finished",),
     in_progress_tokens=("queued", "running", "started", "indexing"),
+    error_tokens=(": error",),
     poll_interval_s: float = 0.5,
     timeout_s: float = 600,
 ):
-    """Poll index status endpoint until one of the terminal tokens is found."""
+    """Poll index status endpoint until one of the terminal tokens is found.
+
+    Raises immediately if an error token is detected so callers get fast
+    failure rather than burning the full timeout.
+    """
     response = client.get(f"/v1/index/{sname}/status")
     assert response.status_code == 200
 
     deadline = time.time() + timeout_s
     message = (response.json().get("message") or "").lower()
     while not any(token in message for token in terminal_tokens):
+        if any(token in message for token in error_tokens):
+            raise AssertionError(
+                f"Indexing error for '{sname}'. Status: {message}"
+            )
         if not any(token in message for token in in_progress_tokens):
             return response
         if time.time() >= deadline:
