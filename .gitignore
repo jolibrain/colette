@@ -67,8 +67,3 @@ tests/pipeline_debug_qwen2vl.log
 # CI artifacts
 .ci-artifacts/
 
-# Gaia-converter demo stuff/
-docs/gaia_converter/
-docs/gaia_converter_flat/
-app_colette_demo_gaia_converter/
-app_colette_demo_gaia_converter_v0/
