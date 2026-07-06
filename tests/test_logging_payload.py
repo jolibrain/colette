@@ -52,7 +52,7 @@ def test_logging_payload(client):
                     "source": "Qwen/Qwen2-VL-2B-Instruct",
                     "gpu_ids": [0],
                     "image_width": 640,
-                    "image_height": 320,
+                    "image_height": 960,
                     "inference": {"lib": "huggingface"},
                 },
             },
