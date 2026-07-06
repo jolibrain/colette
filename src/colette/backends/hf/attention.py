@@ -23,12 +23,13 @@ def _contains_token(value: str | None, token: str) -> bool:
 
 
 def resolve_attn_implementation(model_source: str | None = None) -> str:
-    # Qwen3.5 uses 3D mrope position IDs for multimodal tokens. Transformers
-    # 5.x dispatches those through flash-attn's varlen kernel, which crashes
-    # on current hardware (illegal memory access in flash_attn_gpu.varlen_fwd).
-    # PyTorch's native sdpa handles those position IDs correctly and is still
-    # hardware-accelerated — it is NOT the same as eager mode.
-    if _contains_token(model_source, "Qwen3.5") or _contains_token(model_source, "Qwen3_5"):
+    # Qwen VL models use 3D mrope position IDs for multimodal tokens. Transformers
+    # 5.x dispatches those through flash-attn's varlen kernel, which can crash or
+    # silently produce garbage outputs (all-! tokens) depending on GPU/driver
+    # (confirmed on RTX 3090 Ti with driver 580). PyTorch's native sdpa handles
+    # those position IDs correctly and is still hardware-accelerated.
+    _qwen_vl_models = ("Qwen2-VL", "Qwen2.5-VL", "Qwen3-VL", "Qwen3.5", "Qwen3_5")
+    if any(_contains_token(model_source, tok) for tok in _qwen_vl_models):
         return "sdpa"
 
     if has_flash_attn():

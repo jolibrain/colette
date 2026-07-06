@@ -19,6 +19,11 @@ def generic_index(client, sname, index_json):
 
 
 def test_logging_payload(client):
+    # Guard against stale artifacts from a previously interrupted run
+    # (e.g. agent node went offline mid-test so the finally block never ran).
+    client.delete("/v1/app/test_logging_payload")
+    shutil.rmtree("test_logging_payload_2", ignore_errors=True)
+
     try:
         # Step 1: Validate base endpoint
         response = client.get("/v1/info")
