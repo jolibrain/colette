@@ -351,12 +351,10 @@ class ImageEmbeddingFunction(EmbeddingFunction):
             else:
                 label = None
             if "PIL" in str(type(item)):  # or "Png" in str(type(item)) or "Jpeg" in str(type(item)):
-                if not self.rag_auto_scale_for_font and self.rag_image_width and self.rag_image_height:
+                if self.rag_image_width and self.rag_image_height:
                     width, height = item.size
                     if width > self.rag_image_width or height > self.rag_image_height:
                         item.thumbnail((self.rag_image_width, self.rag_image_height))
-                if self.rag_auto_scale_for_font and (self.rag_image_width or self.rag_image_height):
-                    self.logger.warn("Auto scaling for font is enabled. image_width and image_height are ignored")
                 question = "What is the content of this image?"
                 if label:
                     question = "This image has a " + label + ". " + question
@@ -406,7 +404,7 @@ class ImageEmbeddingFunction(EmbeddingFunction):
             else:
                 label = None
             if "PIL" in str(type(item)):  # or "Png" in str(type(item)) or "Jpeg" in str(type(item)):
-                if not self.rag_auto_scale_for_font and self.rag_image_width and self.rag_image_height:
+                if self.rag_image_width and self.rag_image_height:
                     width, height = item.size
                     if width > self.rag_image_width or height > self.rag_image_height:
                         item.thumbnail((self.rag_image_width, self.rag_image_height))

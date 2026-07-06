@@ -103,7 +103,7 @@ def test_text_search_engine_retrieval_mode_at_index_time(text_search_engine_cont
         query = APIData(
             **{
                 "parameters": {
-                    "input": {"message": "What is the title of the document?"}
+                    "input": {"message": "Ariane satellite"}
                 }
             }
         )
@@ -153,7 +153,7 @@ def test_text_search_engine_per_request_override(text_search_engine_context):
             **{
                 "parameters": {
                     "input": {
-                        "message": "What is the title of the document?",
+                        "message": "Ariane satellite",
                         "rag": {"retrieval_mode": "text_search_retrieval"},
                     }
                 }
