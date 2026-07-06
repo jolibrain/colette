@@ -23,6 +23,8 @@ def test_hf_multiple_images(temp_dir, client):
                     "top_k": 2,
                     "ragm": {
                         "layout_detection": False,
+                        "image_width": 640,
+                        "image_height": 960,
                     },
                 },
                 "template": {
@@ -139,6 +141,8 @@ def test_hf_multiple_images_crops(temp_dir, client):
                     "top_k": 4,
                     "ragm": {
                         "layout_detection": True,
+                        "image_width": 640,
+                        "image_height": 960,
                     },
                 },
                 "template": {
@@ -384,6 +388,8 @@ def test_hf_multiple_images_with_duplicates(temp_dir, client):
                     "gpu_id": 0,
                     "ragm": {
                         "layout_detection": False,
+                        "image_width": 640,
+                        "image_height": 960,
                     },
                 },
                 "template": {
