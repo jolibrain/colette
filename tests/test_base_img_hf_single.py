@@ -32,6 +32,8 @@ def test_hf_single_image(temp_dir, client):
                     "top_k": 1,
                     "ragm": {
                         "layout_detection": False,
+                        "image_width": 640,
+                        "image_height": 960,
                     },
                 },
                 "template": {
@@ -119,7 +121,7 @@ def test_hf_single_image_rephrasing(temp_dir, client):
                     "embedding_lib": "huggingface",
                     "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
                     "top_k": 1,
-                    "ragm": {"layout_detection": False},
+                    "ragm": {"layout_detection": False, "image_width": 640, "image_height": 960},
                 },
                 "template": {
                     "template_prompt": "Tu es un assistant de réponse à des questions. Question: {question} Réponse: ",
@@ -206,6 +208,8 @@ def test_hf_single_image_autoscale(temp_dir, client):
                     "ragm": {
                         "layout_detection": False,
                         "auto_scale_for_font": True,
+                        "image_width": 640,
+                        "image_height": 960,
                     },
                 },
                 "template": {

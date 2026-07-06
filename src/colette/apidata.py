@@ -47,7 +47,7 @@ class RAGMultimodalObj(BaseModel):
     image_height: int | None = None
     """ V-RAG image height """
     auto_scale_for_font: bool = False
-    """ Whether to auto scale the images to that fonts are best readable by multimodal LLMs (warning: bypasses image_width and image_height) """
+    """ Whether to auto scale the images so that fonts are best readable by multimodal LLMs; image_width and image_height still apply as an upper-bound cap after auto-scaling """
     min_font_size: int = 24  # value empirically obtained for qwen2vl2b, in pixels
     """ Min font size below which multimodal LLMs OCR capabilities degrade, empirically evaluated """
     filter_width: int = -1
