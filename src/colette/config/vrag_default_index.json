@@ -6,7 +6,7 @@
                 "dpi": 300
             },
             "rag": {
-                "gpu_id": 2,
+                "gpu_id": 0,
                 "retrieval_mode": "embedding_retrieval",
                 "text_search_engine_top_k": 4,
                 "text_search_engine_fields": ["content", "source"],

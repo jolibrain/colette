@@ -9,7 +9,7 @@
             "lib": "hf",
             "rag": {
                 "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
-                "gpu_id": 2,
+                "gpu_id": 0,
                 "top_k": 4,
                 "retrieval_mode": "embedding_retrieval",
                 "text_search_engine_top_k": 4,
@@ -27,7 +27,7 @@
         },
         "llm": {
             "source": "Qwen/Qwen3.5-9B",
-            "gpu_ids": [3],
+            "gpu_ids": [0],
             "image_width": 320,
             "image_height": 480,
             "adjust_aspect_ratio": true,                        
