@@ -65,7 +65,9 @@ def test_hf_single_image_coldb(temp_dir, client):
         pretty_print_response(response.json())
         assert "test_hf_single_image_coldb" in response.json()["info"]["services"]
 
-        generic_index(client, "test_hf_single_image_coldb", json_index_img_hf)
+        # ColDB downloads vidore/colpali-v1.2-hf (SigLIP-based, ~2 files) and
+        # compiles CUDA extensions on first run — allow up to 6 minutes.
+        generic_index(client, "test_hf_single_image_coldb", json_index_img_hf, timeout_s=360)
 
         json_predict = {"parameters": {"input": {"message": "Quel est le titre du document ?"}}}
 

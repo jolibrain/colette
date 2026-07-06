@@ -2,6 +2,7 @@ import os
 import shutil
 import sys
 import gc
+import time
 from pathlib import Path
 
 import pytest
@@ -136,14 +137,66 @@ def pytest_sessionstart(session):
     print("=" * 50 + "\n")
 
 
+def _gc_cuda() -> None:
+    """Reclaim GPU memory. Two gc passes break more reference cycles than one."""
+    gc.collect()
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception:
+        pass
+
+
+def _drain_indexing_queue(timeout_s: int = 60) -> None:
+    """Wait until all background indexing jobs reach a terminal state.
+
+    When a test times out during indexing, the background thread spawned by
+    asyncio.to_thread(self.index, ...) keeps running and holds model references.
+    Waiting here before we attempt model deletion prevents silent GC failures
+    where del/None-assignment has no effect because the thread still owns a ref.
+    """
+    try:
+        from colette.httpjsonapi import http_json_api
+
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            running = [
+                s
+                for s, st in http_json_api.indexing_status.items()
+                if st in ("running", "queued")
+            ]
+            if not running:
+                break
+            time.sleep(1.0)
+    except Exception:
+        pass
+
+
 @pytest.fixture(autouse=True)
 def release_test_resources(request):
     """Best-effort cleanup to limit cumulative memory usage across e2e tests."""
+
+    # Pre-test: reclaim GPU memory from background threads that completed since
+    # the previous test's teardown (e.g. a background indexing thread that was
+    # still running when the previous test timed out and has since finished).
+    if "integration" in request.keywords or "e2e" in request.keywords:
+        _gc_cuda()
+
     yield
 
     # Keep cleanup focused on heavy lanes to avoid slowing unit/smoke paths.
     if "integration" not in request.keywords and "e2e" not in request.keywords:
         return
+
+    # Wait for any in-progress background indexing to finish before we try to
+    # free models.  Without this, del/None-assignment is a no-op because the
+    # thread pool worker still holds a reference to the service/model objects.
+    _drain_indexing_queue()
 
     try:
         from colette.httpjsonapi import http_json_api
@@ -164,13 +217,5 @@ def release_test_resources(request):
     except Exception:
         pass
 
-    gc.collect()
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
-    except Exception:
-        pass
+    _gc_cuda()
 
