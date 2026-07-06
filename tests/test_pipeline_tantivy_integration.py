@@ -66,6 +66,7 @@ def text_search_engine_context(tmp_path):
     index_config["parameters"]["input"]["data"] = [str(_ROOT / "tests" / "data_pdf1")]
     index_config["parameters"]["input"]["rag"]["reindex"] = True
     index_config["parameters"]["input"]["rag"]["index_protection"] = False
+    index_config["parameters"]["input"]["rag"]["gpu_id"] = 0
 
     return {
         "create": create_config,

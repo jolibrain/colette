@@ -70,6 +70,7 @@ def pipeline_context(tmp_path):
     index_config["parameters"]["input"]["data"] = [str(root / "tests" / "data_pdf1")]
     index_config["parameters"]["input"]["rag"]["reindex"] = True
     index_config["parameters"]["input"]["rag"]["index_protection"] = False
+    index_config["parameters"]["input"]["rag"]["gpu_id"] = 0
 
     return {
         "app_name": app_name,
