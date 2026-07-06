@@ -35,7 +35,11 @@ def test_logging_payload(client):
                         "embedding_lib": "huggingface",
                         "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
                         "top_k": 4,
-                        "ragm": {"layout_detection": False},
+                        "ragm": {
+                            "layout_detection": False,
+                            "image_width": 640,
+                            "image_height": 640,
+                        },
                     },
                     "template": {
                         "template_prompt": "Tu es un assistant de réponse à des questions."
