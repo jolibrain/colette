@@ -1,4 +1,6 @@
 import copy
+import json
+import urllib.request
 
 import pytest
 from utils import ensure_repo_deleted, ensure_service_deleted, wait_for_index_status
@@ -6,6 +8,17 @@ from utils import ensure_repo_deleted, ensure_service_deleted, wait_for_index_st
 from base_text_helpers import models_repo
 
 pytestmark = [pytest.mark.integration, pytest.mark.e2e]
+
+_OLLAMA_MODEL = "qwen2.5:0.5b"
+
+
+def _ollama_has_model(model: str) -> bool:
+    try:
+        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=2) as resp:
+            data = json.loads(resp.read())
+        return any(model in m["name"] for m in data.get("models", []))
+    except Exception:
+        return False
 
 json_predict = {
     "app": {"repository": "colette_test/"},
@@ -28,6 +41,11 @@ json_predict_prompt = {
 
 
 class TestRagLangchainTxtOllama:
+    @pytest.fixture(autouse=True)
+    def _skip_if_no_ollama(self):
+        if not _ollama_has_model(_OLLAMA_MODEL):
+            pytest.skip(f"Ollama model {_OLLAMA_MODEL!r} not available on this host")
+
     def test_ollama_gpt4all(self, client):
         ##############################################
         # build the service with ollama and no rag
