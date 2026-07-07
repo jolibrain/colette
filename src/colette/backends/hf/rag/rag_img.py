@@ -10,6 +10,13 @@ from typing import Any, cast
 import chromadb
 import fitz
 import torch
+
+# chromadb's Rust backend uses a process-level singleton. Creating a second
+# PersistentClient after the first has been GC'd fails with:
+#   AttributeError: 'RustBindingsAPI' object has no attribute 'bindings'
+# Keeping one client per path alive for the duration of the process avoids
+# re-initialization and SQLite re-locking issues between sequential services.
+_chroma_client_cache: dict = {}
 from chromadb.api.types import (
     Embedding,
     EmbeddingFunction,
@@ -643,10 +650,13 @@ class RAGImg:
         self.rag_embedding_lib = ad.rag.embedding_lib
         
         if self.rag_indexdb_lib == "chromadb":
-            self.rag_indexdb_client = chromadb.PersistentClient(
-                path=str(self.indexpath),
-                settings=Settings(anonymized_telemetry=False),
-            )
+            path_key = str(self.indexpath)
+            if path_key not in _chroma_client_cache:
+                _chroma_client_cache[path_key] = chromadb.PersistentClient(
+                    path=path_key,
+                    settings=Settings(anonymized_telemetry=False),
+                )
+            self.rag_indexdb_client = _chroma_client_cache[path_key]
         else:
             self.rag_indexdb_client = None
 
@@ -666,17 +676,17 @@ class RAGImg:
         self.rag_retriever = None
 
     def __del__(self):
-        if self.rag_retriever is not None:
+        if hasattr(self, 'rag_retriever') and self.rag_retriever is not None:
             del self.rag_retriever
             self.rag_retriever = None
         if hasattr(self, 'rag_indexdb_collection') and self.rag_indexdb_collection is not None:
             del self.rag_indexdb_collection
         if hasattr(self, 'rag_indexdb_client') and self.rag_indexdb_client is not None:
-            try:
-                if hasattr(self.rag_indexdb_client, "_system") and self.rag_indexdb_client._system is not None:
-                    self.rag_indexdb_client._system.stop()
-            except Exception:
-                pass
+            # Drop the instance reference only. The module-level _chroma_client_cache
+            # keeps the PersistentClient alive so the Rust backend singleton is not
+            # torn down between sequential service creations in the same process.
+            # Calling _system.stop() here would permanently break the Rust backend
+            # for any subsequent PersistentClient call in this process.
             del self.rag_indexdb_client
 
     def reload_index_if_any(self, ad):
