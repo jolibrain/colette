@@ -39,6 +39,8 @@ def test_create_app_and_index(temp_dir, client):
                     "top_k": 2,
                     "ragm": {
                         "layout_detection": False,
+                        "image_width": 640,
+                        "image_height": 960,
                     },
                 },
             },
@@ -149,6 +151,8 @@ def test_create_app_twice(temp_dir, client):
                     "top_k": 2,
                     "ragm": {
                         "layout_detection": False,
+                        "image_width": 640,
+                        "image_height": 960,
                     },
                 },
                 "template": {
@@ -260,7 +264,7 @@ def test_index_first(temp_dir, client):
                     "embedding_lib": "huggingface",
                     "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
                     "top_k": 2,
-                    "ragm": {"layout_detection": False},
+                    "ragm": {"layout_detection": False, "image_width": 640, "image_height": 960},
                 },
                 "template": {
                     "template_prompt": "Tu es un assistant de réponse à des questions. Question: {question} Réponse: ",
@@ -331,6 +335,8 @@ def test_create_app_and_multiple_index(temp_dir, client):
                     "top_k": 2,
                     "ragm": {
                         "layout_detection": False,
+                        "image_width": 640,
+                        "image_height": 960,
                     },
                 },
                 "template": {
