@@ -643,12 +643,9 @@ class RAGImg:
         self.rag_embedding_lib = ad.rag.embedding_lib
         
         if self.rag_indexdb_lib == "chromadb":
-            self.rag_indexdb_client = chromadb.Client(
-                Settings(
-                    is_persistent=True,
-                    persist_directory=str(self.indexpath),
-                    anonymized_telemetry=False,
-                )
+            self.rag_indexdb_client = chromadb.PersistentClient(
+                path=str(self.indexpath),
+                settings=Settings(anonymized_telemetry=False),
             )
         else:
             self.rag_indexdb_client = None
