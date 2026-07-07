@@ -215,6 +215,13 @@ def test_create_app_twice(temp_dir, client):
         index_definition["parameters"]["input"]["rag"]["reindex"] = True
         index_definition["parameters"]["input"]["data"] = ["tests/data_img3"]
 
+        # Delete the first service before creating a second one pointing to the same
+        # repository directory. Both services share the same kvstore HDF5 file; if
+        # the first service is still alive it holds the file open in read-only mode,
+        # which prevents the second service from reopening it for writing.
+        response = client.delete("/v1/app/test_create_app_twice")
+        assert response.status_code == 200
+
         response = client.put(
             "/v1/app/test_create_app_twice_true_true",
             json=app_definition,
@@ -239,9 +246,10 @@ def test_create_app_twice(temp_dir, client):
         assert cc.get_collection("mm_db") is not None
         assert cc.get_collection("mm_db").count() == 1
     finally:
-        # delete the service
+        # test_create_app_twice may have been deleted mid-test (before creating
+        # test_create_app_twice_true_true), so 404 is also acceptable here.
         response = client.delete("/v1/app/test_create_app_twice")
-        assert response.status_code == 200
+        assert response.status_code in (200, 404)
         response = client.delete("/v1/app/test_create_app_twice_true_true")
         assert response.status_code == 200
 
