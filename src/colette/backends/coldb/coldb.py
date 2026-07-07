@@ -69,15 +69,14 @@ class ColDB:
 
         self.persist_directory = persist_directory
         if self.persist_directory:
-            _client_settings = chromadb.config.Settings(
-                is_persistent=True, anonymized_telemetry=False
+            self._client = chromadb.PersistentClient(
+                path=str(persist_directory),
+                settings=chromadb.config.Settings(anonymized_telemetry=False, allow_reset=True),
             )
-            _client_settings.persist_directory = str(persist_directory)
         else:
-            _client_settings = chromadb.config.Settings(anonymized_telemetry=False)
-        self._client_settings = _client_settings
-        self._client_settings.allow_reset = True
-        self._client = chromadb.Client(self._client_settings)
+            self._client = chromadb.EphemeralClient(
+                settings=chromadb.config.Settings(anonymized_telemetry=False, allow_reset=True),
+            )
         self._client.clear_system_cache()
 
         if recreate and self._client.count_collections() != 0:
