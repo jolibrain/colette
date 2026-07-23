@@ -903,7 +903,7 @@ class _NullLogger:
 # ---------------------------------------------------------------------------
 
 # Minimum number of documents before collection-level clustering is worthwhile.
-COLLECTION_THRESHOLD = 15
+COLLECTION_THRESHOLD = 5
 
 # Token budget for the single VLM call that clusters all documents.
 _COLLECTION_BUILD_TOKENS = 2048

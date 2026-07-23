@@ -599,19 +599,21 @@ def test_build_collection_index_uses_alphabetical_fallback_on_bad_json():
 def test_build_collection_index_parses_vlm_json():
     """When VLM output is valid JSON, clusters are built from it."""
     from colette.backends.hf.hindex import build_collection_index, COLLECTION_THRESHOLD, CollectionIndex
-    hierarchies = [_make_hierarchy(f"doc{i:02d}.pdf") for i in range(COLLECTION_THRESHOLD + 5)]
+    # Use a fixed count large enough to exceed any reasonable threshold and split evenly.
+    n = max(20, COLLECTION_THRESHOLD + 10)
+    hierarchies = [_make_hierarchy(f"doc{i:02d}.pdf") for i in range(n)]
     doc_names = [h.doc_name for h in hierarchies]
 
     vlm_output = json.dumps([
-        {"id": "C01", "label": "Group A", "desc": "First half", "docs": doc_names[:10]},
-        {"id": "C02", "label": "Group B", "desc": "Second half", "docs": doc_names[10:]},
+        {"id": "C01", "label": "Group A", "desc": "First half", "docs": doc_names[:n // 2]},
+        {"id": "C02", "label": "Group B", "desc": "Second half", "docs": doc_names[n // 2:]},
     ])
     idx = build_collection_index(hierarchies, vlm_fn=lambda *a, **kw: vlm_output,
                                  logger=_LogCapture())
     assert idx is not None
     assert len(idx.clusters) == 2
     assert idx.clusters[0].cluster_id == "C01"
-    assert set(idx.clusters[0].doc_names) == set(doc_names[:10])
+    assert set(idx.clusters[0].doc_names) == set(doc_names[:n // 2])
 
 
 def test_collection_index_roundtrip():

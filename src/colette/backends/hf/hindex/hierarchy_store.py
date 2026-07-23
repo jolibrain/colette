@@ -68,7 +68,7 @@ class HierarchyStore:
         """Load every document hierarchy in the store (skips internal files)."""
         hierarchies: list[DocumentHierarchy] = []
         for p in sorted(self.hindex_dir.glob("*.json")):
-            if p.name.startswith("_"):  # skip _collection_index.json and other internals
+            if p.name == _COLLECTION_INDEX_FILE:
                 continue
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
