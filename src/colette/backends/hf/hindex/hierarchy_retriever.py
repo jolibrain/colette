@@ -2,11 +2,14 @@
 
 At query time:
   1. Select the relevant document(s) from their descriptions.
-  2. Select the most relevant topic(s) from the topic list.
-  3. Collect the page indices for those topics.
-  4. For each page, return the full-page image key AND all crop keys,
-     enriched with the pre-extracted per-page metadata (OCR, summary, etc.)
-     so the answering VLM gets richer context without re-reading from scratch.
+  2a. Short documents (≤ DIRECT_SELECT_THRESHOLD pages): ask the VLM to rank
+      page indices directly using per-page summaries and visual descriptions.
+      One LLM call, no topic indirection, correct ordering by relevance.
+  2b. Long documents: navigate by topic IDs, then collect their page indices.
+  3. Return full-page images first (up to top_k), then fill remaining slots
+     with crops.  Distances are position-based (0.05 · rank) so hindex results
+     compete fairly with vector-search cosine distances in overlay modes instead
+     of always winning with the previous hardcoded 0.0.
 
 Return format is compatible with RAGImgRetriever so results merge cleanly
 into the hybrid context.
@@ -18,12 +21,18 @@ import json
 import re
 from typing import Any
 
-from .hierarchy_builder import DocumentHierarchy, PageRecord
+from .hierarchy_builder import COLLECTION_THRESHOLD, CollectionIndex, DocumentCluster, DocumentHierarchy, PageRecord
 from .hierarchy_store import HierarchyStore
 
 # Navigation calls produce short JSON lists (["T01", "T02"] or ["doc.pdf"]).
 # 256 tokens is more than enough and avoids wasting budget on thinking tokens.
 _NAV_TOKENS = 256
+
+# Documents with at most this many pages use direct page-index selection instead
+# of the two-step topic → pages navigation.  Topic indirection helps for long
+# documents where the full page list overflows the prompt; for short ones it
+# just adds noise and an extra LLM call.
+_DIRECT_SELECT_THRESHOLD = 30
 
 
 class HierarchyRetriever:
@@ -59,6 +68,21 @@ class HierarchyRetriever:
 
         Return value is compatible with the ``docs`` dict consumed by
         ``RAGImgRetriever`` downstream (ids, distances, metadatas keys).
+
+        Distance assignment
+        -------------------
+        Distances are position-based: ``0.05 * (rank + 1)`` for full-page
+        images and ``+0.025`` for their crops.  This keeps hindex results in
+        the same ballpark as typical cosine distances from ChromaDB (0.1–0.6),
+        so in overlay modes the two result lists compete on merit rather than
+        hindex always winning with the previous hardcoded 0.0.
+
+        Budget allocation
+        -----------------
+        Full-page images are added first (up to top_k), then any remaining
+        slots are filled with crops.  Previously crops consumed slots alongside
+        full pages, which could exhaust the budget before all selected pages
+        were included.
         """
         hierarchies = self.store.load_all()
         if not hierarchies:
@@ -69,13 +93,14 @@ class HierarchyRetriever:
         if not candidate_pages:
             return _empty_docs()
 
-        # Build result items (page image + crops, enriched metadata)
         hier_by_name = {h.doc_name: h for h in hierarchies}
-        ids, distances, metadatas = [], [], []
 
-        for doc_name, page_idx in candidate_pages:
-            if len(ids) >= self.top_k:
-                break
+        # Collect full-page and crop items separately so we can fill full pages
+        # first, then use remaining budget for crops.
+        full_items: list[tuple[str, float, dict]] = []
+        crop_items: list[tuple[str, float, dict]] = []
+
+        for rank, (doc_name, page_idx) in enumerate(candidate_pages):
             hier = hier_by_name.get(doc_name)
             if hier is None:
                 continue
@@ -89,29 +114,47 @@ class HierarchyRetriever:
             if not page_key:
                 continue
 
-            # Resolve full-page key (fall back to first crop if full-page absent)
             resolved_key, crop_label = self._resolve_key(page_key)
             if resolved_key is None:
                 continue
 
-            # Base metadata enriched with pre-extracted page information
-            base_meta = self._page_metadata(doc_name, page_idx, crop_label, record)
-            ids.append(resolved_key)
-            distances.append(0.0)
-            metadatas.append(base_meta)
+            # Position-based distance: most-relevant page gets the lowest value.
+            page_dist = 0.05 * (rank + 1)
 
-            # Also include individual crop keys for this page
+            full_items.append((
+                resolved_key,
+                page_dist,
+                self._page_metadata(doc_name, page_idx, crop_label, record),
+            ))
+
             if record and record.crop_keys:
+                crop_dist = page_dist + 0.025
                 for crop_key in record.crop_keys:
-                    if len(ids) >= self.top_k:
-                        break
                     if self.kvstore.has_key(crop_key):
-                        ids.append(crop_key)
-                        distances.append(0.0)
-                        metadatas.append(
+                        crop_items.append((
+                            crop_key,
+                            crop_dist,
                             self._page_metadata(doc_name, page_idx, "crop", record,
-                                                extra={"crop_key": crop_key})
-                        )
+                                                extra={"crop_key": crop_key}),
+                        ))
+
+        ids, distances, metadatas = [], [], []
+
+        # Phase 1: full-page images (guaranteed slots before any crops)
+        for key, dist, meta in full_items:
+            if len(ids) >= self.top_k:
+                break
+            ids.append(key)
+            distances.append(dist)
+            metadatas.append(meta)
+
+        # Phase 2: crops fill remaining budget
+        for key, dist, meta in crop_items:
+            if len(ids) >= self.top_k:
+                break
+            ids.append(key)
+            distances.append(dist)
+            metadatas.append(meta)
 
         return {"ids": [ids], "distances": [distances], "metadatas": [metadatas]}
 
@@ -144,10 +187,32 @@ class HierarchyRetriever:
     def _select_documents(
         self, question: str, hierarchies: list[DocumentHierarchy]
     ) -> list[DocumentHierarchy]:
-        """VLM picks which document(s) to search."""
+        """VLM picks which document(s) to search.
+
+        At small scale (< COLLECTION_THRESHOLD docs): single-stage flat selection
+        — all document descriptions fit comfortably in one prompt.
+
+        At large scale (≥ COLLECTION_THRESHOLD docs): two-stage selection using
+        the pre-built collection index:
+          Stage 1 — VLM picks 1-2 clusters from a short cluster list.
+          Stage 2 — VLM picks 1-2 documents from within those clusters.
+
+        Falls back to flat selection if no collection index is available.
+        """
         if len(hierarchies) == 1:
             return hierarchies
 
+        if len(hierarchies) >= COLLECTION_THRESHOLD:
+            collection_idx = self.store.load_collection_index()
+            if collection_idx:
+                return self._select_documents_via_collection(question, hierarchies, collection_idx)
+
+        return self._select_documents_flat(question, hierarchies)
+
+    def _select_documents_flat(
+        self, question: str, hierarchies: list[DocumentHierarchy]
+    ) -> list[DocumentHierarchy]:
+        """Single-stage document selection — works well for small collections."""
         doc_list = "\n".join(
             f"- {h.doc_name}: {h.doc_description} ({h.page_count} pages)"
             for h in hierarchies
@@ -163,21 +228,141 @@ class HierarchyRetriever:
         matched = [h for h in hierarchies if h.doc_name in selected_names]
         return matched or hierarchies[:1]
 
+    def _select_documents_via_collection(
+        self,
+        question: str,
+        hierarchies: list[DocumentHierarchy],
+        collection_idx: CollectionIndex,
+    ) -> list[DocumentHierarchy]:
+        """Two-stage document selection for large corpora.
+
+        Stage 1: VLM picks 1-2 thematic clusters (short list, fast).
+        Stage 2: VLM picks 1-2 documents within those clusters (flat selection).
+        """
+        hier_by_name = {h.doc_name: h for h in hierarchies}
+
+        # Stage 1 — cluster selection
+        cluster_lines = "\n".join(
+            f"[{c.cluster_id}] {c.label}: {c.description} ({len(c.doc_names)} docs)"
+            for c in collection_idx.clusters
+        )
+        prompt = (
+            "Select the document cluster(s) most likely to contain the answer.\n"
+            "Output a JSON array of cluster IDs (e.g. [\"C01\", \"C03\"]) — no explanation.\n\n"
+            f"Question: {question}\n\n"
+            f"Clusters:\n{cluster_lines}"
+        )
+        raw = self.vlm_fn([], prompt, _NAV_TOKENS)
+        selected_cluster_ids = set(_parse_json_list(raw, self.logger))
+        self.logger.debug("[hindex] Selected clusters: %s", selected_cluster_ids)
+
+        # Gather candidate documents from selected clusters
+        candidate_names: list[str] = []
+        for cluster in collection_idx.clusters:
+            if cluster.cluster_id in selected_cluster_ids:
+                candidate_names.extend(cluster.doc_names)
+
+        if not candidate_names:
+            self.logger.warning(
+                "[hindex] No clusters matched for question; falling back to largest cluster"
+            )
+            largest = max(collection_idx.clusters, key=lambda c: len(c.doc_names))
+            candidate_names = largest.doc_names
+
+        candidate_hierarchies = [
+            hier_by_name[n] for n in candidate_names if n in hier_by_name
+        ]
+        if not candidate_hierarchies:
+            return hierarchies[:1]
+
+        # Stage 2 — flat document selection within candidates
+        return self._select_documents_flat(question, candidate_hierarchies)
+
     def _select_pages(self, question: str, hierarchy: DocumentHierarchy) -> list[int]:
-        """VLM picks relevant topic IDs → returns their page indices."""
-        # New model: navigate by topics
+        """VLM picks relevant pages — strategy depends on document length.
+
+        Short documents (≤ _DIRECT_SELECT_THRESHOLD pages)
+            Direct page selection: the VLM ranks page indices using per-page
+            summaries and visual descriptions.  One LLM call, no topic
+            indirection, pages returned in relevance order.
+
+        Long documents
+            Two-step navigation: topic IDs → page indices.  Keeps prompt size
+            manageable when a full page list would overflow context.
+        """
+        if hierarchy.page_count <= _DIRECT_SELECT_THRESHOLD and hierarchy.page_records:
+            return self._select_pages_direct(question, hierarchy)
         if hierarchy.topics:
             return self._select_pages_via_topics(question, hierarchy)
-        # Legacy fallback: navigate by flat nodes
         if hierarchy.nodes:
             return self._select_pages_via_nodes(question, hierarchy)
-        # Last resort: return all pages up to top_k
         return list(range(min(hierarchy.page_count, self.top_k)))
+
+    def _select_pages_direct(
+        self, question: str, hierarchy: DocumentHierarchy
+    ) -> list[int]:
+        """Direct page selection for short documents.
+
+        Shows the VLM every page's summary and visual description, then asks it
+        to return the most relevant page indices ranked by relevance.  Skips the
+        topic abstraction layer entirely, which avoids two failure modes:
+        - All pages in a selected topic receiving equal (arbitrary) priority.
+        - An irrelevant page winning just because it belongs to the right topic.
+
+        Visual descriptions are highlighted so chart/figure pages are properly
+        identified even when their text content is sparse.
+        """
+        page_lines: list[str] = []
+        for r in hierarchy.page_records:
+            parts: list[str] = []
+            if r.summary:
+                parts.append(r.summary)
+            if r.visual_description:
+                parts.append(f"[visual: {r.visual_description}]")
+            if r.keywords:
+                parts.append(f"({', '.join(r.keywords)})")
+            page_lines.append(f"  p{r.page_idx}: {' '.join(parts) or '(no description)'}")
+
+        page_context = "\n".join(page_lines)[:4000]
+
+        prompt = (
+            f"Document: {hierarchy.doc_name}\n\n"
+            f"Question: {question}\n\n"
+            "Which pages are most relevant to answer this question?\n"
+            f"Return a JSON array of 0-based page indices, most relevant first "
+            f"(at most {self.top_k}).\n"
+            "Output only the JSON array — no explanation.\n\n"
+            f"Pages:\n{page_context}"
+        )
+        raw = self.vlm_fn([], prompt, _NAV_TOKENS)
+        raw_list = _parse_json_list(raw, self.logger)
+
+        pages: list[int] = []
+        seen: set[int] = set()
+        for s in raw_list:
+            try:
+                idx = int(s)
+                if 0 <= idx < hierarchy.page_count and idx not in seen:
+                    seen.add(idx)
+                    pages.append(idx)
+            except (ValueError, TypeError):
+                pass
+
+        if not pages:
+            self.logger.warning(
+                f"[hindex] Direct page selection returned no valid indices for "
+                f"'{hierarchy.doc_name}'; falling back to topic navigation"
+            )
+            if hierarchy.topics:
+                return self._select_pages_via_topics(question, hierarchy)
+            return list(range(min(hierarchy.page_count, self.top_k)))
+
+        return pages
 
     def _select_pages_via_topics(
         self, question: str, hierarchy: DocumentHierarchy
     ) -> list[int]:
-        """Navigate by topics — the new model."""
+        """Navigate by topics — used for long documents."""
         topic_list = "\n".join(
             f"[{t.topic_id}] {t.theme}: {t.description}  "
             f"(pages: {', '.join(str(p) for p in t.page_indices)})"

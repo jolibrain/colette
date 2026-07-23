@@ -44,6 +44,8 @@ from colette.backends.hf.hindex import (
     HierarchyBuilder,
     HierarchyStore,
     HierarchyRetriever,
+    CollectionIndex,
+    build_collection_index,
     DocumentHierarchy,
     retrieval_mode_uses_hindex,
     _page_key,
@@ -63,17 +65,49 @@ def is_image(target: Any) -> bool:
     return True
 
 
-def _merge_hindex_results(docs: dict, hindex_docs: dict) -> dict:
-    """Append hindex retrieval results into the main docs dict in-place."""
+def _merge_hindex_results(docs: dict, hindex_docs: dict, top_k: int | None = 4) -> dict:
+    """Merge hindex results into docs with balanced slot allocation.
+
+    Each source (hindex, embedding) receives ceil(top_k / 2) slots so both
+    contribute to the context the LLM sees.  hindex distances (0.05–0.20) are
+    intentionally lower than embedding cosine distances (0.4–0.8); without
+    capping, hindex would fill every slot and embedding would never appear.
+
+    Within each source the best-ranked results are kept; the two halves are
+    then sorted by distance so the LLM receives them in relevance order.
+    """
     if not hindex_docs.get("ids", [[]])[0]:
         return docs
-    docs["ids"][0].extend(hindex_docs["ids"][0])
-    docs["distances"][0].extend(hindex_docs["distances"][0])
-    docs["metadatas"][0].extend(hindex_docs["metadatas"][0])
-    # hindex returns multiple images per page (full-page + crops); thinking mode
-    # frequently overflows the token budget before </think> when many images are
-    # present.  The pre-extracted summaries and keywords in the metadata already
-    # provide rich context without a thinking trace.
+
+    import math
+    # Slot budget: each source gets half; hindex rounds up when top_k is odd.
+    if top_k is not None and top_k > 0:
+        hindex_slots = math.ceil(top_k / 2)
+        emb_slots = top_k - hindex_slots
+    else:
+        # No budget given: fall back to all results from each source
+        hindex_slots = len(hindex_docs["ids"][0])
+        emb_slots = len(docs["ids"][0])
+
+    # Take the best results from each source (already sorted by distance)
+    h_ids   = hindex_docs["ids"][0][:hindex_slots]
+    h_dists = hindex_docs["distances"][0][:hindex_slots]
+    h_metas = hindex_docs["metadatas"][0][:hindex_slots]
+
+    e_ids   = docs["ids"][0][:emb_slots]
+    e_dists = docs["distances"][0][:emb_slots]
+    e_metas = docs["metadatas"][0][:emb_slots]
+
+    combined = sorted(
+        zip(h_ids + e_ids, h_dists + e_dists, h_metas + e_metas),
+        key=lambda t: t[1],
+    )
+    if combined:
+        ids, distances, metadatas = zip(*combined)
+        docs["ids"][0] = list(ids)
+        docs["distances"][0] = list(distances)
+        docs["metadatas"][0] = list(metadatas)
+
     docs["_disable_thinking"] = True
     return docs
 
@@ -310,7 +344,7 @@ class ImageEmbeddingFunction(EmbeddingFunction):
                 # Qwen2 VL-specific class when detected, otherwise fall back to a generic
                 # AutoModel (the Qwen3 embedding model should expose hidden states).
                 try:
-                    attn_implementation = resolve_attn_implementation()
+                    attn_implementation = resolve_attn_implementation(self.rag_embedding_model)
 
                     if self.rag_embedding_model.startswith("Alibaba-NLP/gme-Qwen2-VL"):
 
@@ -504,6 +538,14 @@ class ImageEmbeddingFunction(EmbeddingFunction):
 
         # call on the model
         with torch.no_grad():
+            # Reset rope_deltas before each call: Qwen2-VL stores the delta from the
+            # previous batch on the model object.  When batch size changes between calls
+            # (e.g. N-image batch during indexing → 1-item text query), the stale
+            # rope_deltas produces a 0-row delta tensor whose broadcast collapses the
+            # batch dimension to 0, causing a (seq×0 vs 1536×1536) matmul crash.
+            if hasattr(self.model, "model") and hasattr(self.model.model, "rope_deltas"):
+                self.model.model.rope_deltas = None
+
             # If the model implements an `embed` method, use it (some wrappers provide it).
             if hasattr(self.model, "embed"):
                 outputs = self.model.embed(doc_inputs)
@@ -957,16 +999,30 @@ class RAGImg:
             for fext, docs in sorted_documents.items():
                 for doc in tqdm(docs, desc="Indexing documents"):
                     self.logger.info(f"Indexing document {doc}")
-                    if doc in files:
-                        self.logger.info(f"Document {doc} already indexed")
-                        continue
+                    skip_vector_and_text = doc in files
+                    if skip_vector_and_text:
+                        # Doc is already in the vector store.  Check whether hindex
+                        # still needs to be built (e.g. first run indexed with
+                        # 'hybrid', now adding hindex via 'vision_hierarchical').
+                        hindex_needed = (
+                            retrieval_mode_uses_hindex(rag_config.retrieval_mode, rag_config.hindex)
+                            and not self.hindex_store.exists(doc)
+                        )
+                        if not hindex_needed:
+                            self.logger.info(f"Document {doc} already indexed")
+                            continue
+                        self.logger.info(
+                            f"[hindex] Document {doc} already in vector store; "
+                            "re-processing for hindex only"
+                        )
 
                     document = dict(source=Path(doc), ext=fext.lower(), images=list())
                     # Augment document with images
                     processor.transform_documents_to_images([document])
                     self.logger.info(f"\t{len(document['images'])} images extracted")
                     document["npages"] = len(document["images"])
-                    page_texts = self._extract_page_texts(document["source"])
+                    if not skip_vector_and_text:
+                        page_texts = self._extract_page_texts(document["source"])
 
                     # Augment document with crops/chunks (must run before hindex so
                     # crop keys are available for per-page records)
@@ -980,7 +1036,7 @@ class RAGImg:
                     # Text search engine: one document per page (page-level text, not per-crop)
                     # Indexing per-crop would duplicate the same page text N times and
                     # return N identical-content hits for a single-page match.
-                    if text_search_engine_requested:
+                    if text_search_engine_requested and not skip_vector_and_text:
                         source_str = str(document["source"])
                         for page_number, page_text in page_texts.items():
                             page_text_stripped = page_text.strip()
@@ -996,7 +1052,9 @@ class RAGImg:
                                     }
                                 )
 
-                    # store images in the index & vector store
+                    # store images in the index & vector store (skip if already indexed)
+                    if skip_vector_and_text:
+                        continue
                     for part in tqdm(document["parts"]):
                         metadatas = part["metadata"]
 
@@ -1031,6 +1089,19 @@ class RAGImg:
                 self.logger.info(f"{self.rag_indexdb_collection.count()} elements in store [{time() - t1:.2f}]")
             elif text_search_engine_requested:
                 self.logger.info(f"Text search engine indexing completed [{time() - t1:.2f}]")
+
+        # Build / refresh collection index when the corpus is large enough.
+        # Runs after all per-document hindex files are on disk so load_all() is complete.
+        if retrieval_mode_uses_hindex(rag_config.retrieval_mode, rag_config.hindex):
+            if self.vlm_fn is not None and not self.hindex_store.collection_index_exists():
+                hierarchies = self.hindex_store.load_all()
+                idx = build_collection_index(hierarchies, self.vlm_fn, self.logger)
+                if idx is not None:
+                    self.hindex_store.save_collection_index(idx)
+                    self.logger.info(
+                        "[hindex] Collection index saved: %d clusters for %d documents",
+                        len(idx.clusters), len(hierarchies),
+                    )
 
         # Release layout detector resources
         if self.rag_layout_detection:
@@ -1105,7 +1176,7 @@ class RAGImg:
                 # give the answering VLM holistic page context that crop-level
                 # ChromaDB results cannot provide.
                 hindex_docs = self.hindex_retriever.invoke(rag_question)
-                docs = _merge_hindex_results(docs, hindex_docs)
+                docs = _merge_hindex_results(docs, hindex_docs, top_k=rag_config.top_k)
 
         if retrieval_mode_uses_text_search_engine(rag_config.retrieval_mode):
             text_hits, text_prompt = build_text_context(

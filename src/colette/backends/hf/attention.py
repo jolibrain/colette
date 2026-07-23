@@ -32,6 +32,14 @@ def resolve_attn_implementation(model_source: str | None = None) -> str:
     if any(_contains_token(model_source, tok) for tok in _qwen_vl_models):
         return "sdpa"
 
+    # gme-Qwen2-VL uses MROPE and FlashAttention2 rejects the zero-dim tensor that
+    # arises when a stale rope_deltas from a prior image batch is combined with a
+    # different-size text query batch.  The real fix is resetting rope_deltas before
+    # each model call (see ImageEmbeddingFunction.__call__), but SDPA is kept here
+    # as defense-in-depth: FlashAttention2 fails upfront on any zero-dim input.
+    if _contains_token(model_source, "gme-Qwen2-VL") or _contains_token(model_source, "gme_Qwen2_VL"):
+        return "sdpa"
+
     if has_flash_attn():
         return "flash_attention_2"
 

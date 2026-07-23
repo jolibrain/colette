@@ -896,3 +896,192 @@ class _NullLogger:
     def info(self, *_a, **_k): pass
     def warning(self, *_a, **_k): pass
     def debug(self, *_a, **_k): pass
+
+
+# ---------------------------------------------------------------------------
+# Collection-level index (corpus scale)
+# ---------------------------------------------------------------------------
+
+# Minimum number of documents before collection-level clustering is worthwhile.
+COLLECTION_THRESHOLD = 15
+
+# Token budget for the single VLM call that clusters all documents.
+_COLLECTION_BUILD_TOKENS = 2048
+
+
+@dataclass
+class DocumentCluster:
+    """A thematic cluster of documents within the collection index."""
+
+    cluster_id: str        # short ID, e.g. "C01"
+    label: str             # human-readable category name
+    description: str       # one-sentence description of what documents cover
+    doc_names: list[str]   # document names belonging to this cluster
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "cluster_id": self.cluster_id,
+            "label": self.label,
+            "description": self.description,
+            "doc_names": self.doc_names,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "DocumentCluster":
+        return cls(
+            cluster_id=d["cluster_id"],
+            label=d["label"],
+            description=d.get("description", ""),
+            doc_names=d.get("doc_names", []),
+        )
+
+
+@dataclass
+class CollectionIndex:
+    """Top-level index grouping all document hierarchies into thematic clusters.
+
+    Enables two-stage document selection at query time:
+      Stage 1 — LLM picks 1–2 clusters from a short list (≤ 12 choices).
+      Stage 2 — LLM picks 1–2 documents from within the selected clusters.
+
+    This replaces a single flat selection over all N documents, which degrades
+    when N > ~20 because the LLM prompt becomes too long and the choice set too
+    large for reliable navigation.
+    """
+
+    clusters: list[DocumentCluster]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"clusters": [c.to_dict() for c in self.clusters]}
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "CollectionIndex":
+        return cls(clusters=[DocumentCluster.from_dict(c) for c in d.get("clusters", [])])
+
+
+def build_collection_index(
+    hierarchies: list[DocumentHierarchy],
+    vlm_fn,
+    logger,
+    max_clusters: int = 12,
+) -> "CollectionIndex | None":
+    """Group *hierarchies* into thematic clusters via one VLM call.
+
+    Returns None when there are fewer than COLLECTION_THRESHOLD documents
+    (flat single-stage selection is fine at that scale).
+    """
+    if len(hierarchies) < COLLECTION_THRESHOLD:
+        return None
+
+    doc_lines = "\n".join(
+        f'- "{h.doc_name}": {h.doc_description[:120]}'
+        for h in hierarchies
+    )
+    prompt = (
+        f"You have {len(hierarchies)} documents listed below. "
+        f"Group them into at most {max_clusters} thematic clusters for retrieval.\n\n"
+        "Output a JSON array. Each element must have exactly these keys:\n"
+        '  "id"   : cluster ID string like "C01", "C02", ...\n'
+        '  "label": short category name (3–5 words)\n'
+        '  "desc" : one sentence describing what documents in this cluster cover\n'
+        '  "docs" : JSON array of document name strings belonging to this cluster\n\n'
+        "Rules:\n"
+        "- Every document must appear in exactly one cluster.\n"
+        "- Use the document names exactly as given (copy them verbatim).\n"
+        "- Output only the JSON array, no explanation or markdown.\n\n"
+        f"Documents:\n{doc_lines}"
+    )
+
+    raw = vlm_fn([], prompt, _COLLECTION_BUILD_TOKENS)
+    clusters = _parse_cluster_output(raw, hierarchies, logger)
+    if clusters is None:
+        logger.warning(
+            "[hindex] Collection index: VLM output could not be parsed; "
+            "falling back to alphabetical grouping"
+        )
+        clusters = _alphabetical_clusters(hierarchies, max_clusters)
+
+    index = CollectionIndex(clusters=clusters)
+    logger.info(
+        "[hindex] Collection index built: %d clusters for %d documents",
+        len(clusters), len(hierarchies),
+    )
+    return index
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers for collection index building
+# ---------------------------------------------------------------------------
+
+
+def _parse_cluster_output(
+    raw: str,
+    hierarchies: list[DocumentHierarchy],
+    logger,
+) -> "list[DocumentCluster] | None":
+    raw = re.sub(r"```(?:json)?", "", raw).strip().strip("`").strip()
+    data = None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        m = re.search(r"\[.*\]", raw, re.DOTALL)
+        if m:
+            try:
+                data = json.loads(m.group(0))
+            except json.JSONDecodeError:
+                pass
+
+    if not isinstance(data, list):
+        return None
+
+    all_names = {h.doc_name for h in hierarchies}
+    clusters: list[DocumentCluster] = []
+    assigned: set[str] = set()
+
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        doc_names = [str(d) for d in item.get("docs", []) if str(d) in all_names]
+        if not doc_names:
+            continue
+        clusters.append(DocumentCluster(
+            cluster_id=str(item.get("id", f"C{len(clusters) + 1:02d}")),
+            label=str(item.get("label", f"Group {len(clusters) + 1}")),
+            description=str(item.get("desc", "")),
+            doc_names=doc_names,
+        ))
+        assigned.update(doc_names)
+
+    # Catch-all for any documents the VLM omitted
+    unassigned = [h.doc_name for h in hierarchies if h.doc_name not in assigned]
+    if unassigned:
+        clusters.append(DocumentCluster(
+            cluster_id=f"C{len(clusters) + 1:02d}",
+            label="Other Documents",
+            description="Documents not assigned to other clusters.",
+            doc_names=unassigned,
+        ))
+
+    return clusters if clusters else None
+
+
+def _alphabetical_clusters(
+    hierarchies: list[DocumentHierarchy],
+    max_clusters: int,
+) -> list[DocumentCluster]:
+    """Fallback: split alphabetically-sorted documents into equal-sized groups."""
+    sorted_h = sorted(hierarchies, key=lambda h: h.doc_name.lower())
+    n = len(sorted_h)
+    size = max(1, (n + max_clusters - 1) // max_clusters)
+    clusters: list[DocumentCluster] = []
+    for i in range(0, n, size):
+        chunk = sorted_h[i : i + size]
+        cid = f"C{len(clusters) + 1:02d}"
+        sample = ", ".join(h.doc_name[:25] for h in chunk[:2])
+        clusters.append(DocumentCluster(
+            cluster_id=cid,
+            label=f"Documents {i + 1}–{min(i + size, n)}",
+            description=f"e.g. {sample}{'…' if len(chunk) > 2 else ''}",
+            doc_names=[h.doc_name for h in chunk],
+        ))
+    return clusters

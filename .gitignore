@@ -16,6 +16,7 @@ venv_colette/
 
 # app example folder
 app_colette/
+app_eval_benchmark/
 None/
 models/
 
