@@ -674,3 +674,185 @@ def test_retriever_uses_collection_index_two_stage(tmp_path):
     assert any("Clusters:" in c for c in calls), "Expected cluster-selection call"
     # Must have called flat doc selection within cluster
     assert any("Select the document" in c for c in calls), "Expected doc-selection call"
+
+
+# ---------------------------------------------------------------------------
+# vision_semantic routing
+# ---------------------------------------------------------------------------
+
+from colette.backends.tantivy.tantivy_index import retrieval_mode_uses_vision_semantic
+from colette.backends.hf.rag.rag_img import (
+    _hierarchy_to_vlm_tantivy_docs,
+    _vlm_hits_to_page_docs,
+)
+
+
+def test_vision_semantic_routing_true():
+    assert retrieval_mode_uses_vision_semantic("vision_semantic") is True
+
+
+def test_vision_semantic_routing_false_for_all_other_modes():
+    for mode in ("embedding_retrieval", "text_search_retrieval", "hybrid", "vision_hierarchical"):
+        assert retrieval_mode_uses_vision_semantic(mode) is False, f"Expected False for {mode}"
+
+
+def test_vision_semantic_does_not_use_embedding_retrieval():
+    assert retrieval_mode_uses_embedding_retrieval("vision_semantic") is False
+
+
+def test_vision_semantic_does_not_use_text_search_engine():
+    assert retrieval_mode_uses_text_search_engine("vision_semantic") is False
+
+
+def test_vision_semantic_does_not_use_hindex():
+    assert retrieval_mode_uses_hindex("vision_semantic") is False
+
+
+# ---------------------------------------------------------------------------
+# _hierarchy_to_vlm_tantivy_docs
+# ---------------------------------------------------------------------------
+
+def _make_full_hierarchy(doc_name: str = "/data/doc.pdf") -> DocumentHierarchy:
+    return DocumentHierarchy(
+        doc_name=doc_name,
+        doc_description="A test document",
+        page_count=3,
+        page_records=[
+            PageRecord(
+                page_idx=0,
+                page_key="uuid_0000",
+                text_content="Revenue grew 12% in Q3.",
+                visual_description="Bar chart showing quarterly revenue.",
+                summary="Q3 financial results show strong growth.",
+                keywords=["revenue", "Q3", "growth"],
+            ),
+            PageRecord(
+                page_idx=1,
+                page_key="uuid_0001",
+                text_content="",
+                visual_description="",
+                summary="",
+                keywords=[],
+            ),
+            PageRecord(
+                page_idx=2,
+                page_key="uuid_0002",
+                text_content="Operating expenses decreased.",
+                visual_description="",
+                summary="Cost reduction summary.",
+                keywords=["expenses", "cost"],
+            ),
+        ],
+    )
+
+
+def test_vlm_tantivy_docs_one_per_non_empty_page():
+    hierarchy = _make_full_hierarchy()
+    docs = _hierarchy_to_vlm_tantivy_docs(hierarchy)
+    # Page 1 (idx=1) is all-empty — should be skipped
+    assert len(docs) == 2
+
+
+def test_vlm_tantivy_docs_page_number_is_one_indexed():
+    hierarchy = _make_full_hierarchy()
+    docs = _hierarchy_to_vlm_tantivy_docs(hierarchy)
+    assert docs[0]["page_number"] == 1   # page_idx=0 → page_number=1
+    assert docs[1]["page_number"] == 3   # page_idx=2 → page_number=3
+
+
+def test_vlm_tantivy_docs_crop_label_is_pagedesc():
+    docs = _hierarchy_to_vlm_tantivy_docs(_make_full_hierarchy())
+    assert all(d["crop_label"] == "pagedesc" for d in docs)
+
+
+def test_vlm_tantivy_docs_doc_id_format():
+    hierarchy = _make_full_hierarchy("/data/doc.pdf")
+    docs = _hierarchy_to_vlm_tantivy_docs(hierarchy)
+    assert docs[0]["doc_id"] == "/data/doc.pdf:page:1"
+    assert docs[0]["source"] == "/data/doc.pdf"
+
+
+def test_vlm_tantivy_docs_content_includes_all_fields():
+    hierarchy = _make_full_hierarchy()
+    doc = _hierarchy_to_vlm_tantivy_docs(hierarchy)[0]
+    content = doc["content"]
+    assert "Q3 financial results" in content   # from summary
+    assert "Revenue grew 12%" in content       # from text_content
+    assert "Bar chart" in content              # from visual_description
+    assert "revenue" in content                # from keywords
+
+
+def test_vlm_tantivy_docs_empty_hierarchy():
+    h = DocumentHierarchy(doc_name="empty.pdf", doc_description="", page_count=0)
+    assert _hierarchy_to_vlm_tantivy_docs(h) == []
+
+
+# ---------------------------------------------------------------------------
+# _vlm_hits_to_page_docs
+# ---------------------------------------------------------------------------
+
+def _make_hits(source: str = "/data/doc.pdf") -> list[dict]:
+    return [
+        {"source": source, "page_number": 3, "score": 8.5, "crop_label": "pagedesc"},
+        {"source": source, "page_number": 1, "score": 5.2, "crop_label": "pagedesc"},
+        {"source": source, "page_number": 7, "score": 2.1, "crop_label": "pagedesc"},
+    ]
+
+
+def test_vlm_hits_to_page_docs_structure():
+    docs = _vlm_hits_to_page_docs(_make_hits(), top_k=3)
+    assert "ids" in docs and "distances" in docs and "metadatas" in docs
+    assert len(docs["ids"][0]) == 3
+
+
+def test_vlm_hits_to_page_docs_respects_top_k():
+    docs = _vlm_hits_to_page_docs(_make_hits(), top_k=2)
+    assert len(docs["ids"][0]) == 2
+
+
+def test_vlm_hits_to_page_docs_distances_ascend_with_lower_score():
+    docs = _vlm_hits_to_page_docs(_make_hits(), top_k=3)
+    dists = docs["distances"][0]
+    # Hits are in score-descending order; distances should reflect that
+    # (higher BM25 score → lower distance)
+    assert dists[0] < dists[1] < dists[2]
+
+
+def test_vlm_hits_to_page_docs_deduplicates():
+    hits = [
+        {"source": "/data/doc.pdf", "page_number": 2, "score": 9.0},
+        {"source": "/data/doc.pdf", "page_number": 2, "score": 7.0},  # duplicate
+        {"source": "/data/doc.pdf", "page_number": 4, "score": 3.0},
+    ]
+    docs = _vlm_hits_to_page_docs(hits, top_k=5)
+    assert len(docs["ids"][0]) == 2
+
+
+def test_vlm_hits_to_page_docs_skips_invalid_hits():
+    hits = [
+        {"source": "", "page_number": 1, "score": 5.0},    # empty source
+        {"source": "/doc.pdf", "page_number": None, "score": 5.0},  # missing page
+        {"source": "/doc.pdf", "page_number": 2, "score": 4.0},     # valid
+    ]
+    docs = _vlm_hits_to_page_docs(hits, top_k=5)
+    assert len(docs["ids"][0]) == 1
+
+
+def test_vlm_hits_to_page_docs_page_key_derivable():
+    from uuid import uuid5, NAMESPACE_URL
+    source = "/data/reports/annual.pdf"
+    hits = [{"source": source, "page_number": 5, "score": 3.0}]
+    docs = _vlm_hits_to_page_docs(hits, top_k=1)
+    expected_uuid = str(uuid5(NAMESPACE_URL, source))
+    expected_key = f"{expected_uuid}_0004"   # page_idx = 5 - 1 = 4
+    assert docs["ids"][0][0] == expected_key
+
+
+def test_vlm_hits_to_page_docs_metadata_fields():
+    source = "/doc.pdf"
+    hits = [{"source": source, "page_number": 3, "score": 6.0}]
+    docs = _vlm_hits_to_page_docs(hits, top_k=1)
+    meta = docs["metadatas"][0][0]
+    assert meta["source"] == source
+    assert meta["page_number"] == 3
+    assert meta["crop_label"] == "pagedesc"
