@@ -17,12 +17,18 @@ venv_colette/
 # app example folder
 app_colette/
 app_eval_benchmark/
+app_mmlongbench_eval/
 None/
 models/
 
 # examples folder
 examples/*.png
 examples/questions_gaia_converter_demo.ipynb
+examples/benchmark/
+examples/hindex_page_records.csv
+
+# Cache tags
+CACHEDIR.TAG
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
