@@ -906,7 +906,9 @@ class _NullLogger:
 COLLECTION_THRESHOLD = 5
 
 # Token budget for the single VLM call that clusters all documents.
-_COLLECTION_BUILD_TOKENS = 2048
+# Short-name output (~10 tokens/doc) × 135 docs × 1 cluster assignment each ≈ 1350 tokens,
+# plus JSON structure and cluster metadata ≈ 3000 tokens total.  Use 4096 to be safe.
+_COLLECTION_BUILD_TOKENS = 4096
 
 
 @dataclass
@@ -973,9 +975,18 @@ def build_collection_index(
     if len(hierarchies) < COLLECTION_THRESHOLD:
         return None
 
+    # Use short names (basename without extension) in the prompt to keep
+    # output tokens low and avoid copy errors on long absolute paths.
+    from pathlib import Path as _Path
+    short_names = [_Path(h.doc_name).stem for h in hierarchies]
+    # Build reverse mapping short_name → full doc_name (handle collisions)
+    short_to_full: dict[str, str] = {}
+    for short, h in zip(short_names, hierarchies):
+        short_to_full.setdefault(short, h.doc_name)
+
     doc_lines = "\n".join(
-        f'- "{h.doc_name}": {h.doc_description[:120]}'
-        for h in hierarchies
+        f'- "{sn}": {h.doc_description[:120]}'
+        for sn, h in zip(short_names, hierarchies)
     )
     prompt = (
         f"You have {len(hierarchies)} documents listed below. "
@@ -993,7 +1004,7 @@ def build_collection_index(
     )
 
     raw = vlm_fn([], prompt, _COLLECTION_BUILD_TOKENS)
-    clusters = _parse_cluster_output(raw, hierarchies, logger)
+    clusters = _parse_cluster_output(raw, hierarchies, short_to_full, logger)
     if clusters is None:
         logger.warning(
             "[hindex] Collection index: VLM output could not be parsed; "
@@ -1017,6 +1028,7 @@ def build_collection_index(
 def _parse_cluster_output(
     raw: str,
     hierarchies: list[DocumentHierarchy],
+    short_to_full: "dict[str, str] | None",
     logger,
 ) -> "list[DocumentCluster] | None":
     raw = re.sub(r"```(?:json)?", "", raw).strip().strip("`").strip()
@@ -1035,13 +1047,30 @@ def _parse_cluster_output(
         return None
 
     all_names = {h.doc_name for h in hierarchies}
+    # Also index by basename (with and without extension) for flexible matching.
+    from pathlib import Path as _Path
+    basename_to_full: dict[str, str] = {}
+    for h in hierarchies:
+        p = _Path(h.doc_name)
+        basename_to_full[p.name] = h.doc_name        # e.g. "foo.pdf"
+        basename_to_full[p.stem] = h.doc_name        # e.g. "foo"
+    if short_to_full:
+        basename_to_full.update(short_to_full)
+
+    def _resolve(name: str) -> "str | None":
+        s = str(name)
+        if s in all_names:
+            return s
+        return basename_to_full.get(s)
+
     clusters: list[DocumentCluster] = []
     assigned: set[str] = set()
 
     for item in data:
         if not isinstance(item, dict):
             continue
-        doc_names = [str(d) for d in item.get("docs", []) if str(d) in all_names]
+        raw_docs = item.get("docs", [])
+        doc_names = [full for d in raw_docs if (full := _resolve(d)) is not None]
         if not doc_names:
             continue
         clusters.append(DocumentCluster(
