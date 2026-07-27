@@ -1063,13 +1063,19 @@ class RAGImg:
                     skip_vector_and_text = doc in files
                     if skip_vector_and_text:
                         # Doc is already in the vector store.  Check whether hindex
-                        # still needs to be built (e.g. first run indexed with
-                        # 'hybrid', now adding hindex via 'vision_hierarchical').
+                        # or vision_semantic VLM descriptions still need to be built.
                         hindex_needed = (
                             retrieval_mode_uses_hindex(rag_config.retrieval_mode, rag_config.hindex)
                             and not self.hindex_store.exists(doc)
                         )
-                        if not hindex_needed:
+                        # vision_semantic fast path: if hindex file already exists,
+                        # load it and generate tantivy docs without image re-render.
+                        if vision_semantic_requested and self.hindex_store.exists(doc):
+                            existing = self.hindex_store.load(doc)
+                            if existing:
+                                vlm_tantivy_documents.extend(_hierarchy_to_vlm_tantivy_docs(existing))
+                            continue
+                        if not hindex_needed and not vision_semantic_requested:
                             self.logger.info(f"Document {doc} already indexed")
                             continue
                         self.logger.info(
@@ -1092,8 +1098,13 @@ class RAGImg:
 
                     # Hierarchical index — runs after preprocessing so crop keys are known.
                     # vision_semantic also builds hindex files (source of VLM descriptions).
+                    # preserve_existing_hindex=True so vision_semantic never rebuilds
+                    # hindex even when reindex=True (it only controls tantivy, not hindex).
                     if retrieval_mode_uses_hindex(rag_config.retrieval_mode, rag_config.hindex) or vision_semantic_requested:
-                        vlm_docs = self._build_hindex_for_doc(document, rag_config)
+                        vlm_docs = self._build_hindex_for_doc(
+                            document, rag_config,
+                            preserve_existing_hindex=vision_semantic_requested,
+                        )
                         if vision_semantic_requested:
                             vlm_tantivy_documents.extend(vlm_docs)
 
@@ -1290,7 +1301,12 @@ class RAGImg:
     def _get_effective_rag_config_for_request(self, request_rag: RAGObj | None) -> RAGObj:
         return merge_rag_config(self.ad.rag, request_rag)
 
-    def _build_hindex_for_doc(self, document: dict, rag_config: RAGObj) -> list[dict]:
+    def _build_hindex_for_doc(
+        self,
+        document: dict,
+        rag_config: RAGObj,
+        preserve_existing_hindex: bool = False,
+    ) -> list[dict]:
         """Build and persist the hierarchy for one document.
 
         Must be called AFTER image_processor.preprocess_images() so that
@@ -1298,9 +1314,13 @@ class RAGImg:
 
         Returns VLM tantivy document dicts (one per page) so the caller can
         accumulate them for vision_semantic indexing.
+
+        preserve_existing_hindex: when True, always reuse existing hindex files
+        even if rag_reindex=True.  Used by vision_semantic, where reindex only
+        controls the Tantivy index, not the hindex files.
         """
         doc_name = str(document["source"])
-        if self.hindex_store.exists(doc_name) and not self.rag_reindex:
+        if self.hindex_store.exists(doc_name) and (not self.rag_reindex or preserve_existing_hindex):
             self.logger.info(f"[hindex] Hierarchy already exists for '{doc_name}', skipping")
             existing = self.hindex_store.load(doc_name)
             return _hierarchy_to_vlm_tantivy_docs(existing) if existing else []
