@@ -74,8 +74,8 @@ class RAGObj(BaseModel):
 
     indexdb_lib: Literal["chromadb", "coldb"] = "chromadb"
     """ Indexing database library, chromadb or coldb """
-    retrieval_mode: Literal["embedding_retrieval", "text_search_retrieval", "hybrid", "vision_hierarchical"] = "embedding_retrieval"
-    """ Retrieval mode: embedding-only, text-search-only, hybrid in parallel, or vision_hierarchical (hindex) """
+    retrieval_mode: Literal["embedding_retrieval", "text_search_retrieval", "hybrid", "vision_hierarchical", "vision_semantic"] = "embedding_retrieval"
+    """ Retrieval mode: embedding-only, text-search-only, hybrid in parallel, vision_hierarchical (hindex LLM navigation), or vision_semantic (BM25 over VLM-generated page descriptions) """
     embedding_lib: Literal["huggingface", "colbert", "vllm"] = "huggingface"
     """ Embedding library, use colbert with coldb, huggingface for V-RAG """
     embedding_model: str | None = None

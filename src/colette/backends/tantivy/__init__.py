@@ -3,6 +3,7 @@ from .tantivy_index import (
     build_text_context,
     retrieval_mode_uses_text_search_engine,
     retrieval_mode_uses_embedding_retrieval,
+    retrieval_mode_uses_vision_semantic,
 )
 
 __all__ = [
@@ -10,4 +11,5 @@ __all__ = [
     "build_text_context",
     "retrieval_mode_uses_text_search_engine",
     "retrieval_mode_uses_embedding_retrieval",
+    "retrieval_mode_uses_vision_semantic",
 ]

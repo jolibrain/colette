@@ -39,6 +39,7 @@ from colette.backends.tantivy import (
     build_text_context,
     retrieval_mode_uses_text_search_engine,
     retrieval_mode_uses_embedding_retrieval,
+    retrieval_mode_uses_vision_semantic,
 )
 from colette.backends.hf.hindex import (
     HierarchyBuilder,
@@ -110,6 +111,64 @@ def _merge_hindex_results(docs: dict, hindex_docs: dict, top_k: int | None = 4) 
 
     docs["_disable_thinking"] = True
     return docs
+
+
+def _hierarchy_to_vlm_tantivy_docs(hierarchy: "DocumentHierarchy") -> list[dict]:
+    """Build Tantivy document dicts from a DocumentHierarchy's VLM page descriptions.
+
+    Each page produces one document with crop_label='pagedesc' so vision_semantic
+    search can filter to these records without touching raw-PDF-text documents.
+    """
+    result = []
+    source = hierarchy.doc_name
+    for record in hierarchy.page_records:
+        parts = [p for p in [
+            record.summary,
+            record.text_content,
+            record.visual_description,
+            " ".join(record.keywords) if record.keywords else "",
+        ] if p and p.strip()]
+        if not parts:
+            continue
+        result.append({
+            "doc_id": f"{source}:page:{record.page_idx + 1}",
+            "source": source,
+            "page_number": record.page_idx + 1,
+            "crop_label": "pagedesc",
+            "label": None,
+            "content": " | ".join(parts),
+        })
+    return result
+
+
+def _vlm_hits_to_page_docs(hits: list[dict], top_k: int) -> dict:
+    """Convert Tantivy VLM-description hits to the standard docs format.
+
+    Derives the kvstore page key from source path and page_number so the
+    downstream VLM answering step can retrieve the actual page image.
+    """
+    from uuid import uuid5 as _u5, NAMESPACE_URL as _NS
+    ids, distances, metadatas = [], [], []
+    seen: set[tuple] = set()
+    for hit in hits:
+        source = hit.get("source", "")
+        page_number = hit.get("page_number")
+        if not source or page_number is None:
+            continue
+        key = (source, page_number)
+        if key in seen:
+            continue
+        seen.add(key)
+        page_idx = int(page_number) - 1
+        uuid5_val = str(_u5(_NS, source))
+        page_key = _page_key(uuid5_val, page_idx)
+        score = max(hit.get("score", 0.0), 0.0)
+        ids.append(page_key)
+        distances.append(1.0 / (1.0 + score))  # invert BM25: high score → low distance
+        metadatas.append({"source": source, "page_number": page_number, "crop_label": "pagedesc"})
+        if len(ids) >= top_k:
+            break
+    return {"ids": [ids], "distances": [distances], "metadatas": [metadatas]}
 
 
 def compute_sha256_hash(file_path):
@@ -862,6 +921,7 @@ class RAGImg:
                 )  # non-fatal: in-memory state is still correct
         vector_requested = retrieval_mode_uses_embedding_retrieval(rag_config.retrieval_mode)
         text_search_engine_requested = retrieval_mode_uses_text_search_engine(rag_config.retrieval_mode)
+        vision_semantic_requested = retrieval_mode_uses_vision_semantic(rag_config.retrieval_mode)
 
         # Check whether this is an update to an existing index
         self.gpu_id = rag_config.gpu_id if rag_config.gpu_id != -1 else self.gpu_id
@@ -902,7 +962,7 @@ class RAGImg:
                 # Delete the existing index if protection is off.
                 if vector_requested and self.rag_indexdb_lib == "chromadb" and self.has_existing_vector_index:
                     self.rag_indexdb_client.delete_collection(name="mm_db")
-                if text_search_engine_requested and self.has_existing_text_search_engine_index:
+                if (text_search_engine_requested or vision_semantic_requested) and self.has_existing_text_search_engine_index:
                     self.text_search_engine_index.reset()
                 if retrieval_mode_uses_hindex(rag_config.retrieval_mode, rag_config.hindex):
                     for doc_name in self.hindex_store.list_doc_names():
@@ -950,7 +1010,7 @@ class RAGImg:
         # save state for for multiple index queries
         self.has_existing_index = True
         self.has_existing_vector_index = self.has_existing_vector_index or vector_requested
-        self.has_existing_text_search_engine_index = self.has_existing_text_search_engine_index or text_search_engine_requested
+        self.has_existing_text_search_engine_index = self.has_existing_text_search_engine_index or text_search_engine_requested or vision_semantic_requested
 
         if self.rag_update_index:
             files, offset = set(), 0
@@ -995,6 +1055,7 @@ class RAGImg:
             doclist = []
             metadatalist = []
             tantivy_documents = []
+            vlm_tantivy_documents = []
             t1 = time()
             for fext, docs in sorted_documents.items():
                 for doc in tqdm(docs, desc="Indexing documents"):
@@ -1029,9 +1090,12 @@ class RAGImg:
                     image_processor.preprocess_images([document])
                     self.logger.info(f"\t{len(document['parts'])} parts generated")
 
-                    # Hierarchical index — runs after preprocessing so crop keys are known
-                    if retrieval_mode_uses_hindex(rag_config.retrieval_mode, rag_config.hindex):
-                        self._build_hindex_for_doc(document, rag_config)
+                    # Hierarchical index — runs after preprocessing so crop keys are known.
+                    # vision_semantic also builds hindex files (source of VLM descriptions).
+                    if retrieval_mode_uses_hindex(rag_config.retrieval_mode, rag_config.hindex) or vision_semantic_requested:
+                        vlm_docs = self._build_hindex_for_doc(document, rag_config)
+                        if vision_semantic_requested:
+                            vlm_tantivy_documents.extend(vlm_docs)
 
                     # Text search engine: one document per page (page-level text, not per-crop)
                     # Indexing per-crop would duplicate the same page text N times and
@@ -1084,6 +1148,12 @@ class RAGImg:
 
             if text_search_engine_requested:
                 self.text_search_engine_index.add_documents(tantivy_documents, recreate=self.rag_reindex and not self.rag_update_index)
+            if vision_semantic_requested:
+                self.text_search_engine_index.add_documents(vlm_tantivy_documents, recreate=not self.rag_update_index)
+                self.logger.info(
+                    "[vision_semantic] Indexed %d VLM page descriptions into text search engine [%.2fs]",
+                    len(vlm_tantivy_documents), time() - t1,
+                )
 
             if self.rag_indexdb_collection is not None:
                 self.logger.info(f"{self.rag_indexdb_collection.count()} elements in store [{time() - t1:.2f}]")
@@ -1178,6 +1248,31 @@ class RAGImg:
                 hindex_docs = self.hindex_retriever.invoke(rag_question)
                 docs = _merge_hindex_results(docs, hindex_docs, top_k=rag_config.top_k)
 
+        if retrieval_mode_uses_vision_semantic(rag_config.retrieval_mode):
+            if self.text_search_engine_index is None:
+                self.logger.warning(
+                    "[vision_semantic] text_search_engine_index not initialized; "
+                    "index with retrieval_mode='vision_semantic' first."
+                )
+            else:
+                hits = self.text_search_engine_index.search(
+                    rag_question,
+                    limit=rag_config.top_k * 4,
+                    fields=["content"],
+                    crop_label="pagedesc",
+                )
+                docs = _vlm_hits_to_page_docs(hits, top_k=rag_config.top_k)
+                text_hits, text_prompt = build_text_context(
+                    hits[:rag_config.top_k],
+                    max_chars_per_doc=rag_config.text_search_engine_max_chars_per_doc,
+                    max_total_chars=rag_config.text_search_engine_max_total_chars,
+                )
+                docs["text_context"] = text_hits
+                docs["text_context_prompt"] = text_prompt
+                self.logger.debug(
+                    "[vision_semantic] %d hits for query '%s'", len(hits), rag_question[:80]
+                )
+
         if retrieval_mode_uses_text_search_engine(rag_config.retrieval_mode):
             text_hits, text_prompt = build_text_context(
                 docs.get("text_context", []),
@@ -1195,22 +1290,26 @@ class RAGImg:
     def _get_effective_rag_config_for_request(self, request_rag: RAGObj | None) -> RAGObj:
         return merge_rag_config(self.ad.rag, request_rag)
 
-    def _build_hindex_for_doc(self, document: dict, rag_config: RAGObj) -> None:
+    def _build_hindex_for_doc(self, document: dict, rag_config: RAGObj) -> list[dict]:
         """Build and persist the hierarchy for one document.
 
         Must be called AFTER image_processor.preprocess_images() so that
         document["parts"] is populated with crop keys.
+
+        Returns VLM tantivy document dicts (one per page) so the caller can
+        accumulate them for vision_semantic indexing.
         """
         doc_name = str(document["source"])
         if self.hindex_store.exists(doc_name) and not self.rag_reindex:
             self.logger.info(f"[hindex] Hierarchy already exists for '{doc_name}', skipping")
-            return
+            existing = self.hindex_store.load(doc_name)
+            return _hierarchy_to_vlm_tantivy_docs(existing) if existing else []
         if self.vlm_fn is None:
             self.logger.warning(
                 f"[hindex] vlm_fn not set — cannot build hierarchy for '{doc_name}'. "
                 "Set it via RAGImg.vlm_fn after the LLM model is initialized."
             )
-            return
+            return []
 
         # Compute per-page kvstore keys (full-page images)
         uuid5_val = document.get("uuid5")
@@ -1254,6 +1353,8 @@ class RAGImg:
         # semantic meaning (summary / keywords / OCR) rather than visual appearance.
         if self.rag_indexdb_collection is not None:
             self._enrich_embeddings_for_doc(doc_name, hierarchy)
+
+        return _hierarchy_to_vlm_tantivy_docs(hierarchy)
 
     def _enrich_embeddings_for_doc(
         self, doc_name: str, hierarchy: "DocumentHierarchy"

@@ -64,6 +64,11 @@ def retrieval_mode_uses_text_search_engine(retrieval_mode: str) -> bool:
     return retrieval_mode in {"text_search_retrieval", "hybrid"}
 
 
+def retrieval_mode_uses_vision_semantic(retrieval_mode: str) -> bool:
+    """True for vision_semantic mode: BM25 search over VLM-generated page descriptions."""
+    return retrieval_mode == "vision_semantic"
+
+
 def build_text_context(
     hits: list[dict[str, Any]],
     *,
