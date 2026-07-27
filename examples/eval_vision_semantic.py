@@ -97,10 +97,15 @@ def run_query(question: str) -> dict:
 
 def build_relevant_set(item: dict) -> set:
     rel = set()
-    for rd in item.get("relevant_docs", []):
-        doc  = Path(rd["doc"]).name
-        page = rd.get("page")
-        if page is not None:
+    docs  = item.get("relevant_docs", [])
+    pages = item.get("relevant_pages", [])
+    if not docs or not pages:
+        return rel
+    if len(docs) == 1:
+        for page in pages:
+            rel.add((docs[0], int(page)))
+    else:
+        for doc, page in zip(docs, pages):
             rel.add((doc, int(page)))
     return rel
 
@@ -162,6 +167,11 @@ async def main():
               "Run setup_eval_service.ipynb first.")
         return
 
+    kvstore_src = EXISTING_APP_DIR / "kvstore.db"
+    if kvstore_src.exists():
+        shutil.copy2(kvstore_src, NEW_APP_DIR / "kvstore.db")
+        print(f"Copied kvstore.db ({kvstore_src.stat().st_size // 1024}KB)")
+
     # ── 1. Create service ────────────────────────────────────────────────────
     saved_cfg = json.loads((EXISTING_APP_DIR / "config.json").read_text())
     saved_cfg["parameters"]["llm"]["gpu_ids"] = LLM_GPU_IDS
@@ -214,6 +224,14 @@ async def main():
             print(f"✓ {r['latency_s']:.1f}s  img={img}  txt={txt}")
         except Exception as exc:
             print(f"ERROR: {exc}")
+
+    # Save query results immediately so a metrics crash doesn't lose them
+    OUT = NEW_APP_DIR / "eval_results.json"
+    OUT.write_text(json.dumps(
+        {qid: v for qid, v in vs_results.items()},
+        indent=2, default=str,
+    ))
+    print(f"Saved {len(vs_results)} query results → {OUT}\n")
 
     # ── 5. Load cached results for comparison ─────────────────────────────────
     RESULTS_FILE = EXISTING_APP_DIR / "eval_results.json"
@@ -280,14 +298,6 @@ async def main():
     print("RETRIEVAL COMPARISON — synthetic 7-doc benchmark")
     print("=" * 65)
     print(summary.to_string())
-
-    # Save results
-    OUT = NEW_APP_DIR / "eval_results.json"
-    OUT.write_text(json.dumps(
-        {qid: v for qid, v in vs_results.items()},
-        indent=2, default=str,
-    ))
-    print(f"\nvision_semantic results saved → {OUT}")
 
     # Breakdown by question type
     print("\n" + "=" * 65)

@@ -1272,7 +1272,8 @@ class RAGImg:
                     fields=["content"],
                     crop_label="pagedesc",
                 )
-                docs = _vlm_hits_to_page_docs(hits, top_k=rag_config.top_k)
+                # vision_semantic is text-only at query time: no images loaded.
+                docs = {"ids": [[]], "distances": [[]], "metadatas": [[]]}
                 text_hits, text_prompt = build_text_context(
                     hits[:rag_config.top_k],
                     max_chars_per_doc=rag_config.text_search_engine_max_chars_per_doc,
