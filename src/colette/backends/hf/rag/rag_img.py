@@ -40,6 +40,10 @@ from colette.backends.tantivy import (
     retrieval_mode_uses_text_search_engine,
     retrieval_mode_uses_embedding_retrieval,
     retrieval_mode_uses_vision_semantic,
+    retrieval_mode_uses_vision_text_embed,
+    retrieval_mode_uses_vision_hybrid_bm25,
+    retrieval_mode_uses_vision_topic_embed,
+    retrieval_mode_needs_vlm_descriptions,
 )
 from colette.backends.hf.hindex import (
     HierarchyBuilder,
@@ -141,6 +145,50 @@ def _hierarchy_to_vlm_tantivy_docs(hierarchy: "DocumentHierarchy") -> list[dict]
     return result
 
 
+def _hierarchy_to_doc_tantivy_doc(hierarchy: "DocumentHierarchy") -> dict | None:
+    """Build a single doc-level Tantivy entry for cross-document BM25 retrieval.
+
+    Uses crop_label='docdesc' and page_number=0 as a sentinel so retrieve()
+    can distinguish doc-level hits from page-level hits and expand them to
+    the document's constituent pages.
+    """
+    if not hierarchy.doc_description or not hierarchy.doc_description.strip():
+        return None
+    return {
+        "doc_id": f"{hierarchy.doc_name}:doc",
+        "source": hierarchy.doc_name,
+        "page_number": 0,
+        "crop_label": "docdesc",
+        "label": None,
+        "content": hierarchy.doc_description,
+    }
+
+
+def _hierarchy_to_queryhint_tantivy_docs(hierarchy: "DocumentHierarchy") -> list[dict]:
+    """Build one Tantivy doc per anticipated query, tagged crop_label='queryhint'.
+
+    Each doc carries the same source/page_number as its page so that
+    _bm25_hits_to_page_list naturally resolves a queryhint hit back to the
+    originating page without any special-casing in the retrieve path.
+    """
+    result = []
+    source = hierarchy.doc_name
+    for record in hierarchy.page_records:
+        for i, query in enumerate(record.anticipated_queries or []):
+            query = query.strip()
+            if not query:
+                continue
+            result.append({
+                "doc_id": f"{source}:page:{record.page_idx + 1}:queryhint:{i}",
+                "source": source,
+                "page_number": record.page_idx + 1,
+                "crop_label": "queryhint",
+                "label": None,
+                "content": query,
+            })
+    return result
+
+
 def _vlm_hits_to_page_docs(hits: list[dict], top_k: int) -> dict:
     """Convert Tantivy VLM-description hits to the standard docs format.
 
@@ -169,6 +217,141 @@ def _vlm_hits_to_page_docs(hits: list[dict], top_k: int) -> dict:
         if len(ids) >= top_k:
             break
     return {"ids": [ids], "distances": [distances], "metadatas": [metadatas]}
+
+
+def _page_hits_to_docs(
+    hits: list[tuple[str, int, float]],
+    hindex_store,
+    kvstore,
+    top_k: int,
+) -> dict:
+    """Convert (source, page_number, distance) tuples to docs dict via hindex crop_keys.
+
+    Resolves each page to actual kvstore keys using PageRecord.crop_keys, so the
+    downstream VLM receives real page images. Pages whose crop_keys are absent from
+    the kvstore (e.g. old indexes) are silently skipped — text_context still covers them.
+    """
+    ids, distances, metadatas = [], [], []
+    _loaded: dict = {}
+    seen: set = set()
+
+    for source, page_number, dist in hits:
+        key = (source, page_number)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        if source not in _loaded:
+            _loaded[source] = hindex_store.load(source)
+        hierarchy = _loaded[source]
+        if hierarchy is None:
+            continue
+
+        page_idx = page_number - 1
+        if not (0 <= page_idx < len(hierarchy.page_records)):
+            continue
+
+        record = hierarchy.page_records[page_idx]
+        base = {"source": source, "page_number": page_number, "retrieval_source": "hindex"}
+
+        valid_crops = [k for k in (record.crop_keys or [])[:2] if kvstore.has_key(k)]
+        if valid_crops:
+            for ck in valid_crops:
+                ids.append(ck)
+                distances.append(dist)
+                metadatas.append({**base, "crop_label": "crop"})
+        elif kvstore.has_key(record.page_key):
+            ids.append(record.page_key)
+            distances.append(dist)
+            metadatas.append({**base, "crop_label": "full_page"})
+        # No valid kvstore key → skip image; text_context carries the content
+
+    return {"ids": [ids[:top_k * 2]], "distances": [distances[:top_k * 2]], "metadatas": [metadatas[:top_k * 2]]}
+
+
+def _hindex_page_text(record) -> str:
+    """Build an indexable text string from a PageRecord for dense/BM25 retrieval."""
+    parts = [p for p in [
+        record.summary,
+        " ".join(record.keywords) if record.keywords else "",
+        record.text_content[:800] if record.text_content else "",
+        record.visual_description,
+    ] if p and p.strip()]
+    return " | ".join(parts)
+
+
+def _hindex_topic_text(topic) -> str:
+    """Build an indexable text string from a TopicNode for topic-level retrieval."""
+    parts = [p for p in [
+        topic.theme,
+        topic.description,
+        " ".join(topic.keywords) if topic.keywords else "",
+    ] if p and p.strip()]
+    return " | ".join(parts)
+
+
+def _bm25_hits_to_page_list(hits: list[dict]) -> list[tuple[str, int, float]]:
+    """Convert Tantivy hit dicts to (source, page_number, distance) tuples, deduped."""
+    seen: set = set()
+    result = []
+    for hit in hits:
+        source = hit.get("source", "")
+        page_number = hit.get("page_number")
+        if not source or page_number is None:
+            continue
+        key = (source, int(page_number))
+        if key in seen:
+            continue
+        seen.add(key)
+        score = max(hit.get("score", 0.0), 0.0)
+        result.append((source, int(page_number), 1.0 / (1.0 + score)))
+    return result
+
+
+def _reciprocal_rank_fusion(
+    ranked_lists: list[list[tuple[str, int]]],
+    k: int = 60,
+) -> list[tuple[str, int, float]]:
+    """Merge multiple (source, page_number) ranked lists using Reciprocal Rank Fusion."""
+    scores: dict[tuple[str, int], float] = {}
+    for lst in ranked_lists:
+        for rank, item in enumerate(lst):
+            scores[item] = scores.get(item, 0.0) + 1.0 / (k + rank + 1)
+    return [
+        (s, p, score)
+        for (s, p), score in sorted(scores.items(), key=lambda x: -x[1])
+    ]
+
+
+def _hindex_text_context_for_pages(
+    pages: list[tuple[str, int]],
+    hindex_store,
+    max_chars_per_doc: int,
+    max_total_chars: int,
+) -> tuple[list[dict], str]:
+    """Build text context hits from hindex descriptions for given (source, page_number) pairs."""
+    hits = []
+    _loaded: dict = {}
+    for source, page_number in pages:
+        if source not in _loaded:
+            _loaded[source] = hindex_store.load(source)
+        hierarchy = _loaded[source]
+        if hierarchy is None:
+            continue
+        page_idx = page_number - 1
+        if not (0 <= page_idx < len(hierarchy.page_records)):
+            continue
+        record = hierarchy.page_records[page_idx]
+        content = _hindex_page_text(record)
+        if content.strip():
+            hits.append({
+                "source": source,
+                "page_number": page_number,
+                "content": content,
+                "score": 0.0,
+                "crop_label": "pagedesc",
+            })
+    return build_text_context(hits, max_chars_per_doc=max_chars_per_doc, max_total_chars=max_total_chars)
 
 
 def compute_sha256_hash(file_path):
@@ -806,6 +989,8 @@ class RAGImg:
             self.logger.info(f"# collections: {self.rag_indexdb_client.count_collections()}")
 
         self.rag_indexdb_collection = None
+        self.rag_text_embed_collection = None   # mm_text_db: page text embeddings
+        self.rag_topic_embed_collection = None  # mm_topic_db: topic text embeddings
         self.reload_index_if_any(ad)
 
         # layout detection
@@ -833,22 +1018,38 @@ class RAGImg:
         rag_config = self._get_effective_rag_config(ad)
         vector_requested = retrieval_mode_uses_embedding_retrieval(rag_config.retrieval_mode)
         text_search_engine_requested = retrieval_mode_uses_text_search_engine(rag_config.retrieval_mode)
+        text_embed_requested = retrieval_mode_uses_vision_text_embed(rag_config.retrieval_mode)
+        topic_embed_requested = retrieval_mode_uses_vision_topic_embed(rag_config.retrieval_mode)
 
         self.has_existing_index = False
         self.has_existing_vector_index = False
+        self.has_existing_text_embed_index = False
+        self.has_existing_topic_embed_index = False
         self.has_existing_text_search_engine_index = self.text_search_engine_index.exists()
         if self.rag_indexdb_lib == "chromadb":
             collection_names = self.rag_indexdb_client.list_collections()
             if collection_names and not isinstance(collection_names[0], str):
                 collection_names = [col.name for col in collection_names]
             self.logger.debug(f"Existing collections: {collection_names}")
+            sqlite_exists = (self.indexpath / "chroma.sqlite3").exists()
             self.has_existing_vector_index = (
-                vector_requested and "mm_db" in collection_names and (self.indexpath / "chroma.sqlite3").exists()
+                vector_requested and "mm_db" in collection_names and sqlite_exists
+            )
+            self.has_existing_text_embed_index = (
+                text_embed_requested and "mm_text_db" in collection_names and sqlite_exists
+            )
+            self.has_existing_topic_embed_index = (
+                topic_embed_requested and "mm_topic_db" in collection_names and sqlite_exists
             )
         else:
             self.has_existing_vector_index = vector_requested and self.indexpath.exists()
 
-        self.has_existing_index = self.has_existing_vector_index or (text_search_engine_requested and self.has_existing_text_search_engine_index)
+        self.has_existing_index = (
+            self.has_existing_vector_index
+            or self.has_existing_text_embed_index
+            or self.has_existing_topic_embed_index
+            or (text_search_engine_requested and self.has_existing_text_search_engine_index)
+        )
         self.logger.info(f"has_existing_index: {self.has_existing_index}")
 
         if self.has_existing_vector_index:
@@ -893,6 +1094,26 @@ class RAGImg:
         if text_search_engine_requested and self.has_existing_text_search_engine_index:
             self.text_search_engine_index.open()
 
+        # Load text/topic embed collections if they exist and the mode needs them
+        if (self.has_existing_text_embed_index or self.has_existing_topic_embed_index):
+            if not hasattr(self, "rag_embf") or self.rag_embf is None:
+                if rag_config.gpu_id != -1:
+                    if rag_config.embedding_model is None and self.rag_embedding_model is not None:
+                        rag_config.embedding_model = self.rag_embedding_model
+                    merged_ad = ad.model_copy(deep=True)
+                    merged_ad.rag = rag_config
+                    self.rag_embf = ImageEmbeddingFunction(merged_ad, self.models_repository, self.logger)
+            if self.has_existing_text_embed_index:
+                self.rag_text_embed_collection = self.rag_indexdb_client.get_collection(
+                    name="mm_text_db", embedding_function=self.rag_embf
+                )
+                self.logger.info("Loaded existing mm_text_db (page text embeddings)")
+            if self.has_existing_topic_embed_index:
+                self.rag_topic_embed_collection = self.rag_indexdb_client.get_collection(
+                    name="mm_topic_db", embedding_function=self.rag_embf
+                )
+                self.logger.info("Loaded existing mm_topic_db (topic text embeddings)")
+
     def index(self, ad: InputConnectorObj, sorted_documents: dict[str, list[str]]):
         rag_config = self._get_effective_rag_config(ad)
         # Persist index-time RAG config as the service default for later predict calls.
@@ -922,6 +1143,10 @@ class RAGImg:
         vector_requested = retrieval_mode_uses_embedding_retrieval(rag_config.retrieval_mode)
         text_search_engine_requested = retrieval_mode_uses_text_search_engine(rag_config.retrieval_mode)
         vision_semantic_requested = retrieval_mode_uses_vision_semantic(rag_config.retrieval_mode)
+        text_embed_requested = retrieval_mode_uses_vision_text_embed(rag_config.retrieval_mode)
+        hybrid_bm25_requested = retrieval_mode_uses_vision_hybrid_bm25(rag_config.retrieval_mode)
+        topic_embed_requested = retrieval_mode_uses_vision_topic_embed(rag_config.retrieval_mode)
+        vlm_desc_requested = retrieval_mode_needs_vlm_descriptions(rag_config.retrieval_mode)
 
         # Check whether this is an update to an existing index
         self.gpu_id = rag_config.gpu_id if rag_config.gpu_id != -1 else self.gpu_id
@@ -962,7 +1187,13 @@ class RAGImg:
                 # Delete the existing index if protection is off.
                 if vector_requested and self.rag_indexdb_lib == "chromadb" and self.has_existing_vector_index:
                     self.rag_indexdb_client.delete_collection(name="mm_db")
-                if (text_search_engine_requested or vision_semantic_requested) and self.has_existing_text_search_engine_index:
+                if text_embed_requested and self.rag_indexdb_lib == "chromadb" and self.has_existing_text_embed_index:
+                    self.rag_indexdb_client.delete_collection(name="mm_text_db")
+                    self.rag_text_embed_collection = None
+                if topic_embed_requested and self.rag_indexdb_lib == "chromadb" and self.has_existing_topic_embed_index:
+                    self.rag_indexdb_client.delete_collection(name="mm_topic_db")
+                    self.rag_topic_embed_collection = None
+                if (text_search_engine_requested or vision_semantic_requested or hybrid_bm25_requested) and self.has_existing_text_search_engine_index:
                     self.text_search_engine_index.reset()
                 if retrieval_mode_uses_hindex(rag_config.retrieval_mode, rag_config.hindex):
                     for doc_name in self.hindex_store.list_doc_names():
@@ -1007,10 +1238,35 @@ class RAGImg:
                 if not self.has_existing_vector_index:
                     self.rag_indexdb_collection = None
 
+            # Create text/topic embed collections for new vision embedding modes.
+            if (text_embed_requested or topic_embed_requested) and self.rag_indexdb_lib == "chromadb":
+                if not hasattr(self, "rag_embf") or self.rag_embf is None:
+                    if rag_config.embedding_model is None and self.rag_embedding_model is not None:
+                        rag_config.embedding_model = self.rag_embedding_model
+                    merged_ad = ad.model_copy(deep=True)
+                    merged_ad.rag = rag_config
+                    self.rag_embf = ImageEmbeddingFunction(merged_ad, self.models_repository, self.logger)
+                if text_embed_requested and self.rag_text_embed_collection is None:
+                    self.rag_text_embed_collection = self.rag_indexdb_client.get_or_create_collection(
+                        name="mm_text_db",
+                        embedding_function=self.rag_embf,
+                        metadata={"hnsw:space": "cosine"},
+                    )
+                    self.logger.info("Created/opened mm_text_db (page text embeddings)")
+                if topic_embed_requested and self.rag_topic_embed_collection is None:
+                    self.rag_topic_embed_collection = self.rag_indexdb_client.get_or_create_collection(
+                        name="mm_topic_db",
+                        embedding_function=self.rag_embf,
+                        metadata={"hnsw:space": "cosine"},
+                    )
+                    self.logger.info("Created/opened mm_topic_db (topic text embeddings)")
+
         # save state for for multiple index queries
         self.has_existing_index = True
         self.has_existing_vector_index = self.has_existing_vector_index or vector_requested
-        self.has_existing_text_search_engine_index = self.has_existing_text_search_engine_index or text_search_engine_requested or vision_semantic_requested
+        self.has_existing_text_embed_index = self.has_existing_text_embed_index or text_embed_requested
+        self.has_existing_topic_embed_index = self.has_existing_topic_embed_index or topic_embed_requested
+        self.has_existing_text_search_engine_index = self.has_existing_text_search_engine_index or text_search_engine_requested or vision_semantic_requested or hybrid_bm25_requested
 
         if self.rag_update_index:
             files, offset = set(), 0
@@ -1056,6 +1312,14 @@ class RAGImg:
             metadatalist = []
             tantivy_documents = []
             vlm_tantivy_documents = []
+            doc_level_tantivy_docs: list[dict] = []
+            queryhint_tantivy_docs: list[dict] = []
+            text_embed_ids: list[str] = []
+            text_embed_docs_list: list[str] = []
+            text_embed_metas: list[dict] = []
+            topic_embed_ids: list[str] = []
+            topic_embed_docs_list: list[str] = []
+            topic_embed_metas: list[dict] = []
             t1 = time()
             for fext, docs in sorted_documents.items():
                 for doc in tqdm(docs, desc="Indexing documents"):
@@ -1063,19 +1327,45 @@ class RAGImg:
                     skip_vector_and_text = doc in files
                     if skip_vector_and_text:
                         # Doc is already in the vector store.  Check whether hindex
-                        # or vision_semantic VLM descriptions still need to be built.
+                        # or description-based modes still need to be built.
                         hindex_needed = (
                             retrieval_mode_uses_hindex(rag_config.retrieval_mode, rag_config.hindex)
                             and not self.hindex_store.exists(doc)
                         )
-                        # vision_semantic fast path: if hindex file already exists,
-                        # load it and generate tantivy docs without image re-render.
-                        if vision_semantic_requested and self.hindex_store.exists(doc):
+                        # Fast path for description-based modes: if hindex exists,
+                        # collect docs from it without re-rendering images.
+                        if vlm_desc_requested and self.hindex_store.exists(doc):
                             existing = self.hindex_store.load(doc)
                             if existing:
-                                vlm_tantivy_documents.extend(_hierarchy_to_vlm_tantivy_docs(existing))
+                                if vision_semantic_requested or hybrid_bm25_requested:
+                                    vlm_tantivy_documents.extend(_hierarchy_to_vlm_tantivy_docs(existing))
+                                if hybrid_bm25_requested:
+                                    _ddoc = _hierarchy_to_doc_tantivy_doc(existing)
+                                    if _ddoc:
+                                        doc_level_tantivy_docs.append(_ddoc)
+                                    queryhint_tantivy_docs.extend(_hierarchy_to_queryhint_tantivy_docs(existing))
+                                if text_embed_requested:
+                                    for _pi, _rec in enumerate(existing.page_records):
+                                        _txt = _hindex_page_text(_rec)
+                                        if _txt.strip():
+                                            _pn = _pi + 1
+                                            text_embed_ids.append(f"{doc}:page:{_pn}")
+                                            text_embed_docs_list.append(_txt)
+                                            text_embed_metas.append({"source": doc, "page_number": _pn})
+                                if topic_embed_requested:
+                                    for _ti, _topic in enumerate(existing.topics):
+                                        _txt = _hindex_topic_text(_topic)
+                                        if _txt.strip():
+                                            _pidx = ",".join(str(i) for i in (_topic.page_indices or []))
+                                            topic_embed_ids.append(f"{doc}:topic:{_ti}")
+                                            topic_embed_docs_list.append(_txt)
+                                            topic_embed_metas.append({
+                                                "source": doc,
+                                                "page_indices": _pidx,
+                                                "theme": _topic.theme or "",
+                                            })
                             continue
-                        if not hindex_needed and not vision_semantic_requested:
+                        if not hindex_needed and not vlm_desc_requested:
                             self.logger.info(f"Document {doc} already indexed")
                             continue
                         self.logger.info(
@@ -1097,21 +1387,55 @@ class RAGImg:
                     self.logger.info(f"\t{len(document['parts'])} parts generated")
 
                     # Hierarchical index — runs after preprocessing so crop keys are known.
-                    # vision_semantic also builds hindex files (source of VLM descriptions).
-                    # preserve_existing_hindex=True so vision_semantic never rebuilds
-                    # hindex even when reindex=True (it only controls tantivy, not hindex).
-                    if retrieval_mode_uses_hindex(rag_config.retrieval_mode, rag_config.hindex) or vision_semantic_requested:
+                    # All vlm_desc modes build hindex files (source of VLM descriptions).
+                    # preserve_existing_hindex=True so description modes never rebuild
+                    # hindex even when reindex=True (reindex only controls tantivy/chromadb).
+                    if retrieval_mode_uses_hindex(rag_config.retrieval_mode, rag_config.hindex) or vlm_desc_requested:
                         vlm_docs = self._build_hindex_for_doc(
                             document, rag_config,
-                            preserve_existing_hindex=vision_semantic_requested,
+                            preserve_existing_hindex=vlm_desc_requested,
                         )
-                        if vision_semantic_requested:
+                        if vision_semantic_requested or hybrid_bm25_requested:
                             vlm_tantivy_documents.extend(vlm_docs)
+                        if hybrid_bm25_requested:
+                            _h_built = self.hindex_store.load(str(document["source"]))
+                            if _h_built:
+                                _ddoc = _hierarchy_to_doc_tantivy_doc(_h_built)
+                                if _ddoc:
+                                    doc_level_tantivy_docs.append(_ddoc)
+                                queryhint_tantivy_docs.extend(_hierarchy_to_queryhint_tantivy_docs(_h_built))
+
+                    # Accumulate page/topic texts for dense embedding into ChromaDB.
+                    if text_embed_requested or topic_embed_requested:
+                        _h = self.hindex_store.load(str(document["source"]))
+                        if _h is not None:
+                            if text_embed_requested:
+                                for _pi, _rec in enumerate(_h.page_records):
+                                    _txt = _hindex_page_text(_rec)
+                                    if _txt.strip():
+                                        _pn = _pi + 1
+                                        _src = str(document["source"])
+                                        text_embed_ids.append(f"{_src}:page:{_pn}")
+                                        text_embed_docs_list.append(_txt)
+                                        text_embed_metas.append({"source": _src, "page_number": _pn})
+                            if topic_embed_requested:
+                                for _ti, _topic in enumerate(_h.topics):
+                                    _txt = _hindex_topic_text(_topic)
+                                    if _txt.strip():
+                                        _src = str(document["source"])
+                                        _pidx = ",".join(str(i) for i in (_topic.page_indices or []))
+                                        topic_embed_ids.append(f"{_src}:topic:{_ti}")
+                                        topic_embed_docs_list.append(_txt)
+                                        topic_embed_metas.append({
+                                            "source": _src,
+                                            "page_indices": _pidx,
+                                            "theme": _topic.theme or "",
+                                        })
 
                     # Text search engine: one document per page (page-level text, not per-crop)
                     # Indexing per-crop would duplicate the same page text N times and
                     # return N identical-content hits for a single-page match.
-                    if text_search_engine_requested and not skip_vector_and_text:
+                    if (text_search_engine_requested or hybrid_bm25_requested) and not skip_vector_and_text:
                         source_str = str(document["source"])
                         for page_number, page_text in page_texts.items():
                             page_text_stripped = page_text.strip()
@@ -1164,6 +1488,39 @@ class RAGImg:
                 self.logger.info(
                     "[vision_semantic] Indexed %d VLM page descriptions into text search engine [%.2fs]",
                     len(vlm_tantivy_documents), time() - t1,
+                )
+            if hybrid_bm25_requested:
+                # Merge OCR text + VLM descriptions + doc-level descriptions into a
+                # single Tantivy index so BM25 can match page content, semantic prose,
+                # and whole-document context (for cross-document retrieval).
+                all_hybrid_docs = tantivy_documents + vlm_tantivy_documents + doc_level_tantivy_docs + queryhint_tantivy_docs
+                self.text_search_engine_index.add_documents(
+                    all_hybrid_docs, recreate=self.rag_reindex and not self.rag_update_index
+                )
+                self.logger.info(
+                    "[vision_hybrid_bm25] Indexed %d docs (OCR=%d + VLM=%d + doc=%d + queryhint=%d) [%.2fs]",
+                    len(all_hybrid_docs), len(tantivy_documents), len(vlm_tantivy_documents),
+                    len(doc_level_tantivy_docs), len(queryhint_tantivy_docs), time() - t1,
+                )
+            if text_embed_requested and self.rag_text_embed_collection is not None and text_embed_ids:
+                self.rag_text_embed_collection.upsert(
+                    ids=text_embed_ids,
+                    documents=text_embed_docs_list,
+                    metadatas=text_embed_metas,
+                )
+                self.logger.info(
+                    "[vision_text_embed] Indexed %d page text embeddings [%.2fs]",
+                    len(text_embed_ids), time() - t1,
+                )
+            if topic_embed_requested and self.rag_topic_embed_collection is not None and topic_embed_ids:
+                self.rag_topic_embed_collection.upsert(
+                    ids=topic_embed_ids,
+                    documents=topic_embed_docs_list,
+                    metadatas=topic_embed_metas,
+                )
+                self.logger.info(
+                    "[vision_topic_embed] Indexed %d topic text embeddings [%.2fs]",
+                    len(topic_embed_ids), time() - t1,
                 )
 
             if self.rag_indexdb_collection is not None:
@@ -1293,6 +1650,224 @@ class RAGImg:
             )
             docs["text_context"] = text_hits
             docs["text_context_prompt"] = text_prompt
+
+        _mode = rag_config.retrieval_mode
+
+        if _mode == "vision_text_embed":
+            if self.rag_text_embed_collection is None:
+                self.logger.warning("[vision_text_embed] mm_text_db not initialized; index with this mode first.")
+            else:
+                _results = self.rag_text_embed_collection.query(
+                    query_texts=[rag_question],
+                    n_results=min(rag_config.top_k * 4, self.rag_text_embed_collection.count() or 1),
+                    include=["metadatas", "distances"],
+                )
+                _hits: list[tuple[str, int, float]] = []
+                for _meta, _dist in zip(_results["metadatas"][0], _results["distances"][0]):
+                    _src = _meta.get("source", "")
+                    _pn = _meta.get("page_number")
+                    if _src and _pn is not None:
+                        _hits.append((_src, int(_pn), float(_dist)))
+                docs = _page_hits_to_docs(_hits[: rag_config.top_k], self.hindex_store, self.kvstore, rag_config.top_k)
+                _tc_hits, _tc_prompt = _hindex_text_context_for_pages(
+                    [(_s, _p) for _s, _p, _ in _hits[: rag_config.top_k]],
+                    self.hindex_store,
+                    rag_config.text_search_engine_max_chars_per_doc,
+                    rag_config.text_search_engine_max_total_chars,
+                )
+                docs["text_context"] = _tc_hits
+                docs["text_context_prompt"] = _tc_prompt
+                self.logger.debug("[vision_text_embed] %d page hits for '%s'", len(_hits), rag_question[:80])
+
+        elif _mode == "vision_hybrid_bm25":
+            if self.text_search_engine_index is None:
+                self.logger.warning("[vision_hybrid_bm25] text_search_engine_index not initialized.")
+            else:
+                _bm25_hits_all = self.text_search_engine_index.search(
+                    rag_question,
+                    limit=rag_config.top_k * 8,
+                    fields=["content"],
+                    crop_label=None,
+                    # Boost raw OCR text (crop_label=None) so exact-match terminology
+                    # outranks VLM paraphrase / queryhint when BM25 scores are close.
+                    score_multipliers={None: 1.5},
+                )
+                # Split page-level from doc-level hits
+                _page_bm25_hits = [h for h in _bm25_hits_all if h.get("crop_label") != "docdesc"]
+                _doc_bm25_hits = [h for h in _bm25_hits_all if h.get("crop_label") == "docdesc"]
+                _page_list = _bm25_hits_to_page_list(_page_bm25_hits)
+                # Expand doc-level hits: add all pages of matching docs not already in page_list.
+                # This improves cross-document retrieval where the query matches a whole document
+                # rather than a specific page.
+                _seen_pages = {(_s, _p) for _s, _p, _ in _page_list}
+                _loaded_h: dict = {}
+                for _dh in _doc_bm25_hits:
+                    _src = _dh.get("source", "")
+                    _score = max(_dh.get("score", 0.0), 0.0)
+                    if not _src:
+                        continue
+                    if _src not in _loaded_h:
+                        _loaded_h[_src] = self.hindex_store.load(_src)
+                    _h = _loaded_h[_src]
+                    if _h:
+                        for _pi in range(len(_h.page_records)):
+                            _pn = _pi + 1
+                            if (_src, _pn) not in _seen_pages:
+                                _seen_pages.add((_src, _pn))
+                                _page_list.append((_src, _pn, 1.0 / (1.0 + _score)))
+                # Visual embedding retrieval (GME-Qwen2-VL) — GPU at query time, cross-modal query
+                _embed_page_list: list[tuple[str, int, float]] = []
+                if self.rag_indexdb_collection is not None:
+                    try:
+                        _n_embed = min(rag_config.top_k * 8, max(self.rag_indexdb_collection.count() or 1, 1))
+                        _embed_results = self.rag_indexdb_collection.query(
+                            query_texts=[rag_question],
+                            n_results=_n_embed,
+                            include=["metadatas", "distances"],
+                        )
+                        _embed_seen: set[tuple[str, int]] = set()
+                        for _meta, _dist in zip(_embed_results["metadatas"][0], _embed_results["distances"][0]):
+                            _src = _meta.get("source", "")
+                            _pn = _meta.get("page_number")
+                            if _src and _pn is not None:
+                                _key = (_src, int(_pn))
+                                if _key not in _embed_seen:
+                                    _embed_seen.add(_key)
+                                    _embed_page_list.append((_src, int(_pn), float(_dist)))
+                    except Exception as _e:
+                        self.logger.warning("[vision_hybrid_bm25] visual embed query failed: %s", _e)
+                # RRF fusion: merge BM25 ranked list with visual embedding ranked list
+                _bm25_ranked = [(_s, _p) for _s, _p, _ in _page_list]
+                _embed_ranked = [(_s, _p) for _s, _p, _ in _embed_page_list]
+                if _embed_ranked:
+                    _page_list = _reciprocal_rank_fusion([_bm25_ranked, _embed_ranked])
+                # Cross-page cluster fusion: interleave topic-adjacent neighbors after each ranked page.
+                # For each result page, pages ±1 that share a topic cluster are inserted right after
+                # their anchor — this surfaces multi-page answers without disrupting strong single-page hits.
+                _all_in_list: set[tuple[str, int]] = {(_s, _p) for _s, _p, _ in _page_list}
+                _interleaved: list[tuple[str, int, float]] = []
+                _interleaved_keys: set[tuple[str, int]] = set()
+                _n_neighbors = 0
+                for _s, _p, _sc in _page_list:
+                    if (_s, _p) in _interleaved_keys:
+                        continue
+                    _interleaved.append((_s, _p, _sc))
+                    _interleaved_keys.add((_s, _p))
+                    if _s not in _loaded_h:
+                        _loaded_h[_s] = self.hindex_store.load(_s)
+                    _h = _loaded_h.get(_s)
+                    _n_doc_pages = len(_h.page_records) if _h else 0
+                    _p_topics = {t.topic_id for t in (_h.topics if _h else []) if (_p - 1) in t.page_indices}
+                    for _np in (_p - 1, _p + 1):
+                        if (_s, _np) in _all_in_list or (_s, _np) in _interleaved_keys:
+                            continue
+                        if not (1 <= _np <= _n_doc_pages):
+                            continue
+                        # Only inject if neighbor shares a topic with the anchor page (or no topics set)
+                        _np_topics = {t.topic_id for t in (_h.topics if _h else []) if (_np - 1) in t.page_indices}
+                        if _p_topics & _np_topics or not (_h and _h.topics):
+                            _all_in_list.add((_s, _np))
+                            _interleaved_keys.add((_s, _np))
+                            _interleaved.append((_s, _np, _sc))
+                            _n_neighbors += 1
+                _page_list = _interleaved
+                docs = _page_hits_to_docs(_page_list[: rag_config.top_k], self.hindex_store, self.kvstore, rag_config.top_k)
+                _tc_hits, _tc_prompt = _hindex_text_context_for_pages(
+                    [(_s, _p) for _s, _p, _ in _page_list[: rag_config.top_k]],
+                    self.hindex_store,
+                    rag_config.text_search_engine_max_chars_per_doc,
+                    rag_config.text_search_engine_max_total_chars,
+                )
+                docs["text_context"] = _tc_hits
+                docs["text_context_prompt"] = _tc_prompt
+                self.logger.debug(
+                    "[vision_hybrid_bm25] bm25=%d embed=%d rrf_in=%d neighbors=%d for '%s'",
+                    len(_page_bm25_hits), len(_embed_page_list), len(_bm25_ranked),
+                    _n_neighbors, rag_question[:80],
+                )
+
+        elif _mode == "vision_topic_embed":
+            if self.rag_topic_embed_collection is None:
+                self.logger.warning("[vision_topic_embed] mm_topic_db not initialized; index with this mode first.")
+            else:
+                _n_topics = min(rag_config.top_k, max(self.rag_topic_embed_collection.count() or 1, 1))
+                _results = self.rag_topic_embed_collection.query(
+                    query_texts=[rag_question],
+                    n_results=_n_topics,
+                    include=["metadatas", "distances"],
+                )
+                _hits = []
+                _seen: set[tuple[str, int]] = set()
+                for _meta in _results["metadatas"][0]:
+                    _src = _meta.get("source", "")
+                    _pidx_str = _meta.get("page_indices", "")
+                    if not _src or not _pidx_str:
+                        continue
+                    for _idx_s in _pidx_str.split(","):
+                        try:
+                            _pidx = int(_idx_s.strip())
+                            _pn = _pidx + 1
+                            _key = (_src, _pn)
+                            if _key not in _seen:
+                                _seen.add(_key)
+                                _hits.append((_src, _pn, 0.0))
+                        except ValueError:
+                            pass
+                docs = _page_hits_to_docs(_hits[: rag_config.top_k], self.hindex_store, self.kvstore, rag_config.top_k)
+                _tc_hits, _tc_prompt = _hindex_text_context_for_pages(
+                    [(_s, _p) for _s, _p, _ in _hits[: rag_config.top_k]],
+                    self.hindex_store,
+                    rag_config.text_search_engine_max_chars_per_doc,
+                    rag_config.text_search_engine_max_total_chars,
+                )
+                docs["text_context"] = _tc_hits
+                docs["text_context_prompt"] = _tc_prompt
+                self.logger.debug(
+                    "[vision_topic_embed] %d topics → %d unique pages for '%s'",
+                    len(_results["metadatas"][0]), len(_hits), rag_question[:80],
+                )
+
+        elif _mode == "vision_bm25_rerank":
+            # BM25 first pass + dense text-embedding pass → RRF merge → page images
+            _bm25_page_list: list[tuple[str, int, float]] = []
+            _embed_page_list: list[tuple[str, int, float]] = []
+            if self.text_search_engine_index is not None:
+                _bm25_raw = self.text_search_engine_index.search(
+                    rag_question,
+                    limit=rag_config.top_k * 8,
+                    fields=["content"],
+                    crop_label=None,
+                )
+                _bm25_raw_pages = [h for h in _bm25_raw if h.get("crop_label") != "docdesc"]
+                _bm25_page_list = _bm25_hits_to_page_list(_bm25_raw_pages)
+            if self.rag_text_embed_collection is not None:
+                _n_embed = min(rag_config.top_k * 4, self.rag_text_embed_collection.count() or 1)
+                _emb_res = self.rag_text_embed_collection.query(
+                    query_texts=[rag_question],
+                    n_results=_n_embed,
+                    include=["metadatas", "distances"],
+                )
+                for _meta in _emb_res["metadatas"][0]:
+                    _src = _meta.get("source", "")
+                    _pn = _meta.get("page_number")
+                    if _src and _pn is not None:
+                        _embed_page_list.append((_src, int(_pn), 0.0))
+            _bm25_keys = [(_s, _p) for _s, _p, _ in _bm25_page_list]
+            _embed_keys = [(_s, _p) for _s, _p, _ in _embed_page_list]
+            _rrf_hits = _reciprocal_rank_fusion([_bm25_keys, _embed_keys])
+            docs = _page_hits_to_docs(_rrf_hits[: rag_config.top_k], self.hindex_store, self.kvstore, rag_config.top_k)
+            _tc_hits, _tc_prompt = _hindex_text_context_for_pages(
+                [(_s, _p) for _s, _p, _ in _rrf_hits[: rag_config.top_k]],
+                self.hindex_store,
+                rag_config.text_search_engine_max_chars_per_doc,
+                rag_config.text_search_engine_max_total_chars,
+            )
+            docs["text_context"] = _tc_hits
+            docs["text_context_prompt"] = _tc_prompt
+            self.logger.debug(
+                "[vision_bm25_rerank] bm25=%d embed=%d rrf=%d for '%s'",
+                len(_bm25_page_list), len(_embed_page_list), len(_rrf_hits), rag_question[:80],
+            )
 
         return docs
 
