@@ -18,6 +18,7 @@ venv_colette/
 app_colette/
 app_eval_benchmark/
 app_mmlongbench_eval/
+app_vision_*_eval/
 None/
 models/
 
@@ -26,6 +27,7 @@ examples/*.png
 examples/questions_gaia_converter_demo.ipynb
 examples/benchmark/
 examples/hindex_page_records.csv
+examples/new_vision_modes_eval_results.json
 
 # Cache tags
 CACHEDIR.TAG

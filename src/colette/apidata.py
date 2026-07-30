@@ -74,8 +74,22 @@ class RAGObj(BaseModel):
 
     indexdb_lib: Literal["chromadb", "coldb"] = "chromadb"
     """ Indexing database library, chromadb or coldb """
-    retrieval_mode: Literal["embedding_retrieval", "text_search_retrieval", "hybrid", "vision_hierarchical", "vision_semantic"] = "embedding_retrieval"
-    """ Retrieval mode: embedding-only, text-search-only, hybrid in parallel, vision_hierarchical (hindex LLM navigation), or vision_semantic (BM25 over VLM-generated page descriptions) """
+    retrieval_mode: Literal[
+        "embedding_retrieval", "text_search_retrieval", "hybrid",
+        "vision_hierarchical", "vision_semantic",
+        "vision_text_embed", "vision_hybrid_bm25", "vision_topic_embed", "vision_bm25_rerank",
+    ] = "embedding_retrieval"
+    """ Retrieval mode:
+        embedding_retrieval: dense ANN on page images (GPU at query time)
+        text_search_retrieval: BM25 on OCR text
+        hybrid: embedding + BM25 merged
+        vision_hierarchical: VLM navigates hindex cluster→doc→page (GPU at query time)
+        vision_semantic: BM25 on VLM page descriptions (no GPU at query time)
+        vision_text_embed: dense ANN on VLM page descriptions (GPU at query time)
+        vision_hybrid_bm25: merged BM25 on OCR text + VLM descriptions (no GPU at query time)
+        vision_topic_embed: dense ANN on hindex topic descriptions → page retrieval (GPU at query time)
+        vision_bm25_rerank: BM25 first pass → embedding re-rank via RRF (GPU at query time)
+    """
     embedding_lib: Literal["huggingface", "colbert", "vllm"] = "huggingface"
     """ Embedding library, use colbert with coldb, huggingface for V-RAG """
     embedding_model: str | None = None
