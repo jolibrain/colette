@@ -49,7 +49,7 @@ class PageRecord:
 
     page_idx: int            # 0-based physical page index
     page_key: str            # kvstore key for the full-page image
-    text_content: str        # verbatim OCR
+    text_content: str        # key OCR text (metrics/values verbatim, max 300 chars)
     visual_description: str  # description of diagrams / figures / charts
     summary: str             # 2-3 sentence condensed meaning
     keywords: list[str]      # thematic tags (3-6)
@@ -57,6 +57,9 @@ class PageRecord:
     """Kvstore keys of all layout-detected crops for this page.
     Populated by the caller (RAGImg._build_hindex_for_doc) after
     preprocessing so the key format matches the stored crops exactly."""
+    anticipated_queries: list[str] = field(default_factory=list)
+    """Natural-language questions a user would ask to find this page.
+    Indexed in BM25 with crop_label='queryhint' to bridge vocabulary gap."""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -67,6 +70,7 @@ class PageRecord:
             "summary": self.summary,
             "keywords": self.keywords,
             "crop_keys": self.crop_keys,
+            "anticipated_queries": self.anticipated_queries,
         }
 
     @classmethod
@@ -79,6 +83,7 @@ class PageRecord:
             summary=d.get("summary", ""),
             keywords=d.get("keywords", []),
             crop_keys=d.get("crop_keys", []),
+            anticipated_queries=d.get("anticipated_queries", []),
         )
 
 
@@ -275,7 +280,13 @@ _PAGE_EXTRACT_SCHEMA = """{
   "visual_description": "describe any diagrams, charts, figures, images (empty string if none)",
   "summary": "2-3 sentence summary of what this page is about",
   "keywords": ["keyword1", "keyword2", "keyword3"],
-  "text_content": "key text visible on the page, MAX 300 characters"
+  "text_content": "key text from the page, MAX 300 characters; if the page shows a table or chart, enumerate at least 3 specific metric names and their values verbatim (e.g. 'Precision@4: 0.72, Recall: 0.85, Latency: 120ms'); truncate other text if needed",
+  "anticipated_queries": [
+    "casual question a non-expert would ask",
+    "keyword-style search a power user might type",
+    "technical question using domain jargon",
+    "question about a specific value or result visible on this page"
+  ]
 }"""
 
 _TOPIC_SCHEMA = """[
@@ -453,9 +464,13 @@ class HierarchyBuilder:
             "write an empty string\n"
             "- summary: 2-3 sentences on the meaning/purpose of this page\n"
             "- keywords: 3-6 thematic terms (not generic words like 'page' or 'slide')\n"
-            "- text_content: key text visible on the page, MAX 300 characters; "
-            "capture the most important content and truncate if necessary — "
-            "do NOT transcribe every word verbatim\n"
+            "- text_content: MAX 300 characters; if the page contains a table or chart, "
+            "enumerate ≥3 specific metric names and their values verbatim "
+            "(e.g. 'Precision@4: 0.72, Recall: 0.85'); otherwise capture the most "
+            "important text visible on the page\n"
+            "- anticipated_queries: 4-8 distinct questions a user would type to find this page;\n"
+            "  include a mix of: casual/plain-English, keyword-only, technical/jargon, and specific-value queries;\n"
+            "  each question should be self-contained and meaningfully different\n"
             "Output ONLY the JSON object, no markdown fences, no other text."
         )
         # Simplified prompt used on the last retry attempt
@@ -464,7 +479,8 @@ class HierarchyBuilder:
             '{"visual_description": "<describe any charts/diagrams, or empty string>", '
             '"summary": "<2-3 sentences about this page>", '
             '"keywords": ["<kw1>", "<kw2>", "<kw3>"], '
-            '"text_content": "<key visible text, max 200 chars>"}\n'
+            '"text_content": "<key visible text or metric values, max 200 chars>", '
+            '"anticipated_queries": ["<casual question>", "<keyword search>", "<technical question>"]}\n'
             "Output ONLY the JSON, nothing else."
         )
 
@@ -491,6 +507,7 @@ class HierarchyBuilder:
             visual_description=str(data.get("visual_description", "")),
             summary=str(data.get("summary", "")),
             keywords=list(data.get("keywords", [])),
+            anticipated_queries=list(data.get("anticipated_queries", [])),
         )
 
     def _extract_batch(
@@ -523,6 +540,7 @@ class HierarchyBuilder:
                     visual_description=str(data.get("visual_description", "")),
                     summary=str(data.get("summary", "")),
                     keywords=list(data.get("keywords", [])),
+                    anticipated_queries=list(data.get("anticipated_queries", [])),
                 ))
             else:
                 self.logger.warning(
@@ -729,8 +747,8 @@ class HierarchyBuilder:
 _MAX_EXTRACT_PIXELS = 1280 * 720
 
 # Per-call token budgets — sized to the actual output, not a single ceiling.
-_SINGLE_PAGE_TOKENS = 512    # one page JSON: ~250 tokens typical
-_BATCH_TOKENS_PER_PAGE = 350  # per-page budget when batching (tighter than single)
+_SINGLE_PAGE_TOKENS = 768    # one page JSON: ~400 tokens with 4-8 anticipated queries
+_BATCH_TOKENS_PER_PAGE = 512  # per-page budget when batching (tighter than single)
 _DOC_DESC_TOKENS = 128        # one sentence
 _TOPIC_CLUSTER_TOKENS = 1024  # 3-7 topics × ~120 tokens each
 
@@ -747,8 +765,12 @@ def _batch_prompt(n: int) -> str:
         "write an empty string\n"
         "- summary: 2-3 sentences on the meaning/purpose of that page\n"
         "- keywords: 3-6 thematic terms per page\n"
-        "- text_content: key text visible on that page, MAX 300 characters; "
-        "do NOT transcribe every word verbatim\n"
+        "- text_content: MAX 300 characters; if the page shows a table or chart, "
+        "enumerate ≥3 specific metric names and their values verbatim; "
+        "otherwise capture the most important text visible\n"
+        "- anticipated_queries: 4-8 distinct questions per page that a user would type to find it;\n"
+        "  include a mix of: casual/plain-English, keyword-only, technical/jargon, specific-value;\n"
+        "  each question must be self-contained and meaningfully different\n"
         f"Output ONLY the JSON array of exactly {n} objects. "
         "No markdown fences, no extra text."
     )

@@ -53,6 +53,45 @@ _STOP_WORDS = frozenset({
     'suivante', 'filtre', 'limiteur', 'isole',  # domain-generic French
 })
 
+# Colloquial → technical synonym expansion for BM25 bridging.
+# Keys are lowercase; values are the technical terms indexed by the VLM.
+_QUERY_SYNONYMS: dict[str, list[str]] = {
+    # performance / speed
+    "speed": ["latency", "throughput", "performance"],
+    "fast": ["latency", "throughput", "speed"],
+    "slow": ["latency", "bottleneck", "delay"],
+    "quick": ["latency", "throughput"],
+    # quality metrics
+    "accuracy": ["precision", "recall", "f1", "score", "metric"],
+    "accurate": ["precision", "recall", "accuracy", "metric"],
+    "quality": ["precision", "recall", "score", "metric"],
+    "performance": ["precision", "recall", "latency", "throughput", "score"],
+    "score": ["precision", "recall", "f1", "metric", "accuracy"],
+    "rank": ["ranking", "score", "precision"],
+    # comparison / benchmarks
+    "better": ["improvement", "gain", "higher", "superior"],
+    "best": ["top", "highest", "optimal", "state"],
+    "worst": ["lowest", "minimum", "poor", "inferior"],
+    "compare": ["comparison", "versus", "benchmark", "evaluation"],
+    "improve": ["improvement", "enhance", "boost", "increase", "gain"],
+    "difference": ["comparison", "gap", "delta", "versus"],
+    # document elements
+    "image": ["figure", "diagram", "chart", "illustration", "visual"],
+    "picture": ["figure", "diagram", "image", "illustration"],
+    "graph": ["chart", "figure", "plot", "visualization"],
+    "table": ["matrix", "grid", "comparison", "results"],
+    # ML / IR terms
+    "model": ["algorithm", "approach", "method", "architecture", "system"],
+    "system": ["framework", "platform", "solution", "architecture"],
+    "retrieval": ["search", "retrieve", "indexing", "ranking"],
+    "embedding": ["vector", "representation", "encode", "semantic"],
+    "result": ["outcome", "finding", "metric", "score", "performance"],
+    "dataset": ["corpus", "benchmark", "collection", "data"],
+    "train": ["training", "learning", "fine-tune", "finetune"],
+    "test": ["evaluation", "testing", "benchmark", "assess", "evaluate"],
+    "error": ["failure", "mistake", "incorrect", "wrong", "issue"],
+}
+
 
 def retrieval_mode_uses_embedding_retrieval(retrieval_mode: str) -> bool:
     # vision_hierarchical is hindex-only — it does NOT run embedding retrieval.
@@ -67,6 +106,29 @@ def retrieval_mode_uses_text_search_engine(retrieval_mode: str) -> bool:
 def retrieval_mode_uses_vision_semantic(retrieval_mode: str) -> bool:
     """True for vision_semantic mode: BM25 search over VLM-generated page descriptions."""
     return retrieval_mode == "vision_semantic"
+
+
+def retrieval_mode_uses_vision_text_embed(retrieval_mode: str) -> bool:
+    """True when a dense text-embedding collection (mm_text_db) is needed at index/query time."""
+    return retrieval_mode in {"vision_text_embed", "vision_bm25_rerank"}
+
+
+def retrieval_mode_uses_vision_hybrid_bm25(retrieval_mode: str) -> bool:
+    """True when merged BM25 over OCR text + VLM descriptions is used."""
+    return retrieval_mode in {"vision_hybrid_bm25", "vision_bm25_rerank"}
+
+
+def retrieval_mode_uses_vision_topic_embed(retrieval_mode: str) -> bool:
+    """True when a dense topic-embedding collection (mm_topic_db) is needed."""
+    return retrieval_mode == "vision_topic_embed"
+
+
+def retrieval_mode_needs_vlm_descriptions(retrieval_mode: str) -> bool:
+    """True when the mode requires hindex VLM page descriptions at index time."""
+    return retrieval_mode in {
+        "vision_semantic", "vision_text_embed", "vision_hybrid_bm25",
+        "vision_topic_embed", "vision_bm25_rerank",
+    }
 
 
 def build_text_context(
@@ -186,6 +248,7 @@ class TantivyIndex:
         limit: int,
         fields: list[str] | None = None,
         crop_label: str | list[str] | None = None,
+        score_multipliers: dict[str | None, float] | None = None,
     ) -> list[dict[str, Any]]:
         if not self.exists():
             return []
@@ -211,18 +274,23 @@ class TantivyIndex:
         hits: list[dict[str, Any]] = []
         for score, address in results.hits:
             doc = searcher.doc(address)
+            cl = self._get_first_value(doc, "crop_label")
+            boosted_score = float(score) * (score_multipliers or {}).get(cl, 1.0)
             hits.append(
                 {
                     "doc_id": self._get_first_value(doc, "doc_id"),
                     "source": self._get_first_value(doc, "source"),
                     "page_number": self._coerce_optional_int(self._get_first_value(doc, "page_number")),
-                    "crop_label": self._get_first_value(doc, "crop_label"),
+                    "crop_label": cl,
                     "label": self._get_first_value(doc, "label"),
                     "content": self._get_first_value(doc, "content"),
-                    "score": float(score),
+                    "score": boosted_score,
                     "retriever": "text_search_engine",
                 }
             )
+
+        if score_multipliers:
+            hits.sort(key=lambda h: h["score"], reverse=True)
 
         return hits
 
@@ -237,22 +305,27 @@ class TantivyIndex:
         return schema_builder.build()
 
     def _extract_keywords(self, query: str) -> str:
-        """Extract meaningful BM25 keywords from a natural language query.
+        """Extract meaningful BM25 keywords, expanding colloquial terms to technical synonyms.
 
         Hyphens are replaced with spaces so product codes like ``MGDD-08-N-E``
-        expand into individual tokens (``MGDD``, ``08``) that the Tantivy
-        tokeniser has already indexed separately.  English stop words and
-        single-character tokens are removed so that high-frequency domain words
-        (e.g. "isolation" in safety-standards PDFs) do not drown out the rare,
-        high-IDF product-code tokens.
-
-        Returns ``None`` when nothing survives, so the caller can skip the
-        search entirely rather than issue a ``*`` wildcard that returns garbage.
+        expand into individual tokens.  Stop words and single-char tokens are
+        removed.  Each surviving token is checked against ``_QUERY_SYNONYMS``
+        and, when matched, emitted as a BM25 OR group so both the user's
+        vocabulary and the indexed technical vocabulary can match.
         """
         normalized = re.sub(r'[-]', ' ', query)
         tokens = re.findall(r'[A-Za-z0-9]+', normalized)
         keywords = [t for t in tokens if t.lower() not in _STOP_WORDS and len(t) > 1]
-        return ' '.join(keywords) if keywords else ''
+
+        expanded: list[str] = []
+        for kw in keywords:
+            syns = _QUERY_SYNONYMS.get(kw.lower(), [])
+            if syns:
+                terms = [kw] + syns
+                expanded.append("(" + " OR ".join(terms) + ")")
+            else:
+                expanded.append(kw)
+        return ' '.join(expanded) if expanded else ''
 
     def _build_query_text(self, query: str, crop_label: str | list[str] | None) -> str:
         base_query = self._extract_keywords(query.strip()) or "*"
