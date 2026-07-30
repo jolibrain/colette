@@ -856,3 +856,187 @@ def test_vlm_hits_to_page_docs_metadata_fields():
     assert meta["source"] == source
     assert meta["page_number"] == 3
     assert meta["crop_label"] == "pagedesc"
+
+
+# ---------------------------------------------------------------------------
+# New vision retrieval mode routing helpers
+# ---------------------------------------------------------------------------
+
+from colette.backends.tantivy.tantivy_index import (
+    retrieval_mode_uses_vision_text_embed,
+    retrieval_mode_uses_vision_hybrid_bm25,
+    retrieval_mode_uses_vision_topic_embed,
+    retrieval_mode_needs_vlm_descriptions,
+)
+from colette.backends.hf.rag.rag_img import (
+    _hindex_page_text,
+    _hindex_topic_text,
+    _bm25_hits_to_page_list,
+    _reciprocal_rank_fusion,
+)
+
+
+def test_vision_text_embed_routing():
+    assert retrieval_mode_uses_vision_text_embed("vision_text_embed") is True
+    assert retrieval_mode_uses_vision_text_embed("vision_bm25_rerank") is True
+    assert retrieval_mode_uses_vision_text_embed("vision_hybrid_bm25") is False
+    assert retrieval_mode_uses_vision_text_embed("vision_topic_embed") is False
+    assert retrieval_mode_uses_vision_text_embed("vision_semantic") is False
+    assert retrieval_mode_uses_vision_text_embed("embedding_retrieval") is False
+
+
+def test_vision_hybrid_bm25_routing():
+    assert retrieval_mode_uses_vision_hybrid_bm25("vision_hybrid_bm25") is True
+    assert retrieval_mode_uses_vision_hybrid_bm25("vision_bm25_rerank") is True
+    assert retrieval_mode_uses_vision_hybrid_bm25("vision_text_embed") is False
+    assert retrieval_mode_uses_vision_hybrid_bm25("vision_topic_embed") is False
+    assert retrieval_mode_uses_vision_hybrid_bm25("hybrid") is False
+
+
+def test_vision_topic_embed_routing():
+    assert retrieval_mode_uses_vision_topic_embed("vision_topic_embed") is True
+    assert retrieval_mode_uses_vision_topic_embed("vision_text_embed") is False
+    assert retrieval_mode_uses_vision_topic_embed("vision_bm25_rerank") is False
+    assert retrieval_mode_uses_vision_topic_embed("vision_hybrid_bm25") is False
+
+
+def test_retrieval_mode_needs_vlm_descriptions():
+    for mode in ("vision_semantic", "vision_text_embed", "vision_hybrid_bm25", "vision_topic_embed", "vision_bm25_rerank"):
+        assert retrieval_mode_needs_vlm_descriptions(mode) is True, f"Expected True for {mode}"
+    for mode in ("embedding_retrieval", "text_search_retrieval", "hybrid", "vision_hierarchical"):
+        assert retrieval_mode_needs_vlm_descriptions(mode) is False, f"Expected False for {mode}"
+
+
+# ---------------------------------------------------------------------------
+# _hindex_page_text and _hindex_topic_text helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_page_record(**kwargs):
+    defaults = dict(
+        page_idx=0, page_key="uuid_0000",
+        text_content="", visual_description="", summary="", keywords=[], crop_keys=[]
+    )
+    defaults.update(kwargs)
+    return PageRecord(**defaults)
+
+
+def test_hindex_page_text_combines_fields():
+    rec = _make_page_record(
+        summary="Revenue summary",
+        keywords=["revenue", "growth"],
+        text_content="Revenue grew 12%",
+        visual_description="Bar chart",
+    )
+    text = _hindex_page_text(rec)
+    assert "Revenue summary" in text
+    assert "revenue" in text
+    assert "Revenue grew 12%" in text
+    assert "Bar chart" in text
+    assert " | " in text
+
+
+def test_hindex_page_text_empty_record():
+    rec = _make_page_record()
+    assert _hindex_page_text(rec) == ""
+
+
+def test_hindex_page_text_truncates_text_content():
+    rec = _make_page_record(text_content="x" * 2000)
+    text = _hindex_page_text(rec)
+    assert len(text) <= 900  # 800 chars truncated + separator overhead
+
+
+def test_hindex_topic_text_combines_fields():
+    topic = TopicNode(
+        topic_id="t0",
+        theme="Financial Performance",
+        description="Covers Q4 revenue and profitability",
+        keywords=["revenue", "Q4"],
+        page_indices=[0, 1, 2],
+    )
+    text = _hindex_topic_text(topic)
+    assert "Financial Performance" in text
+    assert "Q4 revenue" in text
+    assert "revenue" in text
+
+
+def test_hindex_topic_text_empty():
+    topic = TopicNode(topic_id="t0", theme="", description="", keywords=[], page_indices=[])
+    assert _hindex_topic_text(topic) == ""
+
+
+# ---------------------------------------------------------------------------
+# _bm25_hits_to_page_list
+# ---------------------------------------------------------------------------
+
+
+def test_bm25_hits_to_page_list_basic():
+    hits = [
+        {"source": "/doc.pdf", "page_number": 3, "score": 9.0},
+        {"source": "/doc.pdf", "page_number": 1, "score": 4.0},
+    ]
+    result = _bm25_hits_to_page_list(hits)
+    assert len(result) == 2
+    assert result[0][0] == "/doc.pdf"
+    assert result[0][1] == 3
+    assert 0.0 < result[0][2] <= 1.0  # distance in (0, 1]
+
+
+def test_bm25_hits_to_page_list_deduplicates():
+    hits = [
+        {"source": "/doc.pdf", "page_number": 2, "score": 8.0},
+        {"source": "/doc.pdf", "page_number": 2, "score": 5.0},  # duplicate
+    ]
+    result = _bm25_hits_to_page_list(hits)
+    assert len(result) == 1
+
+
+def test_bm25_hits_to_page_list_skips_invalid():
+    hits = [
+        {"source": "", "page_number": 1, "score": 5.0},    # empty source
+        {"source": "/doc.pdf", "page_number": None, "score": 5.0},  # no page
+        {"source": "/doc.pdf", "page_number": 3, "score": 3.0},  # valid
+    ]
+    result = _bm25_hits_to_page_list(hits)
+    assert len(result) == 1
+    assert result[0][1] == 3
+
+
+# ---------------------------------------------------------------------------
+# _reciprocal_rank_fusion
+# ---------------------------------------------------------------------------
+
+
+def test_reciprocal_rank_fusion_merges_two_lists():
+    bm25 = [("/a.pdf", 1), ("/a.pdf", 2), ("/b.pdf", 3)]
+    embed = [("/b.pdf", 3), ("/a.pdf", 1), ("/c.pdf", 5)]
+    result = _reciprocal_rank_fusion([bm25, embed])
+    pages = [(s, p) for s, p, _ in result]
+    # ("/a.pdf", 1) appears rank-1 in bm25, rank-2 in embed → highest RRF score
+    assert ("/a.pdf", 1) in pages
+    assert ("/b.pdf", 3) in pages
+    assert ("/c.pdf", 5) in pages
+
+
+def test_reciprocal_rank_fusion_single_list_preserves_order():
+    ranked = [("/doc.pdf", 1), ("/doc.pdf", 2), ("/doc.pdf", 3)]
+    result = _reciprocal_rank_fusion([ranked])
+    # RRF score is monotonically decreasing with rank → order preserved
+    out = [(s, p) for s, p, _ in result]
+    assert out == ranked
+
+
+def test_reciprocal_rank_fusion_scores_decrease():
+    ranked = [("/doc.pdf", i) for i in range(1, 6)]
+    result = _reciprocal_rank_fusion([ranked])
+    scores = [sc for _, _, sc in result]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_reciprocal_rank_fusion_deduplicates_across_lists():
+    lst_a = [("/doc.pdf", 1), ("/doc.pdf", 2)]
+    lst_b = [("/doc.pdf", 1), ("/doc.pdf", 3)]
+    result = _reciprocal_rank_fusion([lst_a, lst_b])
+    pages = [(s, p) for s, p, _ in result]
+    assert len(pages) == len(set(pages))  # no duplicates
