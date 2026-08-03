@@ -350,6 +350,7 @@ class HierarchyBuilder:
         doc_name: str,
         page_images: list[Image.Image],
         page_keys: list[str] | None = None,
+        scanned_page_indices: set[int] | None = None,
     ) -> DocumentHierarchy:
         """Build the full hierarchy for *doc_name* from its rendered page images.
 
@@ -376,30 +377,43 @@ class HierarchyBuilder:
         #   batch_size > 1  : N pages per VLM call (best for HF/local GPU models)
         #   max_workers > 1 : parallel single-page calls (best for vllm_client)
         #   default         : sequential single-page calls
+        # Scanned pages always use single-page OCR mode regardless of batch_size.
+        _scanned = scanned_page_indices or set()
         page_records: list[PageRecord | None] = [None] * page_count
 
         if self.batch_size > 1:
             for batch_start in range(0, page_count, self.batch_size):
                 batch_end = min(batch_start + self.batch_size, page_count)
                 idxs = list(range(batch_start, batch_end))
-                imgs = [page_images[i] for i in idxs]
-                keys_b = [page_keys[i] if page_keys else "" for i in idxs]
-                self.logger.info(
-                    f"[hindex] Phase 1 batch: pages {batch_start}–{batch_end - 1}"
-                )
-                t_b = time()
-                batch_recs = self._extract_batch(imgs, idxs, keys_b)
-                elapsed = time() - t_b
-                self.logger.info(
-                    f"[hindex] Phase 1 batch done in {elapsed:.1f}s "
-                    f"({elapsed / len(idxs):.1f}s/page)"
-                )
-                for i, rec in zip(idxs, batch_recs):
-                    page_records[i] = rec
+
+                # Scanned pages get individual OCR-focused extraction
+                scanned_in_batch = [i for i in idxs if i in _scanned]
+                batch_idxs = [i for i in idxs if i not in _scanned]
+
+                for i in scanned_in_batch:
+                    key = page_keys[i] if page_keys else ""
+                    page_records[i] = self._extract_page_record(page_images[i], i, key, is_scanned=True)
+
+                if batch_idxs:
+                    imgs = [page_images[i] for i in batch_idxs]
+                    keys_b = [page_keys[i] if page_keys else "" for i in batch_idxs]
+                    self.logger.info(
+                        f"[hindex] Phase 1 batch: pages {batch_start}–{batch_end - 1}"
+                        + (f" ({len(scanned_in_batch)} scanned extracted individually)" if scanned_in_batch else "")
+                    )
+                    t_b = time()
+                    batch_recs = self._extract_batch(imgs, batch_idxs, keys_b)
+                    elapsed = time() - t_b
+                    self.logger.info(
+                        f"[hindex] Phase 1 batch done in {elapsed:.1f}s "
+                        f"({elapsed / len(batch_idxs):.1f}s/page)"
+                    )
+                    for i, rec in zip(batch_idxs, batch_recs):
+                        page_records[i] = rec
         else:
             def _extract_one(idx: int) -> tuple[int, PageRecord]:
                 key = page_keys[idx] if page_keys else ""
-                return idx, self._extract_page_record(page_images[idx], idx, key)
+                return idx, self._extract_page_record(page_images[idx], idx, key, is_scanned=idx in _scanned)
 
             n_workers = min(self.max_workers, page_count)
             if n_workers > 1:
@@ -448,31 +462,52 @@ class HierarchyBuilder:
     # ------------------------------------------------------------------
 
     def _extract_page_record(
-        self, image: Image.Image, page_idx: int, page_key: str = ""
+        self, image: Image.Image, page_idx: int, page_key: str = "", is_scanned: bool = False
     ) -> PageRecord:
         """One rich VLM call per page → structured PageRecord.
 
         Retries up to 2 times on parse failure; on the final attempt uses a
         simplified prompt that is easier for the model to answer correctly.
+        When is_scanned=True, uses an OCR-focused prompt with a higher token
+        budget to extract all visible text from image-only pages.
         """
-        prompt_full = (
-            "Analyze this document page carefully and output a JSON object with "
-            "exactly these keys:\n"
-            f"{_PAGE_EXTRACT_SCHEMA}\n\n"
-            "Rules:\n"
-            "- Write ALL text fields in the same language as the document content; do not translate.\n"
-            "- visual_description: if no visual elements (diagrams/charts/figures), "
-            "write an empty string\n"
-            "- summary: 2-3 sentences on the meaning/purpose of this page\n"
-            "- keywords: 3-6 thematic terms (not generic words like 'page' or 'slide')\n"
-            "- text_content: MAX 300 characters; if the page contains structured data "
-            "(tables, charts, lists), capture ≥3 representative entries verbatim as "
-            "'Label: Value' pairs; otherwise capture the most important text visible\n"
-            "- anticipated_queries: 4-8 distinct questions a user would type to find this page;\n"
-            "  include a mix of: plain-language, keyword-only, specific-fact, and synonym-phrasing queries;\n"
-            "  write queries in the document's language; each must be self-contained and meaningfully different\n"
-            "Output ONLY the JSON object, no markdown fences, no other text."
-        )
+        if is_scanned:
+            prompt_full = (
+                "This document page appears to be scanned (image-only, no embedded text). "
+                "Analyze it carefully and output a JSON object with exactly these keys:\n"
+                f"{_PAGE_EXTRACT_SCHEMA}\n\n"
+                "Rules:\n"
+                "- Write ALL text fields in the same language as the document content; do not translate.\n"
+                "- visual_description: describe any diagrams, charts, or figures\n"
+                "- summary: 2-3 sentences on the meaning/purpose of this page\n"
+                "- keywords: 3-6 thematic terms\n"
+                "- text_content: transcribe ALL visible text verbatim up to 600 characters; "
+                "do not summarize or paraphrase — copy the actual words from the page\n"
+                "- anticipated_queries: 4-8 distinct questions in the document's language\n"
+                "Output ONLY the JSON object, no markdown fences, no other text."
+            )
+            token_budget = _SINGLE_PAGE_TOKENS * 2
+        else:
+            prompt_full = (
+                "Analyze this document page carefully and output a JSON object with "
+                "exactly these keys:\n"
+                f"{_PAGE_EXTRACT_SCHEMA}\n\n"
+                "Rules:\n"
+                "- Write ALL text fields in the same language as the document content; do not translate.\n"
+                "- visual_description: if no visual elements (diagrams/charts/figures), "
+                "write an empty string\n"
+                "- summary: 2-3 sentences on the meaning/purpose of this page\n"
+                "- keywords: 3-6 thematic terms (not generic words like 'page' or 'slide')\n"
+                "- text_content: MAX 300 characters; if the page contains structured data "
+                "(tables, charts, lists), capture ≥3 representative entries verbatim as "
+                "'Label: Value' pairs; otherwise capture the most important text visible\n"
+                "- anticipated_queries: 4-8 distinct questions a user would type to find this page;\n"
+                "  include a mix of: plain-language, keyword-only, specific-fact, and synonym-phrasing queries;\n"
+                "  write queries in the document's language; each must be self-contained and meaningfully different\n"
+                "Output ONLY the JSON object, no markdown fences, no other text."
+            )
+            token_budget = _SINGLE_PAGE_TOKENS
+
         # Simplified prompt used on the last retry attempt
         prompt_simple = (
             "Look at this document page and respond with a JSON object.\n"
@@ -490,7 +525,7 @@ class HierarchyBuilder:
         max_retries = 2
         for attempt in range(max_retries + 1):
             prompt = prompt_simple if attempt == max_retries else prompt_full
-            raw = self.vlm_fn([image], prompt, _SINGLE_PAGE_TOKENS)
+            raw = self.vlm_fn([image], prompt, token_budget)
             data = _parse_json_response(raw, self.logger)
             if data and isinstance(data, dict):
                 break
