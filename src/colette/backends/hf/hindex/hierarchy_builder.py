@@ -280,12 +280,12 @@ _PAGE_EXTRACT_SCHEMA = """{
   "visual_description": "describe any diagrams, charts, figures, images (empty string if none)",
   "summary": "2-3 sentence summary of what this page is about",
   "keywords": ["keyword1", "keyword2", "keyword3"],
-  "text_content": "key text from the page, MAX 300 characters; if the page shows a table or chart, enumerate at least 3 specific metric names and their values verbatim (e.g. 'Precision@4: 0.72, Recall: 0.85, Latency: 120ms'); truncate other text if needed",
+  "text_content": "key text from the page, MAX 300 characters; if the page contains structured data (tables, charts, lists, key-value pairs), capture at least 3 representative entries verbatim (e.g. 'Label: Value, Name: Result'); otherwise write the most important sentence or phrase visible; truncate if needed",
   "anticipated_queries": [
-    "casual question a non-expert would ask",
-    "keyword-style search a power user might type",
-    "technical question using domain jargon",
-    "question about a specific value or result visible on this page"
+    "plain-language question a reader would ask to find this page",
+    "keyword-only search phrase for this content",
+    "question about a specific fact, number, or name visible on this page",
+    "question using different words that mean the same thing as the page content"
   ]
 }"""
 
@@ -460,27 +460,28 @@ class HierarchyBuilder:
             "exactly these keys:\n"
             f"{_PAGE_EXTRACT_SCHEMA}\n\n"
             "Rules:\n"
+            "- Write ALL text fields in the same language as the document content; do not translate.\n"
             "- visual_description: if no visual elements (diagrams/charts/figures), "
             "write an empty string\n"
             "- summary: 2-3 sentences on the meaning/purpose of this page\n"
             "- keywords: 3-6 thematic terms (not generic words like 'page' or 'slide')\n"
-            "- text_content: MAX 300 characters; if the page contains a table or chart, "
-            "enumerate ≥3 specific metric names and their values verbatim "
-            "(e.g. 'Precision@4: 0.72, Recall: 0.85'); otherwise capture the most "
-            "important text visible on the page\n"
+            "- text_content: MAX 300 characters; if the page contains structured data "
+            "(tables, charts, lists), capture ≥3 representative entries verbatim as "
+            "'Label: Value' pairs; otherwise capture the most important text visible\n"
             "- anticipated_queries: 4-8 distinct questions a user would type to find this page;\n"
-            "  include a mix of: casual/plain-English, keyword-only, technical/jargon, and specific-value queries;\n"
-            "  each question should be self-contained and meaningfully different\n"
+            "  include a mix of: plain-language, keyword-only, specific-fact, and synonym-phrasing queries;\n"
+            "  write queries in the document's language; each must be self-contained and meaningfully different\n"
             "Output ONLY the JSON object, no markdown fences, no other text."
         )
         # Simplified prompt used on the last retry attempt
         prompt_simple = (
-            "Look at this document page and respond with a JSON object:\n"
+            "Look at this document page and respond with a JSON object.\n"
+            "Write all text in the document's language (do not translate).\n"
             '{"visual_description": "<describe any charts/diagrams, or empty string>", '
             '"summary": "<2-3 sentences about this page>", '
             '"keywords": ["<kw1>", "<kw2>", "<kw3>"], '
-            '"text_content": "<key visible text or metric values, max 200 chars>", '
-            '"anticipated_queries": ["<casual question>", "<keyword search>", "<technical question>"]}\n'
+            '"text_content": "<key visible text or data entries, max 200 chars>", '
+            '"anticipated_queries": ["<plain question>", "<keyword search>", "<specific fact question>"]}\n'
             "Output ONLY the JSON, nothing else."
         )
 
@@ -761,16 +762,17 @@ def _batch_prompt(n: int) -> str:
         "Each object must contain exactly these keys:\n"
         f"{_PAGE_EXTRACT_SCHEMA}\n\n"
         "Rules (apply independently to each page):\n"
+        "- Write ALL text fields in the same language as the document content; do not translate.\n"
         "- visual_description: if no visual elements (diagrams/charts/figures), "
         "write an empty string\n"
         "- summary: 2-3 sentences on the meaning/purpose of that page\n"
         "- keywords: 3-6 thematic terms per page\n"
-        "- text_content: MAX 300 characters; if the page shows a table or chart, "
-        "enumerate ≥3 specific metric names and their values verbatim; "
-        "otherwise capture the most important text visible\n"
+        "- text_content: MAX 300 characters; if the page contains structured data "
+        "(tables, charts, lists), capture ≥3 representative entries verbatim as "
+        "'Label: Value' pairs; otherwise capture the most important text visible\n"
         "- anticipated_queries: 4-8 distinct questions per page that a user would type to find it;\n"
-        "  include a mix of: casual/plain-English, keyword-only, technical/jargon, specific-value;\n"
-        "  each question must be self-contained and meaningfully different\n"
+        "  include a mix of: plain-language, keyword-only, specific-fact, and synonym-phrasing;\n"
+        "  write queries in the document's language; each must be self-contained and meaningfully different\n"
         f"Output ONLY the JSON array of exactly {n} objects. "
         "No markdown fences, no extra text."
     )

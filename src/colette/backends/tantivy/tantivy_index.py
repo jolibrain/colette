@@ -53,44 +53,6 @@ _STOP_WORDS = frozenset({
     'suivante', 'filtre', 'limiteur', 'isole',  # domain-generic French
 })
 
-# Colloquial → technical synonym expansion for BM25 bridging.
-# Keys are lowercase; values are the technical terms indexed by the VLM.
-_QUERY_SYNONYMS: dict[str, list[str]] = {
-    # performance / speed
-    "speed": ["latency", "throughput", "performance"],
-    "fast": ["latency", "throughput", "speed"],
-    "slow": ["latency", "bottleneck", "delay"],
-    "quick": ["latency", "throughput"],
-    # quality metrics
-    "accuracy": ["precision", "recall", "f1", "score", "metric"],
-    "accurate": ["precision", "recall", "accuracy", "metric"],
-    "quality": ["precision", "recall", "score", "metric"],
-    "performance": ["precision", "recall", "latency", "throughput", "score"],
-    "score": ["precision", "recall", "f1", "metric", "accuracy"],
-    "rank": ["ranking", "score", "precision"],
-    # comparison / benchmarks
-    "better": ["improvement", "gain", "higher", "superior"],
-    "best": ["top", "highest", "optimal", "state"],
-    "worst": ["lowest", "minimum", "poor", "inferior"],
-    "compare": ["comparison", "versus", "benchmark", "evaluation"],
-    "improve": ["improvement", "enhance", "boost", "increase", "gain"],
-    "difference": ["comparison", "gap", "delta", "versus"],
-    # document elements
-    "image": ["figure", "diagram", "chart", "illustration", "visual"],
-    "picture": ["figure", "diagram", "image", "illustration"],
-    "graph": ["chart", "figure", "plot", "visualization"],
-    "table": ["matrix", "grid", "comparison", "results"],
-    # ML / IR terms
-    "model": ["algorithm", "approach", "method", "architecture", "system"],
-    "system": ["framework", "platform", "solution", "architecture"],
-    "retrieval": ["search", "retrieve", "indexing", "ranking"],
-    "embedding": ["vector", "representation", "encode", "semantic"],
-    "result": ["outcome", "finding", "metric", "score", "performance"],
-    "dataset": ["corpus", "benchmark", "collection", "data"],
-    "train": ["training", "learning", "fine-tune", "finetune"],
-    "test": ["evaluation", "testing", "benchmark", "assess", "evaluate"],
-    "error": ["failure", "mistake", "incorrect", "wrong", "issue"],
-}
 
 
 def retrieval_mode_uses_embedding_retrieval(retrieval_mode: str) -> bool:
@@ -305,27 +267,18 @@ class TantivyIndex:
         return schema_builder.build()
 
     def _extract_keywords(self, query: str) -> str:
-        """Extract meaningful BM25 keywords, expanding colloquial terms to technical synonyms.
+        """Extract content-bearing tokens for BM25 by stripping stop words.
 
         Hyphens are replaced with spaces so product codes like ``MGDD-08-N-E``
         expand into individual tokens.  Stop words and single-char tokens are
-        removed.  Each surviving token is checked against ``_QUERY_SYNONYMS``
-        and, when matched, emitted as a BM25 OR group so both the user's
-        vocabulary and the indexed technical vocabulary can match.
+        removed.  Vocabulary bridging between query and index is handled at
+        index time via VLM-generated anticipated_queries rather than by
+        hardcoded synonym tables.
         """
         normalized = re.sub(r'[-]', ' ', query)
         tokens = re.findall(r'[A-Za-z0-9]+', normalized)
         keywords = [t for t in tokens if t.lower() not in _STOP_WORDS and len(t) > 1]
-
-        expanded: list[str] = []
-        for kw in keywords:
-            syns = _QUERY_SYNONYMS.get(kw.lower(), [])
-            if syns:
-                terms = [kw] + syns
-                expanded.append("(" + " OR ".join(terms) + ")")
-            else:
-                expanded.append(kw)
-        return ' '.join(expanded) if expanded else ''
+        return ' '.join(keywords) if keywords else ''
 
     def _build_query_text(self, query: str, crop_label: str | list[str] | None) -> str:
         base_query = self._extract_keywords(query.strip()) or "*"
