@@ -72,7 +72,7 @@ def retrieval_mode_uses_vision_semantic(retrieval_mode: str) -> bool:
 
 def retrieval_mode_uses_vision_text_embed(retrieval_mode: str) -> bool:
     """True when a dense text-embedding collection (mm_text_db) is needed at index/query time."""
-    return retrieval_mode in {"vision_text_embed", "vision_bm25_rerank"}
+    return retrieval_mode in {"vision_text_embed", "vision_bm25_rerank", "vision_hybrid_bm25"}
 
 
 def retrieval_mode_uses_vision_hybrid_bm25(retrieval_mode: str) -> bool:

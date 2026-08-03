@@ -2,6 +2,7 @@ import base64
 import hashlib
 import json
 import logging
+import re
 from io import BytesIO
 from pathlib import Path
 from time import time
@@ -17,6 +18,14 @@ import torch
 # Keeping one client per path alive for the duration of the process avoids
 # re-initialization and SQLite re-locking issues between sequential services.
 _chroma_client_cache: dict = {}
+
+# Pages with fewer than this many characters of PyMuPDF-extracted text are
+# treated as scanned (image-only) and given an OCR-focused VLM prompt.
+_SCANNED_TEXT_THRESHOLD = 50
+
+# Visual embedding cosine distance above this threshold means the query has
+# no strong visual anchor — skip visual RRF to avoid polluting text/factual results.
+_VISUAL_EMBED_DIST_THRESHOLD = 0.5
 from chromadb.api.types import (
     Embedding,
     EmbeddingFunction,
@@ -321,6 +330,82 @@ def _reciprocal_rank_fusion(
         (s, p, score)
         for (s, p), score in sorted(scores.items(), key=lambda x: -x[1])
     ]
+
+
+def _theme_tokens(theme: str) -> set[str]:
+    """Extract content-bearing tokens (>3 chars) from a topic theme string."""
+    return {w.lower() for w in re.findall(r'[A-Za-z0-9]+', theme or '') if len(w) > 3}
+
+
+def _expand_with_topic_siblings(
+    page_list: list[tuple[str, int, float]],
+    top_k: int,
+    hindex_store,
+    logger,
+) -> list[tuple[str, int, float]]:
+    """Inject cross-document pages that share a topic with any top-k anchor page.
+
+    For each retrieved page, looks up its TopicNodes and finds pages from other
+    documents whose topics overlap by theme vocabulary.  Siblings are merged into
+    the candidate pool via RRF — this is the library-science 'See Also' reference.
+    """
+    if not page_list:
+        return page_list
+
+    try:
+        all_hierarchies = hindex_store.load_all()
+    except Exception as exc:
+        logger.warning("[vision_hybrid_bm25] topic sibling load failed: %s", exc)
+        return page_list
+
+    if len(all_hierarchies) < 2:
+        return page_list  # single-document corpus; nothing to cross-reference
+
+    h_by_doc: dict[str, object] = {h.doc_name: h for h in all_hierarchies}
+    sibling_seen: set[tuple[str, int]] = {(_s, _p) for _s, _p, _ in page_list}
+    sibling_pages: list[tuple[str, int]] = []
+
+    for _src, _pn, _ in page_list[:top_k]:
+        h = h_by_doc.get(_src)
+        if h is None or not getattr(h, 'topics', None):
+            continue
+        page_idx = _pn - 1  # topics store 0-indexed page indices
+
+        anchor_themes: list[set[str]] = []
+        for topic in h.topics:
+            if page_idx in (topic.page_indices or []):
+                toks = _theme_tokens(topic.theme)
+                if toks:
+                    anchor_themes.append(toks)
+        if not anchor_themes:
+            continue
+
+        for other_h in all_hierarchies:
+            if other_h.doc_name == _src:
+                continue
+            for topic in (getattr(other_h, 'topics', None) or []):
+                other_toks = _theme_tokens(topic.theme)
+                if not other_toks:
+                    continue
+                for a_toks in anchor_themes:
+                    if len(a_toks & other_toks) >= 1:
+                        for idx in (topic.page_indices or []):
+                            _key = (other_h.doc_name, idx + 1)
+                            if _key not in sibling_seen:
+                                sibling_seen.add(_key)
+                                sibling_pages.append(_key)
+                        break  # this topic matched; move to next other topic
+
+    if not sibling_pages:
+        return page_list
+
+    original_ranked = [(_s, _p) for _s, _p, _ in page_list]
+    expanded = _reciprocal_rank_fusion([original_ranked, sibling_pages])
+    logger.debug(
+        "[vision_hybrid_bm25] topic siblings: +%d cross-doc pages injected",
+        len(sibling_pages),
+    )
+    return expanded
 
 
 def _hindex_text_context_for_pages(
@@ -1388,6 +1473,7 @@ class RAGImg:
                         vlm_docs = self._build_hindex_for_doc(
                             document, rag_config,
                             preserve_existing_hindex=vlm_desc_requested,
+                            page_texts=page_texts if not skip_vector_and_text else None,
                         )
                         if vision_semantic_requested or hybrid_bm25_requested:
                             vlm_tantivy_documents.extend(vlm_docs)
@@ -1709,7 +1795,29 @@ class RAGImg:
                             if (_src, _pn) not in _seen_pages:
                                 _seen_pages.add((_src, _pn))
                                 _page_list.append((_src, _pn, 1.0 / (1.0 + _score)))
-                # Visual embedding retrieval (GME-Qwen2-VL) — GPU at query time, cross-modal query
+                # Text embedding retrieval (semantic match over VLM-generated page text)
+                _text_embed_page_list: list[tuple[str, int, float]] = []
+                if self.rag_text_embed_collection is not None:
+                    try:
+                        _n_text = min(rag_config.top_k * 8, max(self.rag_text_embed_collection.count() or 1, 1))
+                        _text_results = self.rag_text_embed_collection.query(
+                            query_texts=[rag_question],
+                            n_results=_n_text,
+                            include=["metadatas", "distances"],
+                        )
+                        _text_seen: set[tuple[str, int]] = set()
+                        for _meta, _dist in zip(_text_results["metadatas"][0], _text_results["distances"][0]):
+                            _src = _meta.get("source", "")
+                            _pn = _meta.get("page_number")
+                            if _src and _pn is not None:
+                                _key = (_src, int(_pn))
+                                if _key not in _text_seen:
+                                    _text_seen.add(_key)
+                                    _text_embed_page_list.append((_src, int(_pn), float(_dist)))
+                    except Exception as _e:
+                        self.logger.warning("[vision_hybrid_bm25] text embed query failed: %s", _e)
+
+                # Visual embedding retrieval (GME-Qwen2-VL, cross-modal) — gated by distance
                 _embed_page_list: list[tuple[str, int, float]] = []
                 if self.rag_indexdb_collection is not None:
                     try:
@@ -1730,11 +1838,26 @@ class RAGImg:
                                     _embed_page_list.append((_src, int(_pn), float(_dist)))
                     except Exception as _e:
                         self.logger.warning("[vision_hybrid_bm25] visual embed query failed: %s", _e)
-                # RRF fusion: merge BM25 ranked list with visual embedding ranked list
+
+                # RRF fusion: BM25 + text embed (always); visual embed only if query has
+                # a strong visual anchor (min cosine distance < threshold)
                 _bm25_ranked = [(_s, _p) for _s, _p, _ in _page_list]
+                _text_ranked = [(_s, _p) for _s, _p, _ in _text_embed_page_list]
                 _embed_ranked = [(_s, _p) for _s, _p, _ in _embed_page_list]
-                if _embed_ranked:
-                    _page_list = _reciprocal_rank_fusion([_bm25_ranked, _embed_ranked])
+                _ranked_lists = [_bm25_ranked]
+                if _text_ranked:
+                    _ranked_lists.append(_text_ranked)
+                _min_visual_dist = min((d for _, _, d in _embed_page_list), default=1.0)
+                if _embed_ranked and _min_visual_dist < _VISUAL_EMBED_DIST_THRESHOLD:
+                    _ranked_lists.append(_embed_ranked)
+                if len(_ranked_lists) > 1:
+                    _page_list = _reciprocal_rank_fusion(_ranked_lists)
+
+                # Topic-sibling expansion: inject cross-document pages sharing a topic
+                _page_list = _expand_with_topic_siblings(
+                    _page_list, rag_config.top_k, self.hindex_store, self.logger
+                )
+
                 docs = _page_hits_to_docs(_page_list[: rag_config.top_k], self.hindex_store, self.kvstore, rag_config.top_k)
                 _tc_hits, _tc_prompt = _hindex_text_context_for_pages(
                     [(_s, _p) for _s, _p, _ in _page_list[: rag_config.top_k]],
@@ -1745,8 +1868,11 @@ class RAGImg:
                 docs["text_context"] = _tc_hits
                 docs["text_context_prompt"] = _tc_prompt
                 self.logger.debug(
-                    "[vision_hybrid_bm25] bm25=%d embed=%d rrf_in=%d for '%s'",
-                    len(_page_bm25_hits), len(_embed_page_list), len(_bm25_ranked), rag_question[:80],
+                    "[vision_hybrid_bm25] bm25=%d text_embed=%d visual_embed=%d "
+                    "(visual_dist=%.3f, gate=%s) siblings=%d for '%s'",
+                    len(_page_bm25_hits), len(_text_embed_page_list), len(_embed_page_list),
+                    _min_visual_dist, _min_visual_dist < _VISUAL_EMBED_DIST_THRESHOLD,
+                    len(_page_list) - len(_bm25_ranked), rag_question[:80],
                 )
 
         elif _mode == "vision_topic_embed":
@@ -1845,6 +1971,7 @@ class RAGImg:
         document: dict,
         rag_config: RAGObj,
         preserve_existing_hindex: bool = False,
+        page_texts: dict[int, str] | None = None,
     ) -> list[dict]:
         """Build and persist the hierarchy for one document.
 
@@ -1878,6 +2005,19 @@ class RAGImg:
         page_count = len(document["images"])
         page_keys = [_page_key(uuid5_val, i) for i in range(page_count)]
 
+        # Detect scanned (image-only) pages: PDF embedded text is too sparse to use.
+        scanned_page_indices: set[int] = set()
+        if page_texts is not None:
+            for page_idx in range(page_count):
+                pn = page_idx + 1  # _extract_page_texts keys are 1-indexed
+                if len(page_texts.get(pn, "").strip()) < _SCANNED_TEXT_THRESHOLD:
+                    scanned_page_indices.add(page_idx)
+            if scanned_page_indices:
+                self.logger.info(
+                    "[hindex] Detected %d scanned page(s) in '%s' — using OCR-focused VLM prompt",
+                    len(scanned_page_indices), doc_name,
+                )
+
         # Build the hierarchy (Phase 1 + 2 happen inside builder.build())
         page_images = [img_dict["image"] for img_dict in document["images"]]
         builder = HierarchyBuilder(
@@ -1886,7 +2026,10 @@ class RAGImg:
             max_workers=getattr(self, "hindex_max_workers", 1),
             batch_size=getattr(self, "hindex_batch_size", 4),
         )
-        hierarchy = builder.build(doc_name, page_images, page_keys=page_keys)
+        hierarchy = builder.build(
+            doc_name, page_images, page_keys=page_keys,
+            scanned_page_indices=scanned_page_indices or None,
+        )
 
         # Phase 3 — Populate crop_keys on each PageRecord from document["parts"].
         # parts[*]["metadata"]["page_number"] is 1-indexed, so subtract 1.
