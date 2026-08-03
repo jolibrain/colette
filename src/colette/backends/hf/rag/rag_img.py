@@ -474,7 +474,6 @@ def sort_and_select_top_k(
         if len(duplicate_indices) > 0:
             logger.debug("Found %d duplicates", len(duplicate_indices))
 
-        # sorted_indices_bak = sorted_indices.copy()
         for i in sorted(duplicate_indices, reverse=True):
             del sorted_indices[i]
 
@@ -758,14 +757,10 @@ class ImageEmbeddingFunction(EmbeddingFunction):
                 ]
             doc_messages.append(message)
 
-        # print("doc_messages=", doc_messages)
-
         doc_texts = [
             self.processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) + "<|endoftext|>"
             for msg in doc_messages
         ]
-
-        # print("doc_texts=", doc_texts)
 
         doc_image_inputs, doc_video_inputs = process_vision_info(doc_messages)
         doc_inputs = self.processor(
@@ -807,7 +802,6 @@ class ImageEmbeddingFunction(EmbeddingFunction):
                     src = output.hidden_states[-1]
                 doc_embeddings = self.get_embedding(src)
                 del output
-        # output = None
         db_embeddings = cast(Embedding, doc_embeddings.squeeze().tolist())  ##TODO: beware multiple docs...
 
         return db_embeddings
@@ -2041,7 +2035,6 @@ class RAGImg:
             if self.rag_embf.shared:
                 ModelCache.acquire_lock(cache_key)
             if not self.rag_embf.shared or not ModelCache.is_in_use(cache_key, 1):
-                # shared = True
                 del self.rag_embf.model
                 self.rag_embf.model = None
 
