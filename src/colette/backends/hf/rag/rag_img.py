@@ -1741,36 +1741,6 @@ class RAGImg:
                 _embed_ranked = [(_s, _p) for _s, _p, _ in _embed_page_list]
                 if _embed_ranked:
                     _page_list = _reciprocal_rank_fusion([_bm25_ranked, _embed_ranked])
-                # Cross-page cluster fusion: interleave topic-adjacent neighbors after each ranked page.
-                # For each result page, pages ±1 that share a topic cluster are inserted right after
-                # their anchor — this surfaces multi-page answers without disrupting strong single-page hits.
-                _all_in_list: set[tuple[str, int]] = {(_s, _p) for _s, _p, _ in _page_list}
-                _interleaved: list[tuple[str, int, float]] = []
-                _interleaved_keys: set[tuple[str, int]] = set()
-                _n_neighbors = 0
-                for _s, _p, _sc in _page_list:
-                    if (_s, _p) in _interleaved_keys:
-                        continue
-                    _interleaved.append((_s, _p, _sc))
-                    _interleaved_keys.add((_s, _p))
-                    if _s not in _loaded_h:
-                        _loaded_h[_s] = self.hindex_store.load(_s)
-                    _h = _loaded_h.get(_s)
-                    _n_doc_pages = len(_h.page_records) if _h else 0
-                    _p_topics = {t.topic_id for t in (_h.topics if _h else []) if (_p - 1) in t.page_indices}
-                    for _np in (_p - 1, _p + 1):
-                        if (_s, _np) in _all_in_list or (_s, _np) in _interleaved_keys:
-                            continue
-                        if not (1 <= _np <= _n_doc_pages):
-                            continue
-                        # Only inject if neighbor shares a topic with the anchor page (or no topics set)
-                        _np_topics = {t.topic_id for t in (_h.topics if _h else []) if (_np - 1) in t.page_indices}
-                        if _p_topics & _np_topics or not (_h and _h.topics):
-                            _all_in_list.add((_s, _np))
-                            _interleaved_keys.add((_s, _np))
-                            _interleaved.append((_s, _np, _sc))
-                            _n_neighbors += 1
-                _page_list = _interleaved
                 docs = _page_hits_to_docs(_page_list[: rag_config.top_k], self.hindex_store, self.kvstore, rag_config.top_k)
                 _tc_hits, _tc_prompt = _hindex_text_context_for_pages(
                     [(_s, _p) for _s, _p, _ in _page_list[: rag_config.top_k]],
@@ -1781,9 +1751,8 @@ class RAGImg:
                 docs["text_context"] = _tc_hits
                 docs["text_context_prompt"] = _tc_prompt
                 self.logger.debug(
-                    "[vision_hybrid_bm25] bm25=%d embed=%d rrf_in=%d neighbors=%d for '%s'",
-                    len(_page_bm25_hits), len(_embed_page_list), len(_bm25_ranked),
-                    _n_neighbors, rag_question[:80],
+                    "[vision_hybrid_bm25] bm25=%d embed=%d rrf_in=%d for '%s'",
+                    len(_page_bm25_hits), len(_embed_page_list), len(_bm25_ranked), rag_question[:80],
                 )
 
         elif _mode == "vision_topic_embed":
