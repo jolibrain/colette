@@ -73,9 +73,9 @@ pip cache purge
 # Select torch/flash-attn versions based on detected CUDA major version
 cuda_major=$(echo "$cuda_version" | cut -d. -f1)
 if [ "$cuda_major" -ge 13 ]; then
-    # Must match vllm 0.13.0's torch==2.9.0 pin, or installing colette drags in
+    # Must match vllm 0.19.0's torch==2.10.0 pin, or installing colette drags in
     # a different torch and invalidates the flash-attn build below.
-    TORCH_VERSION="2.9.0"
+    TORCH_VERSION="2.10.0"
     TORCH_INDEX_URL="https://download.pytorch.org/whl/cu130"
     FLASH_ATTN_VERSION="2.8.3"
 else
