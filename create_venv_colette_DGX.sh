@@ -330,7 +330,24 @@ if other != "flash_attention_2":
     raise SystemExit(f"Expected flash_attention_2 for non-Qwen-VL models, got {other!r}")
 SMOKE
 
-python -m pip check
+# pip check, minus known-benign platform mismatches. Mirrors the filtering in
+# scripts/install_python_deps.sh so a real conflict still fails the install.
+echo "Running pip check..."
+pip_check_output="$(python -m pip check 2>&1 || true)"
+if [ -n "${pip_check_output}" ]; then
+    # nvidia-cusparselt-cu13 is a torch cu130 dependency with no aarch64 build,
+    # so it reports itself unsupported here. torch's CUDA path still works.
+    filtered_output="$(printf '%s\n' "${pip_check_output}" \
+        | grep -viE '^nvidia-cusparselt-cu13 .* is not supported on this platform\.?$' \
+        | grep -viE '^pygobject .* requires pycairo, which is not installed\.$' || true)"
+    if [ -n "${filtered_output}" ]; then
+        echo "${pip_check_output}" >&2
+        exit 1
+    fi
+    echo "WARNING: ignoring known platform mismatch:" >&2
+    echo "${pip_check_output}" >&2
+fi
+
 python -m pip cache purge
 echo "All dependencies installed."
 
