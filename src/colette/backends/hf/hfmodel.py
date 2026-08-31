@@ -75,6 +75,10 @@ class HFModel(LLMModel):
         self.vllm_memory_utilization = ad.vllm_memory_utilization
         self.vllm_quantization = ad.vllm_quantization
         self.vllm_context_size = ad.context_size
+        # max_model_len used to be hardcoded to 4096 here, so a config that says
+        # nothing about context_size must keep getting 4096 rather than the 2048
+        # field default. Only an explicitly configured value overrides it.
+        self.vllm_max_model_len = ad.context_size if "context_size" in ad.model_fields_set else 4096
         self.vllm_enforce_eager = ad.vllm_enforce_eager
         if ad.external_vllm_server is not None:
             self.server_url = ad.external_vllm_server.url
@@ -232,7 +236,7 @@ class HFModel(LLMModel):
                 load_format=self.vllm_load_format,
                 quantization=self.vllm_quantization,
                 gpu_memory_utilization=self.vllm_memory_utilization,
-                max_model_len=self.vllm_context_size,
+                max_model_len=self.vllm_max_model_len,
                 dtype=torch.bfloat16,
                 mm_processor_kwargs={
                     "min_pixels": 28 * 28,

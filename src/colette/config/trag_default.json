@@ -29,7 +29,7 @@
         },
         "llm": {
             "source": "Qwen/Qwen2.5-0.5B-Instruct",
-            "context_size": 2048,
+            "context_size": 4096,
             "dtype": "float32",
 	    "conversational": true,
             "inference": {
