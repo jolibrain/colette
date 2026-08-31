@@ -73,8 +73,10 @@ pip cache purge
 # Select torch/flash-attn versions based on detected CUDA major version
 cuda_major=$(echo "$cuda_version" | cut -d. -f1)
 if [ "$cuda_major" -ge 13 ]; then
+    # Must match vllm 0.13.0's torch==2.9.0 pin, or installing colette drags in
+    # a different torch and invalidates the flash-attn build below.
     TORCH_VERSION="2.9.0"
-    TORCH_INDEX_URL="https://download.pytorch.org/whl/test/cu130"
+    TORCH_INDEX_URL="https://download.pytorch.org/whl/cu130"
     FLASH_ATTN_VERSION="2.8.3"
 else
     TORCH_VERSION="2.7.0"
@@ -200,10 +202,14 @@ cd "$SCRIPT_DIR/faiss"
 pip install build/faiss/python
 
 # CRITICAL FIX: Add FAISS runtime library paths to LD_LIBRARY_PATH.
-# The Python package ships libfaiss_python_callbacks.so, while libfaiss.so lives
-# under the user-local install prefix. Both must be preferred over /usr/local/lib.
+# _swigfaiss.so is linked against libfaiss.so with a RUNPATH pointing into the
+# build tree this script deletes below, so the install prefix has to be on
+# LD_LIBRARY_PATH or `import faiss` fails in every new shell.
+# Gate on libfaiss.so itself: FAISS <=1.7 also shipped
+# libfaiss_python_callbacks.so beside the extension, but 1.15 does not, and
+# testing for it silently skipped this whole block.
 FAISS_PYTHON_LIB="$SCRIPT_DIR/venv_colette/lib/python3.12/site-packages/faiss"
-if [ -d "$FAISS_LIB_DIR" ] && [ -f "${FAISS_PYTHON_LIB}/libfaiss_python_callbacks.so" ]; then
+if [ -f "${FAISS_LIB_DIR}/libfaiss.so" ]; then
     echo "Found FAISS runtime libraries, adding to LD_LIBRARY_PATH"
     export LD_LIBRARY_PATH="${FAISS_LIB_DIR}:${FAISS_PYTHON_LIB}:${LD_LIBRARY_PATH:-}"
 
@@ -214,12 +220,13 @@ if [ -d "$FAISS_LIB_DIR" ] && [ -f "${FAISS_PYTHON_LIB}/libfaiss_python_callback
 
     echo "✓ FAISS runtime library paths configured"
 else
-    echo "✗ WARNING: FAISS runtime libraries not found in expected locations"
+    echo "✗ ERROR: ${FAISS_LIB_DIR}/libfaiss.so not found after install"
+    exit 1
 fi
 
 # Verify FAISS import works
-if ! python -c "import faiss; print(f'✓ FAISS {faiss.__version__} imported successfully')"; then
-    echo "✗ ERROR: FAISS import failed"
+if ! env -u LD_LIBRARY_PATH bash -c "source '$ACTIVATE_FILE' && python -c \"import faiss; print(f'✓ FAISS {faiss.__version__} imported successfully ({faiss.get_num_gpus()} GPU(s))')\""; then
+    echo "✗ ERROR: FAISS import failed from a clean shell"
     exit 1
 fi
 
