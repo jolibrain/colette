@@ -232,7 +232,7 @@ class HFModel(LLMModel):
                 load_format=self.vllm_load_format,
                 quantization=self.vllm_quantization,
                 gpu_memory_utilization=self.vllm_memory_utilization,
-                max_model_len=4096,
+                max_model_len=self.vllm_context_size,
                 dtype=torch.bfloat16,
                 mm_processor_kwargs={
                     "min_pixels": 28 * 28,
@@ -247,6 +247,8 @@ class HFModel(LLMModel):
                 self.llm_subtype = "qwen25-vl"
             elif "Qwen3-VL" in self.llm_source:
                 self.llm_subtype = "qwen3-vl"
+            elif "Qwen3.5" in self.llm_source or "Qwen3_5" in self.llm_source:
+                self.llm_subtype = "qwen35-vl"
             elif "SmolVLM" in self.llm_source:
                 self.llm_subtype = "smolvlm"
             else:
@@ -643,7 +645,7 @@ class HFModel(LLMModel):
                     generation = None
                 elif self.llm_type == "vllm":  # VLLM case
                     sampling_params = SamplingParams(max_tokens=max_new_tokens)
-                    if "qwen2" in self.llm_subtype:
+                    if self.llm_subtype in ("qwen2-vl", "qwen25-vl", "qwen3-vl", "qwen35-vl"):
                         outputs = self.llm.chat(
                             messages,
                             mm_processor_kwargs={
