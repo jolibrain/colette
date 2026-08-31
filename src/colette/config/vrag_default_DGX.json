@@ -1,0 +1,42 @@
+{
+    "app": {
+        "repository": "",
+        "models_repository": "/models",
+        "verbose": "info"
+    },
+    "parameters": {
+        "input": {
+            "lib": "hf",
+            "rag": {
+                "embedding_model": "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct",
+                "gpu_id": 0,
+                "top_k": 4,
+                "retrieval_mode": "embedding_retrieval",
+                "text_search_engine_top_k": 4,
+                "text_search_engine_fields": ["content", "source"],
+                "text_search_engine_max_chars_per_doc": 1500,
+                "text_search_engine_max_total_chars": 6000,
+                "ragm": {
+                    "layout_detection": true,
+                    "layout_detector_gpu_id": -1,
+                    "image_width": 512,
+                    "image_height": 512,
+                    "auto_scale_for_font": false
+                }
+            },
+            "data": []
+        },
+        "llm": {
+            "source": "Qwen/Qwen3.5-9B",
+            "gpu_ids": [0],
+            "context_size": 8192,
+            "vllm_memory_utilization": 0.6,
+            "image_width": 320,
+            "image_height": 480,
+            "adjust_aspect_ratio": true,                        
+            "inference": {
+                "lib": "vllm"
+            }
+        }
+    }
+}

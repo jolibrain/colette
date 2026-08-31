@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -euo pipefail
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 echo "Script directory: $SCRIPT_DIR"
 
@@ -24,9 +26,9 @@ export CUDA_HOME=/usr/local/cuda-${cuda_version}
 export CUDACXX=${CUDA_HOME}/bin/nvcc
 export CUDA_PATH=${CUDA_HOME}
 export PATH=${CUDA_HOME}/bin:$PATH
-export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
-export LIBRARY_PATH=${CUDA_HOME}/lib64:$LIBRARY_PATH
-export CPATH=${CUDA_HOME}/include:$CPATH
+export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}
+export LIBRARY_PATH=${CUDA_HOME}/lib64:${LIBRARY_PATH:-}
+export CPATH=${CUDA_HOME}/include:${CPATH:-}
 
 echo "CUDA_HOME set to: $CUDA_HOME"
 echo "Checking if nvcc is accessible:"
@@ -71,8 +73,10 @@ pip cache purge
 # Select torch/flash-attn versions based on detected CUDA major version
 cuda_major=$(echo "$cuda_version" | cut -d. -f1)
 if [ "$cuda_major" -ge 13 ]; then
-    TORCH_VERSION="2.9.0"
-    TORCH_INDEX_URL="https://download.pytorch.org/whl/test/cu130"
+    # Must match vllm 0.19.0's torch==2.10.0 pin, or installing colette drags in
+    # a different torch and invalidates the flash-attn build below.
+    TORCH_VERSION="2.10.0"
+    TORCH_INDEX_URL="https://download.pytorch.org/whl/cu130"
     FLASH_ATTN_VERSION="2.8.3"
 else
     TORCH_VERSION="2.7.0"
@@ -101,9 +105,9 @@ if [ -n "$torch_cuda_version" ] && [ "$cuda_version" != "$torch_cuda_version" ];
         export CUDACXX=${CUDA_HOME}/bin/nvcc
         export CUDA_PATH=${CUDA_HOME}
         export PATH=${CUDA_HOME}/bin:$PATH
-        export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
-        export LIBRARY_PATH=${CUDA_HOME}/lib64:$LIBRARY_PATH
-        export CPATH=${CUDA_HOME}/include:$CPATH
+        export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}
+        export LIBRARY_PATH=${CUDA_HOME}/lib64:${LIBRARY_PATH:-}
+        export CPATH=${CUDA_HOME}/include:${CPATH:-}
         cuda_version="$torch_cuda_version"
         cuda_short=$(echo "$cuda_version" | sed 's/\.//')
         echo "Using CUDA toolkit at: $CUDA_HOME"
@@ -160,6 +164,20 @@ elif [ "$cuda_major" -ge 12 ]; then
 else
     CUDA_ARCHS="72;75;80;86;87;89;90"
 fi
+# The static lists above predate newer parts; append the architectures of the
+# GPUs actually present (e.g. GB10 reports compute_cap 12.1 -> sm_121). Without
+# this, FAISS builds with no kernel image for the local device and every GPU
+# call fails at runtime.
+if command -v nvidia-smi &> /dev/null; then
+    detected_archs=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null \
+        | tr -d ' .' | sort -u)
+    for arch in $detected_archs; do
+        case ";${CUDA_ARCHS};" in
+            *";${arch};"*) ;;
+            *) CUDA_ARCHS="${CUDA_ARCHS};${arch}" ;;
+        esac
+    done
+fi
 echo "Using CUDA architectures: $CUDA_ARCHS"
 
 # Configure build (CUDA environment variables already set globally)
@@ -177,32 +195,40 @@ cmake --build build -j$(nproc)
 # Install C++ libraries to user-local prefix (no sudo required)
 cmake --install build --prefix "$HOME/.local"
 FAISS_LIB_DIR="$HOME/.local/lib"
-export LD_LIBRARY_PATH="${FAISS_LIB_DIR}:${LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="${FAISS_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 
 # Install Python bindings
 cd "$SCRIPT_DIR/faiss"
 pip install build/faiss/python
 
 # CRITICAL FIX: Add FAISS runtime library paths to LD_LIBRARY_PATH.
-# The Python package ships libfaiss_python_callbacks.so, while libfaiss.so lives
-# under the user-local install prefix. Both must be preferred over /usr/local/lib.
+# _swigfaiss.so is linked against libfaiss.so with a RUNPATH pointing into the
+# build tree this script deletes below, so the install prefix has to be on
+# LD_LIBRARY_PATH or `import faiss` fails in every new shell.
+# Gate on libfaiss.so itself: FAISS <=1.7 also shipped
+# libfaiss_python_callbacks.so beside the extension, but 1.15 does not, and
+# testing for it silently skipped this whole block.
 FAISS_PYTHON_LIB="$SCRIPT_DIR/venv_colette/lib/python3.12/site-packages/faiss"
-if [ -d "$FAISS_LIB_DIR" ] && [ -f "${FAISS_PYTHON_LIB}/libfaiss_python_callbacks.so" ]; then
+if [ -f "${FAISS_LIB_DIR}/libfaiss.so" ]; then
     echo "Found FAISS runtime libraries, adding to LD_LIBRARY_PATH"
-    export LD_LIBRARY_PATH="${FAISS_LIB_DIR}:${FAISS_PYTHON_LIB}:${LD_LIBRARY_PATH}"
+    export LD_LIBRARY_PATH="${FAISS_LIB_DIR}:${FAISS_PYTHON_LIB}:${LD_LIBRARY_PATH:-}"
 
     # Make it permanent for this venv by modifying the activate script.
     echo "" >> "$ACTIVATE_FILE"
     echo "# Colette FAISS library paths" >> "$ACTIVATE_FILE"
-    echo "export LD_LIBRARY_PATH=\"${FAISS_LIB_DIR}:${FAISS_PYTHON_LIB}:\${LD_LIBRARY_PATH}\"" >> "$ACTIVATE_FILE"
+    echo "export LD_LIBRARY_PATH=\"${FAISS_LIB_DIR}:${FAISS_PYTHON_LIB}:\${LD_LIBRARY_PATH:-}\"" >> "$ACTIVATE_FILE"
 
     echo "✓ FAISS runtime library paths configured"
 else
-    echo "✗ WARNING: FAISS runtime libraries not found in expected locations"
+    echo "✗ ERROR: ${FAISS_LIB_DIR}/libfaiss.so not found after install"
+    exit 1
 fi
 
 # Verify FAISS import works
-python -c "import faiss; print(f'✓ FAISS {faiss.__version__} imported successfully')" || echo "✗ FAISS import failed"
+if ! env -u LD_LIBRARY_PATH bash -c "source '$ACTIVATE_FILE' && python -c \"import faiss; print(f'✓ FAISS {faiss.__version__} imported successfully ({faiss.get_num_gpus()} GPU(s))')\""; then
+    echo "✗ ERROR: FAISS import failed from a clean shell"
+    exit 1
+fi
 
 # Clean up
 cd "$SCRIPT_DIR"
@@ -211,9 +237,18 @@ echo "FAISS installation complete."
 
 echo "Installing other dependencies..."
 
-# Backup original pyproject.toml if it exists
+# Backup original pyproject.toml if it exists. The restore runs from an EXIT
+# trap so an abort mid-install cannot leave the repo's pyproject.toml
+# overwritten by the DGX variant.
+restore_pyproject() {
+    if [ -f "$SCRIPT_DIR/pyproject.toml.bak" ]; then
+        mv -f "$SCRIPT_DIR/pyproject.toml.bak" "$SCRIPT_DIR/pyproject.toml"
+        echo "Restored original pyproject.toml"
+    fi
+}
 if [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
     cp "$SCRIPT_DIR/pyproject.toml" "$SCRIPT_DIR/pyproject.toml.bak"
+    trap restore_pyproject EXIT
 fi
 
 # Use DGX version if it exists
@@ -242,16 +277,13 @@ if [ "$cuda_major" -ge 13 ]; then
     pip install nvidia-cuda-runtime-cu12
 fi
 
-# Install colette with extras (flash-attn already satisfied above)
-pip install -e "$SCRIPT_DIR[dev,trag]"
-
 # Ensure runtime lib paths are available for flash-attn/torch imports.
 TORCH_LIB_DIR="$SCRIPT_DIR/venv_colette/lib/python3.12/site-packages/torch/lib"
 NVIDIA_CU13_LIB_DIR="$SCRIPT_DIR/venv_colette/lib/python3.12/site-packages/nvidia/cu13/lib"
 NVIDIA_CUDA_RUNTIME_LIB_DIR="$SCRIPT_DIR/venv_colette/lib/python3.12/site-packages/nvidia/cuda_runtime/lib"
 for lib_dir in "$TORCH_LIB_DIR" "$NVIDIA_CU13_LIB_DIR" "$NVIDIA_CUDA_RUNTIME_LIB_DIR"; do
     if [ -d "$lib_dir" ]; then
-        export LD_LIBRARY_PATH="$lib_dir:${LD_LIBRARY_PATH}"
+        export LD_LIBRARY_PATH="$lib_dir:${LD_LIBRARY_PATH:-}"
     fi
 done
 
@@ -259,8 +291,11 @@ done
 if ! grep -q "Colette CUDA runtime paths" "$ACTIVATE_FILE"; then
     echo "" >> "$ACTIVATE_FILE"
     echo "# Colette CUDA runtime paths" >> "$ACTIVATE_FILE"
-    echo "export LD_LIBRARY_PATH=\"$TORCH_LIB_DIR:$NVIDIA_CU13_LIB_DIR:$NVIDIA_CUDA_RUNTIME_LIB_DIR:\${LD_LIBRARY_PATH}\"" >> "$ACTIVATE_FILE"
+    echo "export LD_LIBRARY_PATH=\"$TORCH_LIB_DIR:$NVIDIA_CU13_LIB_DIR:$NVIDIA_CUDA_RUNTIME_LIB_DIR:\${LD_LIBRARY_PATH:-}\"" >> "$ACTIVATE_FILE"
 fi
+
+# Install colette with extras (flash-attn already satisfied above)
+pip install -e "$SCRIPT_DIR[dev,trag]"
 
 # Verify flash-attn installation
 if python -c "import torch; import flash_attn" 2>/dev/null; then
@@ -270,12 +305,51 @@ else
     exit 1
 fi
 
-echo "All dependencies installed."
+echo "Running flash-attn compatibility smoke check..."
+python - <<'SMOKE'
+from colette.backends.hf.attention import has_flash_attn, resolve_attn_implementation
 
-# Restore original pyproject.toml
-if [ -f "$SCRIPT_DIR/pyproject.toml.bak" ]; then
-    mv "$SCRIPT_DIR/pyproject.toml.bak" "$SCRIPT_DIR/pyproject.toml"
+# Qwen VL models use 3D mrope position IDs, which flash-attn's varlen kernel
+# mishandles, so attention.py routes the whole family to sdpa. Everything else
+# uses flash_attention_2 when flash-attn is importable.
+qwen35 = resolve_attn_implementation("Qwen/Qwen3.5-9B")
+qwen2vl = resolve_attn_implementation("Qwen/Qwen2-VL-7B-Instruct")
+other = resolve_attn_implementation("meta-llama/Meta-Llama-3-8B")
+print(f"has_flash_attn={has_flash_attn()}")
+print(f"resolved_attn_implementation(Qwen3.5)={qwen35}")
+print(f"resolved_attn_implementation(Qwen2-VL)={qwen2vl}")
+print(f"resolved_attn_implementation(non-Qwen-VL)={other}")
+
+if not has_flash_attn():
+    raise SystemExit("flash-attn is not importable (check LD_LIBRARY_PATH in the venv activate script)")
+if qwen35 != "sdpa":
+    raise SystemExit(f"Expected sdpa for Qwen3.5, got {qwen35!r}")
+if qwen2vl != "sdpa":
+    raise SystemExit(f"Expected sdpa for Qwen2-VL, got {qwen2vl!r}")
+if other != "flash_attention_2":
+    raise SystemExit(f"Expected flash_attention_2 for non-Qwen-VL models, got {other!r}")
+SMOKE
+
+# pip check, minus known-benign platform mismatches. Mirrors the filtering in
+# scripts/install_python_deps.sh so a real conflict still fails the install.
+echo "Running pip check..."
+pip_check_output="$(python -m pip check 2>&1 || true)"
+if [ -n "${pip_check_output}" ]; then
+    # nvidia-cusparselt-cu13 is a torch cu130 dependency with no aarch64 build,
+    # so it reports itself unsupported here. torch's CUDA path still works.
+    filtered_output="$(printf '%s\n' "${pip_check_output}" \
+        | grep -viE '^nvidia-cusparselt-cu13 .* is not supported on this platform\.?$' \
+        | grep -viE '^pygobject .* requires pycairo, which is not installed\.$' || true)"
+    if [ -n "${filtered_output}" ]; then
+        echo "${pip_check_output}" >&2
+        exit 1
+    fi
+    echo "WARNING: ignoring known platform mismatch:" >&2
+    echo "${pip_check_output}" >&2
 fi
+
+python -m pip cache purge
+echo "All dependencies installed."
 
 echo ""
 echo "Installation complete!"
