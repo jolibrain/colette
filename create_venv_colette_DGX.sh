@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -euo pipefail
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 echo "Script directory: $SCRIPT_DIR"
 
@@ -24,9 +26,9 @@ export CUDA_HOME=/usr/local/cuda-${cuda_version}
 export CUDACXX=${CUDA_HOME}/bin/nvcc
 export CUDA_PATH=${CUDA_HOME}
 export PATH=${CUDA_HOME}/bin:$PATH
-export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
-export LIBRARY_PATH=${CUDA_HOME}/lib64:$LIBRARY_PATH
-export CPATH=${CUDA_HOME}/include:$CPATH
+export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}
+export LIBRARY_PATH=${CUDA_HOME}/lib64:${LIBRARY_PATH:-}
+export CPATH=${CUDA_HOME}/include:${CPATH:-}
 
 echo "CUDA_HOME set to: $CUDA_HOME"
 echo "Checking if nvcc is accessible:"
@@ -101,9 +103,9 @@ if [ -n "$torch_cuda_version" ] && [ "$cuda_version" != "$torch_cuda_version" ];
         export CUDACXX=${CUDA_HOME}/bin/nvcc
         export CUDA_PATH=${CUDA_HOME}
         export PATH=${CUDA_HOME}/bin:$PATH
-        export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
-        export LIBRARY_PATH=${CUDA_HOME}/lib64:$LIBRARY_PATH
-        export CPATH=${CUDA_HOME}/include:$CPATH
+        export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}
+        export LIBRARY_PATH=${CUDA_HOME}/lib64:${LIBRARY_PATH:-}
+        export CPATH=${CUDA_HOME}/include:${CPATH:-}
         cuda_version="$torch_cuda_version"
         cuda_short=$(echo "$cuda_version" | sed 's/\.//')
         echo "Using CUDA toolkit at: $CUDA_HOME"
@@ -160,6 +162,20 @@ elif [ "$cuda_major" -ge 12 ]; then
 else
     CUDA_ARCHS="72;75;80;86;87;89;90"
 fi
+# The static lists above predate newer parts; append the architectures of the
+# GPUs actually present (e.g. GB10 reports compute_cap 12.1 -> sm_121). Without
+# this, FAISS builds with no kernel image for the local device and every GPU
+# call fails at runtime.
+if command -v nvidia-smi &> /dev/null; then
+    detected_archs=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null \
+        | tr -d ' .' | sort -u)
+    for arch in $detected_archs; do
+        case ";${CUDA_ARCHS};" in
+            *";${arch};"*) ;;
+            *) CUDA_ARCHS="${CUDA_ARCHS};${arch}" ;;
+        esac
+    done
+fi
 echo "Using CUDA architectures: $CUDA_ARCHS"
 
 # Configure build (CUDA environment variables already set globally)
@@ -177,7 +193,7 @@ cmake --build build -j$(nproc)
 # Install C++ libraries to user-local prefix (no sudo required)
 cmake --install build --prefix "$HOME/.local"
 FAISS_LIB_DIR="$HOME/.local/lib"
-export LD_LIBRARY_PATH="${FAISS_LIB_DIR}:${LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="${FAISS_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 
 # Install Python bindings
 cd "$SCRIPT_DIR/faiss"
@@ -189,12 +205,12 @@ pip install build/faiss/python
 FAISS_PYTHON_LIB="$SCRIPT_DIR/venv_colette/lib/python3.12/site-packages/faiss"
 if [ -d "$FAISS_LIB_DIR" ] && [ -f "${FAISS_PYTHON_LIB}/libfaiss_python_callbacks.so" ]; then
     echo "Found FAISS runtime libraries, adding to LD_LIBRARY_PATH"
-    export LD_LIBRARY_PATH="${FAISS_LIB_DIR}:${FAISS_PYTHON_LIB}:${LD_LIBRARY_PATH}"
+    export LD_LIBRARY_PATH="${FAISS_LIB_DIR}:${FAISS_PYTHON_LIB}:${LD_LIBRARY_PATH:-}"
 
     # Make it permanent for this venv by modifying the activate script.
     echo "" >> "$ACTIVATE_FILE"
     echo "# Colette FAISS library paths" >> "$ACTIVATE_FILE"
-    echo "export LD_LIBRARY_PATH=\"${FAISS_LIB_DIR}:${FAISS_PYTHON_LIB}:\${LD_LIBRARY_PATH}\"" >> "$ACTIVATE_FILE"
+    echo "export LD_LIBRARY_PATH=\"${FAISS_LIB_DIR}:${FAISS_PYTHON_LIB}:\${LD_LIBRARY_PATH:-}\"" >> "$ACTIVATE_FILE"
 
     echo "✓ FAISS runtime library paths configured"
 else
@@ -202,7 +218,10 @@ else
 fi
 
 # Verify FAISS import works
-python -c "import faiss; print(f'✓ FAISS {faiss.__version__} imported successfully')" || echo "✗ FAISS import failed"
+if ! python -c "import faiss; print(f'✓ FAISS {faiss.__version__} imported successfully')"; then
+    echo "✗ ERROR: FAISS import failed"
+    exit 1
+fi
 
 # Clean up
 cd "$SCRIPT_DIR"
@@ -211,9 +230,18 @@ echo "FAISS installation complete."
 
 echo "Installing other dependencies..."
 
-# Backup original pyproject.toml if it exists
+# Backup original pyproject.toml if it exists. The restore runs from an EXIT
+# trap so an abort mid-install cannot leave the repo's pyproject.toml
+# overwritten by the DGX variant.
+restore_pyproject() {
+    if [ -f "$SCRIPT_DIR/pyproject.toml.bak" ]; then
+        mv -f "$SCRIPT_DIR/pyproject.toml.bak" "$SCRIPT_DIR/pyproject.toml"
+        echo "Restored original pyproject.toml"
+    fi
+}
 if [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
     cp "$SCRIPT_DIR/pyproject.toml" "$SCRIPT_DIR/pyproject.toml.bak"
+    trap restore_pyproject EXIT
 fi
 
 # Use DGX version if it exists
@@ -251,7 +279,7 @@ NVIDIA_CU13_LIB_DIR="$SCRIPT_DIR/venv_colette/lib/python3.12/site-packages/nvidi
 NVIDIA_CUDA_RUNTIME_LIB_DIR="$SCRIPT_DIR/venv_colette/lib/python3.12/site-packages/nvidia/cuda_runtime/lib"
 for lib_dir in "$TORCH_LIB_DIR" "$NVIDIA_CU13_LIB_DIR" "$NVIDIA_CUDA_RUNTIME_LIB_DIR"; do
     if [ -d "$lib_dir" ]; then
-        export LD_LIBRARY_PATH="$lib_dir:${LD_LIBRARY_PATH}"
+        export LD_LIBRARY_PATH="$lib_dir:${LD_LIBRARY_PATH:-}"
     fi
 done
 
@@ -259,7 +287,7 @@ done
 if ! grep -q "Colette CUDA runtime paths" "$ACTIVATE_FILE"; then
     echo "" >> "$ACTIVATE_FILE"
     echo "# Colette CUDA runtime paths" >> "$ACTIVATE_FILE"
-    echo "export LD_LIBRARY_PATH=\"$TORCH_LIB_DIR:$NVIDIA_CU13_LIB_DIR:$NVIDIA_CUDA_RUNTIME_LIB_DIR:\${LD_LIBRARY_PATH}\"" >> "$ACTIVATE_FILE"
+    echo "export LD_LIBRARY_PATH=\"$TORCH_LIB_DIR:$NVIDIA_CU13_LIB_DIR:$NVIDIA_CUDA_RUNTIME_LIB_DIR:\${LD_LIBRARY_PATH:-}\"" >> "$ACTIVATE_FILE"
 fi
 
 # Verify flash-attn installation
@@ -270,12 +298,32 @@ else
     exit 1
 fi
 
-echo "All dependencies installed."
+echo "Running flash-attn compatibility smoke check..."
+python - <<'SMOKE'
+import importlib.util
 
-# Restore original pyproject.toml
-if [ -f "$SCRIPT_DIR/pyproject.toml.bak" ]; then
-    mv "$SCRIPT_DIR/pyproject.toml.bak" "$SCRIPT_DIR/pyproject.toml"
-fi
+from colette.backends.hf.attention import resolve_attn_implementation
+
+has_flash = importlib.util.find_spec("flash_attn") is not None
+attn_impl = resolve_attn_implementation("Qwen/Qwen3.5-9B")
+attn_impl_other = resolve_attn_implementation("Qwen/Qwen2-VL-7B-Instruct")
+print(f"flash_attn_installed={has_flash}")
+print(f"resolved_attn_implementation(Qwen3.5)={attn_impl}")
+print(f"resolved_attn_implementation(other)={attn_impl_other}")
+
+# Qwen3.5 uses sdpa (PyTorch native) to avoid flash-attn varlen bug with mrope.
+# All other models use flash_attention_2 when flash_attn is installed.
+if not has_flash:
+    raise SystemExit("flash-attn is not installed")
+if attn_impl != "sdpa":
+    raise SystemExit(f"Expected sdpa for Qwen3.5, got {attn_impl!r}")
+if attn_impl_other != "flash_attention_2":
+    raise SystemExit(f"Expected flash_attention_2 for other models, got {attn_impl_other!r}")
+SMOKE
+
+python -m pip check
+python -m pip cache purge
+echo "All dependencies installed."
 
 echo ""
 echo "Installation complete!"
