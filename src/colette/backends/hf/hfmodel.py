@@ -251,7 +251,10 @@ class HFModel(LLMModel):
                 self.llm_subtype = "qwen25-vl"
             elif "Qwen3-VL" in self.llm_source:
                 self.llm_subtype = "qwen3-vl"
-            elif "Qwen3.5" in self.llm_source or "Qwen3_5" in self.llm_source:
+            elif any(tok in self.llm_source for tok in ("Qwen3.5", "Qwen3_5", "Qwen3.8")):
+                # Qwen3.8 ships the same architecture as Qwen3.5
+                # (model_type qwen3_5, Qwen3_5ForConditionalGeneration), so it
+                # shares the subtype and needs no separate handling.
                 self.llm_subtype = "qwen35-vl"
             elif "SmolVLM" in self.llm_source:
                 self.llm_subtype = "smolvlm"

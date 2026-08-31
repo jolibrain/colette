@@ -27,7 +27,7 @@
             "data": []
         },
         "llm": {
-            "source": "Qwen/Qwen3.5-9B",
+            "source": "Qwen/Qwen3.8-27B",
             "gpu_ids": [0],
             "context_size": 8192,
             "vllm_memory_utilization": 0.6,

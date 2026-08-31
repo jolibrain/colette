@@ -28,7 +28,7 @@ def resolve_attn_implementation(model_source: str | None = None) -> str:
     # silently produce garbage outputs (all-! tokens) depending on GPU/driver
     # (confirmed on RTX 3090 Ti with driver 580). PyTorch's native sdpa handles
     # those position IDs correctly and is still hardware-accelerated.
-    _qwen_vl_models = ("Qwen2-VL", "Qwen2.5-VL", "Qwen3-VL", "Qwen3.5", "Qwen3_5")
+    _qwen_vl_models = ("Qwen2-VL", "Qwen2.5-VL", "Qwen3-VL", "Qwen3.5", "Qwen3_5", "Qwen3.8")
     if any(_contains_token(model_source, tok) for tok in _qwen_vl_models):
         return "sdpa"
 
