@@ -300,9 +300,22 @@ class ImageEmbeddingFunction(EmbeddingFunction):
                             .eval()
                         )
                     elif "Qwen3-VL-Embedding" in self.rag_embedding_model:
+                        # Qwen3VLEmbedder forwards **kwargs to from_pretrained, which
+                        # defaults to torch.get_default_dtype() (float32) when no dtype
+                        # is given. These checkpoints ship as bfloat16, so leaving it
+                        # unset doubles resident memory (~32GB instead of ~16GB for 8B).
+                        # Match the gme-Qwen2-VL branch above and load in bfloat16.
                         embedder = Qwen3VLEmbedder(
                             model_name_or_path=self.rag_embedding_model,
                             cache_dir=str(models_repository),
+                            # resolve_attn_implementation() is called above without a
+                            # model name, so it cannot match the Qwen-VL list and returns
+                            # flash_attention_2 wherever flash-attn is installed. Qwen3-VL
+                            # uses 3D mrope and must run on sdpa; a wrong kernel here does
+                            # not crash, it silently writes garbage vectors into the index.
+                            # Resolve against the actual model name for this path.
+                            attn_implementation=resolve_attn_implementation(self.rag_embedding_model),
+                            torch_dtype=torch.bfloat16,
                         )
                         self.model = embedder.model.to("cuda:" + str(self.device)).eval()
                         self.processor = embedder.processor
@@ -788,7 +801,15 @@ class RAGImg:
         self.rag_update_index = rag_config.update_index
         self.rag_reindex = rag_config.reindex
         self.rag_index_protection = rag_config.index_protection
-        self.rag_layout_detector_gpu_id = rag_config.gpu_id
+        # An index request rarely carries ragm settings, so overwriting unconditionally
+        # with rag.gpu_id discarded the layout_detector_gpu_id chosen at service creation
+        # and forced the detector onto the GPU. Only override when the request actually
+        # specifies one; otherwise keep the device resolved at creation time.
+        index_layout_gpu_id = getattr(getattr(rag_config, "ragm", None), "layout_detector_gpu_id", None)
+        if index_layout_gpu_id is not None:
+            self.rag_layout_detector_gpu_id = index_layout_gpu_id
+        elif getattr(self, "rag_layout_detector_gpu_id", None) is None:
+            self.rag_layout_detector_gpu_id = rag_config.gpu_id
 
         if self.rag_layout_detection:
             self.rag_layout_detector = LayoutDetector(
