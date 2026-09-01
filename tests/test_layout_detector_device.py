@@ -1,10 +1,12 @@
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
 
 from colette.backends.hf.layout_detector import LayoutDetector
+from colette.backends.hf.rag.rag_img import resolve_layout_detector_gpu_id
 
 
 class _DummyJitModel:
@@ -71,3 +73,44 @@ def test_layout_detector_accepts_torch_device(monkeypatch):
     )
 
     assert detector.device == torch.device("cpu")
+
+
+def _rag_config(gpu_id=0, ragm=None):
+    return SimpleNamespace(gpu_id=gpu_id, ragm=ragm)
+
+
+@pytest.mark.smoke
+def test_index_request_without_ragm_keeps_creation_time_device():
+    """The regression: an index request must not silently move the detector to the GPU.
+
+    Index requests rarely carry ragm settings. Overwriting unconditionally with
+    rag.gpu_id discarded the CPU placement resolved at service creation, which on a
+    memory-tight machine surfaces as a CUDA OOM during indexing.
+    """
+    assert resolve_layout_detector_gpu_id(_rag_config(gpu_id=0), current=-1) == -1
+
+
+@pytest.mark.smoke
+def test_index_request_ragm_without_layout_id_keeps_creation_time_device():
+    """A ragm block that omits layout_detector_gpu_id must not override either."""
+    ragm = SimpleNamespace(layout_detector_gpu_id=None)
+    assert resolve_layout_detector_gpu_id(_rag_config(gpu_id=0, ragm=ragm), current=-1) == -1
+
+
+@pytest.mark.smoke
+def test_explicit_index_request_value_wins():
+    """An explicit layout_detector_gpu_id in the index request takes precedence."""
+    ragm = SimpleNamespace(layout_detector_gpu_id=1)
+    assert resolve_layout_detector_gpu_id(_rag_config(gpu_id=0, ragm=ragm), current=-1) == 1
+
+
+@pytest.mark.smoke
+def test_falls_back_to_rag_gpu_id_when_nothing_resolved():
+    """With no request value and nothing from creation, fall back to rag.gpu_id.
+
+    This is the pre-existing behaviour for every config that does not set
+    layout_detector_gpu_id, and it must not change.
+    """
+    assert resolve_layout_detector_gpu_id(_rag_config(gpu_id=0), current=None) == 0
+    ragm = SimpleNamespace(layout_detector_gpu_id=None)
+    assert resolve_layout_detector_gpu_id(_rag_config(gpu_id=2, ragm=ragm), current=None) == 2

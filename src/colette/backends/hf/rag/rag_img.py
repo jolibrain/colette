@@ -92,6 +92,28 @@ def get_md5sum(file_path, kvstore):
     return md5_hash.hexdigest()
 
 
+def resolve_layout_detector_gpu_id(rag_config, current):
+    """Pick the device for the layout detector when (re)indexing.
+
+    An index request rarely carries ragm settings. Overwriting unconditionally with
+    rag.gpu_id therefore discarded the layout_detector_gpu_id resolved at service
+    creation and forced the detector onto the GPU, which on a memory-tight machine
+    fails as a CUDA OOM during indexing.
+
+    Args:
+        rag_config: the rag config of the index request
+        current: the value resolved at service creation, if any
+
+    Returns: the explicit request value, else the creation-time value, else rag.gpu_id
+    """
+    requested = getattr(getattr(rag_config, "ragm", None), "layout_detector_gpu_id", None)
+    if requested is not None:
+        return requested
+    if current is not None:
+        return current
+    return rag_config.gpu_id
+
+
 def take_top_k(data: dict[str, list], k: int) -> dict[str, list]:
     """
     Extracts the first k elements from each list in the data dictionary and reverses them.
@@ -801,15 +823,9 @@ class RAGImg:
         self.rag_update_index = rag_config.update_index
         self.rag_reindex = rag_config.reindex
         self.rag_index_protection = rag_config.index_protection
-        # An index request rarely carries ragm settings, so overwriting unconditionally
-        # with rag.gpu_id discarded the layout_detector_gpu_id chosen at service creation
-        # and forced the detector onto the GPU. Only override when the request actually
-        # specifies one; otherwise keep the device resolved at creation time.
-        index_layout_gpu_id = getattr(getattr(rag_config, "ragm", None), "layout_detector_gpu_id", None)
-        if index_layout_gpu_id is not None:
-            self.rag_layout_detector_gpu_id = index_layout_gpu_id
-        elif getattr(self, "rag_layout_detector_gpu_id", None) is None:
-            self.rag_layout_detector_gpu_id = rag_config.gpu_id
+        self.rag_layout_detector_gpu_id = resolve_layout_detector_gpu_id(
+            rag_config, getattr(self, "rag_layout_detector_gpu_id", None)
+        )
 
         if self.rag_layout_detection:
             self.rag_layout_detector = LayoutDetector(
