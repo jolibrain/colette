@@ -70,18 +70,17 @@ pip install "setuptools>=77.0.3,<81.0.0" wheel "packaging>=23.2,<26.0.0"
 echo "Clearing pip cache..."
 pip cache purge
 
-# Select torch/flash-attn versions based on detected CUDA major version
+# torch must match vllm 0.19.0's torch==2.10.0 pin regardless of CUDA version.
+# Installing anything else means `pip install -e .` replaces torch during the
+# colette install, which both undoes the CUDA-specific wheel selected here and
+# invalidates the flash-attn built against it. Only the wheel index varies.
+TORCH_VERSION="2.10.0"
+FLASH_ATTN_VERSION="2.8.3"
 cuda_major=$(echo "$cuda_version" | cut -d. -f1)
 if [ "$cuda_major" -ge 13 ]; then
-    # Must match vllm 0.19.0's torch==2.10.0 pin, or installing colette drags in
-    # a different torch and invalidates the flash-attn build below.
-    TORCH_VERSION="2.10.0"
     TORCH_INDEX_URL="https://download.pytorch.org/whl/cu130"
-    FLASH_ATTN_VERSION="2.8.3"
 else
-    TORCH_VERSION="2.7.0"
-    TORCH_INDEX_URL="https://download.pytorch.org/whl/test/cu128"
-    FLASH_ATTN_VERSION="2.5.6"
+    TORCH_INDEX_URL="https://download.pytorch.org/whl/cu128"
 fi
 
 echo "Installing torch with CUDA support from: $TORCH_INDEX_URL"
