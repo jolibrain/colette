@@ -14,6 +14,12 @@ class LayoutDetector:
         self.resize_height = resize_height
         self.models_repository = models_repository
         self.logger = logger
+        # device arrives as a plain int gpu id. torch.Tensor.to() reads a bare int as a
+        # CUDA index and raises "Device index must not be negative" on a negative one,
+        # so a config asking for CPU could never be honoured. Map negative ids to CPU;
+        # non-negative ids keep their previous meaning (cuda:<id>).
+        if isinstance(device, int):
+            device = torch.device("cpu") if device < 0 else torch.device(f"cuda:{device}")
         self.device = device
         self.model = self.load_model(model_path)
         self.label_map = {
