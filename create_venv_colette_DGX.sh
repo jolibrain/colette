@@ -70,18 +70,17 @@ pip install "setuptools>=77.0.3,<81.0.0" wheel "packaging>=23.2,<26.0.0"
 echo "Clearing pip cache..."
 pip cache purge
 
-# Select torch/flash-attn versions based on detected CUDA major version
+# torch must match vllm 0.19.0's torch==2.10.0 pin regardless of CUDA version.
+# Installing anything else means `pip install -e .` replaces torch during the
+# colette install, which both undoes the CUDA-specific wheel selected here and
+# invalidates the flash-attn built against it. Only the wheel index varies.
+TORCH_VERSION="2.10.0"
+FLASH_ATTN_VERSION="2.8.3"
 cuda_major=$(echo "$cuda_version" | cut -d. -f1)
 if [ "$cuda_major" -ge 13 ]; then
-    # Must match vllm 0.19.0's torch==2.10.0 pin, or installing colette drags in
-    # a different torch and invalidates the flash-attn build below.
-    TORCH_VERSION="2.10.0"
     TORCH_INDEX_URL="https://download.pytorch.org/whl/cu130"
-    FLASH_ATTN_VERSION="2.8.3"
 else
-    TORCH_VERSION="2.7.0"
-    TORCH_INDEX_URL="https://download.pytorch.org/whl/test/cu128"
-    FLASH_ATTN_VERSION="2.5.6"
+    TORCH_INDEX_URL="https://download.pytorch.org/whl/cu128"
 fi
 
 echo "Installing torch with CUDA support from: $TORCH_INDEX_URL"
@@ -296,6 +295,17 @@ fi
 
 # Install colette with extras (flash-attn already satisfied above)
 pip install -e "$SCRIPT_DIR[dev,trag]"
+
+# Point the examples at the DGX config by default. transformers 4.x cannot load
+# the qwen3_5 architecture, so vrag_default.json (lib: huggingface) fails here;
+# vrag_default_DGX.json serves the same model through vLLM. Written into the
+# venv so anything using this interpreter picks it up -- terminals and notebook
+# kernels alike -- while an explicit override still wins.
+if ! grep -q "COLETTE_VRAG_CONFIG" "$ACTIVATE_FILE"; then
+    echo "" >> "$ACTIVATE_FILE"
+    echo "# Colette DGX default config" >> "$ACTIVATE_FILE"
+    echo "export COLETTE_VRAG_CONFIG=\"\${COLETTE_VRAG_CONFIG:-$SCRIPT_DIR/src/colette/config/vrag_default_DGX.json}\"" >> "$ACTIVATE_FILE"
+fi
 
 # Verify flash-attn installation
 if python -c "import torch; import flash_attn" 2>/dev/null; then
