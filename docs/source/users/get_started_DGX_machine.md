@@ -6,19 +6,34 @@ Make sure your system meets the following requirements:
 
 * **Python** 3.12 (the bootstrap script requires exactly 3.12)
 * **CUDA** >= 12.8, CUDA 13 recommended
-* **Memory**: >= 80 GB available to the GPU
-* **Disk space**: >= 120 GB
+* **Memory**: >= 96 GB available to the GPU
+* **Disk space**: >= 140 GB
 * **Architecture**: x86_64 or aarch64
 
-The memory and disk figures are driven by the DGX default model,
-`Qwen/Qwen3.8-27B`: roughly 52 GB of weights to download, ~51 GiB resident once
-loaded, plus KV cache. On a DGX Spark (GB10, 121 GB unified memory) the model
-occupies 51.1 GiB and leaves 17.1 GiB of KV cache at the config's
-`vllm_memory_utilization` of 0.6. The virtual environment itself is ~11 GB, and
-FAISS is compiled from source during installation.
+The memory and disk figures are driven by two models, both resident at the same
+time: the generator `Qwen/Qwen3.8-27B` (~52 GB of weights to download, 51.1 GiB
+resident) and the embedder `Qwen/Qwen3-VL-Embedding-8B` (~16.3 GB to download,
+16.3 GB resident in bfloat16). The virtual environment adds ~11 GB and FAISS is
+compiled from source during installation.
+
+Measured on a DGX Spark (GB10, 121 GB unified memory) with the shipped config:
+
+| | |
+|---|---|
+| generator weights | 51.1 GiB |
+| KV cache at `vllm_memory_utilization` 0.5 | 5.23 GiB (21,168 tokens, 4.54x concurrency at `context_size` 16384) |
+| embedder weights | 16.3 GB |
+| peak free memory during indexing | ~36 GB |
+
+Memory on a DGX Spark is **unified** - the GPU and the OS draw on the same pool -
+so leaving headroom matters more than on a discrete GPU. `vllm_memory_utilization`
+is deliberately 0.5 rather than a higher value: the embedder is loaded outside
+vLLM's budget, and raising it starves the embedder and the layout detector. The
+symptom is `CUDA error: out of memory` during indexing, not at model load.
 
 To run on less memory, point `source` in `src/colette/config/vrag_default_DGX.json`
-at a smaller model of the same family and lower `context_size`.
+at a smaller model of the same family, or use `Qwen/Qwen3-VL-Embedding-2B` as the
+`embedding_model` (a smaller embedder frees memory for a larger KV cache).
 
 ### A note on ARM
 
@@ -197,11 +212,19 @@ for item in response.sources['context']:
 
 ## Notes and troubleshooting
 
-**The first run downloads ~52 GB of model weights.** Expect a long wait before
-anything appears to happen. The download is not resumable in practice — the
-Hugging Face `xet` transfer discards partial chunks if the process is
-interrupted — so let it finish. Pre-warming the cache once on a machine saves
-everyone else the wait.
+**The first run downloads ~68 GB of model weights.** ~52 GB for the generator
+plus ~16.3 GB for the embedder. Expect a long wait before anything appears to
+happen. The download is not resumable in practice — the Hugging Face `xet`
+transfer discards partial chunks if the process is interrupted — so let it
+finish. Pre-warming the cache once on a machine saves everyone else the wait.
+
+**Changing `embedding_model` invalidates every existing index.** Embeddings are
+only comparable against vectors produced by the same model, and the dimension
+usually differs too — `Qwen/Qwen3-VL-Embedding-8B` emits 4096 dimensions where
+`Alibaba-NLP/gme-Qwen2-VL-2B-Instruct` emitted 1536. ChromaDB rejects the
+mismatch rather than returning wrong results, so after switching embedders you
+must delete the app directory and reindex from scratch. Reusing an app directory
+built with a different embedder is not supported.
 
 **Run one instance at a time.** vLLM reserves `vllm_memory_utilization` of GPU
 memory up front, so two concurrent services will not fit. Two processes also
@@ -210,6 +233,22 @@ share `app_colette/`'s ChromaDB store, which surfaces as:
 ```
 InternalError: Database error: (code: 1032) attempt to write a readonly database
 ```
+
+**`CUDA error: out of memory` during indexing, after the model loaded fine.**
+The generator is not the only thing on the GPU. vLLM reserves
+`vllm_memory_utilization` up front, and the embedder (16.3 GB) plus the layout
+detector are allocated *outside* that budget, when indexing starts. So the
+failure appears minutes after a successful `service_create`. Lower
+`vllm_memory_utilization`, or switch `embedding_model` to
+`Qwen/Qwen3-VL-Embedding-2B`. Note that lowering it also shrinks the KV cache,
+which caps `context_size` — vLLM refuses to start if the cache cannot hold a
+single sequence.
+
+**`The decoder prompt (length N) is longer than the maximum model length`.**
+Hybrid retrieval sends image crops alongside text, so prompts grow quickly with
+`top_k`. The shipped `context_size` of 16384 covers the default `top_k` of 4;
+raising `top_k` may need more. Because the KV cache bounds `context_size`, going
+higher may also require a larger `vllm_memory_utilization` or a smaller embedder.
 
 **A saved app config overrides `COLETTE_VRAG_CONFIG`.** Once a service has been
 created, `<app_dir>/config.json` exists and takes precedence, so query-only
