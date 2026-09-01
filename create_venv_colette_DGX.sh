@@ -297,6 +297,17 @@ fi
 # Install colette with extras (flash-attn already satisfied above)
 pip install -e "$SCRIPT_DIR[dev,trag]"
 
+# Point the examples at the DGX config by default. transformers 4.x cannot load
+# the qwen3_5 architecture, so vrag_default.json (lib: huggingface) fails here;
+# vrag_default_DGX.json serves the same model through vLLM. Written into the
+# venv so anything using this interpreter picks it up -- terminals and notebook
+# kernels alike -- while an explicit override still wins.
+if ! grep -q "COLETTE_VRAG_CONFIG" "$ACTIVATE_FILE"; then
+    echo "" >> "$ACTIVATE_FILE"
+    echo "# Colette DGX default config" >> "$ACTIVATE_FILE"
+    echo "export COLETTE_VRAG_CONFIG=\"\${COLETTE_VRAG_CONFIG:-$SCRIPT_DIR/src/colette/config/vrag_default_DGX.json}\"" >> "$ACTIVATE_FILE"
+fi
+
 # Verify flash-attn installation
 if python -c "import torch; import flash_attn" 2>/dev/null; then
     echo "✓ flash-attn installed successfully!"

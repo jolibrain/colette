@@ -45,6 +45,25 @@ def stitch_images_vertically(image_list):
     return stitched_image
 
 
+def strip_reasoning_trace(text: str) -> str:
+    """Drop a Qwen-style reasoning trace, keeping only the final answer.
+
+    Thinking models emit the trace first, terminated by </think>. The opening
+    <think> is pre-filled by the chat template, so it never appears in the
+    generated text -- the trace simply runs from the start of the output.
+
+    If no </think> is present the text is returned unchanged: either the model
+    did not think at all (nothing to strip), or generation hit the token limit
+    mid-trace, in which case the partial trace is still more useful to return
+    than an empty string.
+    """
+    marker = "</think>"
+    idx = text.rfind(marker)
+    if idx == -1:
+        return text
+    return text[idx + len(marker) :].lstrip()
+
+
 class HFModel(LLMModel):
     def __init__(self):
         super().__init__()
@@ -668,6 +687,17 @@ class HFModel(LLMModel):
                             sampling_params=sampling_params,
                         )
                     decoded = "".join([o.outputs[0].text for o in outputs])
+                    # Thinking models reason before answering; the caller wants
+                    # the answer only.
+                    stripped = strip_reasoning_trace(decoded)
+                    if stripped:
+                        decoded = stripped
+                    else:
+                        self.logger.warning(
+                            "reasoning trace closed with no answer after it; "
+                            "returning the raw output. Consider raising "
+                            "max_tokens or context_size."
+                        )
                 elif self.llm_type == "vllm_client":
                     decoded = self.llm.chat(messages, max_new_tokens)
 
