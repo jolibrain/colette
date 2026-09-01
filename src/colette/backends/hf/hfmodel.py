@@ -677,7 +677,6 @@ class HFModel(LLMModel):
                             mm_processor_kwargs={
                                 "min_pixels": 1 * 28 * 28,
                                 "max_pixels": 2560 * 28 * 28,
-                                "max_model_len": self.vllm_context_size,
                             },
                             sampling_params=sampling_params,
                         )
