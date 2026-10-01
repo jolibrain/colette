@@ -29,6 +29,6 @@ class HFOutputConn(OutputConnector):
         self.num_tokens = ad.num_tokens
 
     def add_base64_to_source(self, source, img):
-        if self.base64:
+        if self.base64 and img is not None:
             source["content"] = transform_pil_image_to_base64(img)
         return source

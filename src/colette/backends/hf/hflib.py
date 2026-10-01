@@ -118,17 +118,25 @@ class HFLib(LLMLib):
                 history = self.sessions.get_session(ad.parameters.input.session_id)
 
         # - hf call
-        time_start = time.time()
-        response, new_message, streamer = self.llmmodel.generate(
-            message,
-            self.outputc.num_tokens,
-            docs_source,
-            history,
-            streaming=ad.parameters.input.streaming,
-        )
-        self.logger.debug(f"response: {response}")
-        time_end = time.time()
-        self.logger.info(f"LLM generation took {time_end - time_start:.2f} seconds")
+        # When num_tokens<=1 the caller only wants retrieved sources (e.g. benchmark eval).
+        # Skip LLM generation entirely: sources are already in docs_source from transform().
+        if self.outputc.num_tokens <= 1:
+            self.logger.info("Skipping LLM generation (num_tokens<=1)")
+            response = ""
+            new_message = []
+            streamer = None
+        else:
+            time_start = time.time()
+            response, new_message, streamer = self.llmmodel.generate(
+                message,
+                self.outputc.num_tokens,
+                docs_source,
+                history,
+                streaming=ad.parameters.input.streaming,
+            )
+            self.logger.debug(f"response: {response}")
+            time_end = time.time()
+            self.logger.info(f"LLM generation took {time_end - time_start:.2f} seconds")
 
         # if session, update it
         if self.llmmodel.llm_obj.conversational and ad.parameters.input.session_id is not None:
@@ -152,7 +160,9 @@ class HFLib(LLMLib):
                 "distance": distance,
                 # "content": transform_pil_image_to_base64(docs_source["images"][0][pos]),
             }
-            source = self.outputc.add_base64_to_source(source, docs_source["images"][0][pos])
+            _images = docs_source.get("images", [[]])[0]
+            _img = _images[pos] if pos < len(_images) else None
+            source = self.outputc.add_base64_to_source(source, _img)
             # Adding metadata if any
             if "metadatas" in docs_source:
                 for k, v in docs_source["metadatas"][0][pos].items():

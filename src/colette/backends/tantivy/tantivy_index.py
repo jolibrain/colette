@@ -276,7 +276,7 @@ class TantivyIndex:
         hardcoded synonym tables.
         """
         normalized = re.sub(r'[-]', ' ', query)
-        tokens = re.findall(r'[A-Za-z0-9]+', normalized)
+        tokens = re.findall(r'[^\W_]+', normalized)
         keywords = [t for t in tokens if t.lower() not in _STOP_WORDS and len(t) > 1]
         return ' '.join(keywords) if keywords else ''
 

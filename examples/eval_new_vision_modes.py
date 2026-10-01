@@ -10,14 +10,15 @@ All modes reuse the hindex JSON files from app_eval_benchmark so no VLM calls
 are needed at index time.
 
 GPU allocation (per project rule):
-    GPU 0 = embedding model (used here for text embedding)
-    GPU 2 = LLM for indexing/eval
-    GPU 3 = DO NOT USE
+    Run with: CUDA_VISIBLE_DEVICES=0,3
+      cuda:0 → physical GPU 0 (embedding model)
+      cuda:1 → physical GPU 3 (LLM — GPUs 1 and 2 occupied by deepdetect)
 """
 
 import argparse
 import asyncio
 import json
+import os
 import shutil
 import sys
 import time
@@ -29,7 +30,7 @@ sys.path.insert(0, str(colette_root / "src"))
 EXISTING_APP_DIR = colette_root / "app_eval_benchmark"
 BENCHMARK_DIR    = colette_root / "examples" / "benchmark"
 TOP_K            = 4
-LLM_GPU_IDS      = [2]
+LLM_GPU_IDS      = [int(os.getenv("LLM_GPU_ID", "1"))]  # cuda:1 = physical GPU 3 with CUDA_VISIBLE_DEVICES=0,3
 
 from colette.jsonapi import JSONApi
 from colette.apidata import APIData
@@ -195,6 +196,9 @@ async def eval_mode(mode: str, eval_items: list) -> dict:
     # ── create service (reuse existing config, override mode + gpu)
     saved_cfg = json.loads((EXISTING_APP_DIR / "config.json").read_text())
     saved_cfg["parameters"]["llm"]["gpu_ids"] = LLM_GPU_IDS
+    # Use 8-bit quantization for benchmark evals so the LLM shares GPU with the embedding
+    # model without OOM. Retrieval quality (NDCG) is unaffected — only generation changes.
+    saved_cfg["parameters"]["llm"]["load_in_8bit"] = True
     saved_cfg["parameters"]["input"]["rag"]["retrieval_mode"] = mode
     saved_cfg["app"]["repository"] = str(app_dir)
     # HyDE disabled: hallucinated specific values in hypothetical answers bias BM25

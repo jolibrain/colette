@@ -873,13 +873,14 @@ from colette.backends.hf.rag.rag_img import (
     _hindex_topic_text,
     _bm25_hits_to_page_list,
     _reciprocal_rank_fusion,
+    _filter_queryhint_hits,
 )
 
 
 def test_vision_text_embed_routing():
     assert retrieval_mode_uses_vision_text_embed("vision_text_embed") is True
     assert retrieval_mode_uses_vision_text_embed("vision_bm25_rerank") is True
-    assert retrieval_mode_uses_vision_text_embed("vision_hybrid_bm25") is False
+    assert retrieval_mode_uses_vision_text_embed("vision_hybrid_bm25") is True
     assert retrieval_mode_uses_vision_text_embed("vision_topic_embed") is False
     assert retrieval_mode_uses_vision_text_embed("vision_semantic") is False
     assert retrieval_mode_uses_vision_text_embed("embedding_retrieval") is False
@@ -915,7 +916,8 @@ def test_retrieval_mode_needs_vlm_descriptions():
 def _make_page_record(**kwargs):
     defaults = dict(
         page_idx=0, page_key="uuid_0000",
-        text_content="", visual_description="", summary="", keywords=[], crop_keys=[]
+        text_content="", visual_description="", summary="", keywords=[], crop_keys=[],
+        anticipated_queries=[],
     )
     defaults.update(kwargs)
     return PageRecord(**defaults)
@@ -945,6 +947,23 @@ def test_hindex_page_text_truncates_text_content():
     rec = _make_page_record(text_content="x" * 2000)
     text = _hindex_page_text(rec)
     assert len(text) <= 900  # 800 chars truncated + separator overhead
+
+
+def test_hindex_page_text_includes_anticipated_queries():
+    rec = _make_page_record(
+        summary="Latency comparison",
+        anticipated_queries=["Which method is fastest?", "lowest average latency"],
+    )
+    text = _hindex_page_text(rec)
+    assert "Which method is fastest?" in text
+    assert "lowest average latency" in text
+
+
+def test_hindex_page_text_empty_anticipated_queries_omitted():
+    rec = _make_page_record(summary="Only summary", anticipated_queries=[])
+    text = _hindex_page_text(rec)
+    assert "Only summary" in text
+    assert text.count(" | ") == 0  # single field, no separator
 
 
 def test_hindex_topic_text_combines_fields():
