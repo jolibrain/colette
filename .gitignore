@@ -21,15 +21,26 @@ app_colette/
 app_eval_benchmark/
 app_mmlongbench_eval/
 app_vision_*_eval/
+app_vidore_*/
 None/
 models/
 
 # examples folder
 examples/*.png
+examples/*.log
+examples/run_*.sh
+examples/run_*.log
 examples/questions_gaia_converter_demo.ipynb
 examples/benchmark/
 examples/hindex_page_records.csv
 examples/new_vision_modes_eval_results.json
+examples/new_vision_modes_eval_results_round*.json
+examples/vidore_*_results.json
+examples/vidore_results_summary.json
+examples/benchmark_autorun.log
+examples/autorun_after_docvqa.sh
+examples/wait_gpu2.log
+examples/rebuild_hindex_*.log
 
 # Cache tags
 CACHEDIR.TAG
