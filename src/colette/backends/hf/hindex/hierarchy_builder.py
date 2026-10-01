@@ -59,7 +59,18 @@ class PageRecord:
     preprocessing so the key format matches the stored crops exactly."""
     anticipated_queries: list[str] = field(default_factory=list)
     """Natural-language questions a user would ask to find this page.
-    Indexed in BM25 with crop_label='queryhint' to bridge vocabulary gap."""
+    Indexed in BM25 with crop_label='queryhint' to bridge vocabulary gap.
+    Must be diverse: visual questions, keyword phrases, conceptual questions,
+    and optionally entity-anchored questions — NOT all entity-anchored."""
+    entities: dict = field(default_factory=dict)
+    """Typed named entities extracted from the page: persons, organizations,
+    dates, identifiers. Amounts are excluded from entity BM25 (too common
+    in homogeneous corpora — amounts like '31.0%' appear across many docs
+    and have near-zero discriminating IDF)."""
+    page_type: str = ""
+    """Content-type classification: 'visual-dominant', 'table-dominant',
+    'text-dominant', or 'mixed'. Auto-detected from VLM output — no extra
+    VLM call. Used at query time to apply page-type-aware signal weighting."""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -71,6 +82,8 @@ class PageRecord:
             "keywords": self.keywords,
             "crop_keys": self.crop_keys,
             "anticipated_queries": self.anticipated_queries,
+            "entities": self.entities,
+            "page_type": self.page_type,
         }
 
     @classmethod
@@ -84,6 +97,8 @@ class PageRecord:
             keywords=d.get("keywords", []),
             crop_keys=d.get("crop_keys", []),
             anticipated_queries=d.get("anticipated_queries", []),
+            entities=d.get("entities", {}),
+            page_type=d.get("page_type", ""),
         )
 
 
@@ -281,11 +296,19 @@ _PAGE_EXTRACT_SCHEMA = """{
   "summary": "2-3 sentence summary of what this page is about",
   "keywords": ["keyword1", "keyword2", "keyword3"],
   "text_content": "key text from the page, MAX 300 characters; if the page contains structured data (tables, charts, lists, key-value pairs), capture at least 3 representative entries verbatim (e.g. 'Label: Value, Name: Result'); otherwise write the most important sentence or phrase visible; truncate if needed",
+  "entities": {
+    "persons": ["person name, optionally with role in parentheses e.g. 'John Smith (sender)'"],
+    "organizations": ["company, agency, or institution name"],
+    "dates": ["date as written on the page or in ISO format"],
+    "identifiers": ["reference number, code, ID, product name, model name, or named system/algorithm"]
+  },
   "anticipated_queries": [
-    "plain-language question a reader would ask to find this page",
-    "keyword-only search phrase for this content",
-    "question about a specific fact, number, or name visible on this page",
-    "question using different words that mean the same thing as the page content"
+    "keyword-only search phrase (3-5 exact terms from this page)",
+    "plain-language question about the main topic of this page",
+    "conceptual question approaching the topic from a different angle without entity names (text-dominant pages) OR paraphrase of the main finding in different vocabulary (visual/table pages)",
+    "visual question: what the chart/figure on this page shows — only if visual content is present",
+    "fact-lookup using ACTUAL data from this page: real row/column names and numbers, not placeholders — only if structured data is present",
+    "cross-page question bridging this page with an adjacent page — only if content clearly spans two pages"
   ]
 }"""
 
@@ -351,6 +374,7 @@ class HierarchyBuilder:
         page_images: list[Image.Image],
         page_keys: list[str] | None = None,
         scanned_page_indices: set[int] | None = None,
+        doc_language: str | None = None,
     ) -> DocumentHierarchy:
         """Build the full hierarchy for *doc_name* from its rendered page images.
 
@@ -392,7 +416,7 @@ class HierarchyBuilder:
 
                 for i in scanned_in_batch:
                     key = page_keys[i] if page_keys else ""
-                    page_records[i] = self._extract_page_record(page_images[i], i, key, is_scanned=True)
+                    page_records[i] = self._extract_page_record(page_images[i], i, key, is_scanned=True, doc_language=doc_language)
 
                 if batch_idxs:
                     imgs = [page_images[i] for i in batch_idxs]
@@ -402,7 +426,7 @@ class HierarchyBuilder:
                         + (f" ({len(scanned_in_batch)} scanned extracted individually)" if scanned_in_batch else "")
                     )
                     t_b = time()
-                    batch_recs = self._extract_batch(imgs, batch_idxs, keys_b)
+                    batch_recs = self._extract_batch(imgs, batch_idxs, keys_b, doc_language=doc_language)
                     elapsed = time() - t_b
                     self.logger.info(
                         f"[hindex] Phase 1 batch done in {elapsed:.1f}s "
@@ -413,7 +437,7 @@ class HierarchyBuilder:
         else:
             def _extract_one(idx: int) -> tuple[int, PageRecord]:
                 key = page_keys[idx] if page_keys else ""
-                return idx, self._extract_page_record(page_images[idx], idx, key, is_scanned=idx in _scanned)
+                return idx, self._extract_page_record(page_images[idx], idx, key, is_scanned=idx in _scanned, doc_language=doc_language)
 
             n_workers = min(self.max_workers, page_count)
             if n_workers > 1:
@@ -462,7 +486,8 @@ class HierarchyBuilder:
     # ------------------------------------------------------------------
 
     def _extract_page_record(
-        self, image: Image.Image, page_idx: int, page_key: str = "", is_scanned: bool = False
+        self, image: Image.Image, page_idx: int, page_key: str = "", is_scanned: bool = False,
+        doc_language: str | None = None,
     ) -> PageRecord:
         """One rich VLM call per page → structured PageRecord.
 
@@ -471,19 +496,23 @@ class HierarchyBuilder:
         When is_scanned=True, uses an OCR-focused prompt with a higher token
         budget to extract all visible text from image-only pages.
         """
+        _lang_instr = f"in {doc_language}" if doc_language else "in the same language as the document content"
+        _AQ_RULES = _build_aq_rules(_lang_instr)
         if is_scanned:
             prompt_full = (
                 "This document page appears to be scanned (image-only, no embedded text). "
                 "Analyze it carefully and output a JSON object with exactly these keys:\n"
                 f"{_PAGE_EXTRACT_SCHEMA}\n\n"
                 "Rules:\n"
-                "- Write ALL text fields in the same language as the document content; do not translate.\n"
+                f"- Write ALL text fields {_lang_instr}; do not translate.\n"
                 "- visual_description: describe any diagrams, charts, or figures\n"
                 "- summary: 2-3 sentences on the meaning/purpose of this page\n"
                 "- keywords: 3-6 thematic terms\n"
                 "- text_content: transcribe ALL visible text verbatim up to 600 characters; "
                 "do not summarize or paraphrase — copy the actual words from the page\n"
-                "- anticipated_queries: 4-8 distinct questions in the document's language\n"
+                "- entities: extract typed named entities (persons, organizations, dates, identifiers);\n"
+                "  do NOT list numeric amounts or percentages — use empty lists for absent categories\n"
+                f"{_AQ_RULES}"
                 "Output ONLY the JSON object, no markdown fences, no other text."
             )
             token_budget = _SINGLE_PAGE_TOKENS * 2
@@ -493,7 +522,7 @@ class HierarchyBuilder:
                 "exactly these keys:\n"
                 f"{_PAGE_EXTRACT_SCHEMA}\n\n"
                 "Rules:\n"
-                "- Write ALL text fields in the same language as the document content; do not translate.\n"
+                f"- Write ALL text fields {_lang_instr}; do not translate.\n"
                 "- visual_description: if no visual elements (diagrams/charts/figures), "
                 "write an empty string\n"
                 "- summary: 2-3 sentences on the meaning/purpose of this page\n"
@@ -501,9 +530,9 @@ class HierarchyBuilder:
                 "- text_content: MAX 300 characters; if the page contains structured data "
                 "(tables, charts, lists), capture ≥3 representative entries verbatim as "
                 "'Label: Value' pairs; otherwise capture the most important text visible\n"
-                "- anticipated_queries: 4-8 distinct questions a user would type to find this page;\n"
-                "  include a mix of: plain-language, keyword-only, specific-fact, and synonym-phrasing queries;\n"
-                "  write queries in the document's language; each must be self-contained and meaningfully different\n"
+                "- entities: extract typed named entities (persons, organizations, dates, identifiers);\n"
+                "  do NOT list numeric amounts or percentages — use empty lists for absent categories\n"
+                f"{_AQ_RULES}"
                 "Output ONLY the JSON object, no markdown fences, no other text."
             )
             token_budget = _SINGLE_PAGE_TOKENS
@@ -511,12 +540,14 @@ class HierarchyBuilder:
         # Simplified prompt used on the last retry attempt
         prompt_simple = (
             "Look at this document page and respond with a JSON object.\n"
-            "Write all text in the document's language (do not translate).\n"
+            f"Write all text {_lang_instr} (do not translate).\n"
             '{"visual_description": "<describe any charts/diagrams, or empty string>", '
             '"summary": "<2-3 sentences about this page>", '
             '"keywords": ["<kw1>", "<kw2>", "<kw3>"], '
             '"text_content": "<key visible text or data entries, max 200 chars>", '
-            '"anticipated_queries": ["<plain question>", "<keyword search>", "<specific fact question>"]}\n'
+            '"entities": {"persons": [], "organizations": [], "dates": [], "identifiers": []}, '
+            '"anticipated_queries": ["<visual question if chart/figure present>", '
+            '"<keyword phrase 3-5 words>", "<plain-language question>", "<synonym/paraphrase question>"]}\n'
             "Output ONLY the JSON, nothing else."
         )
 
@@ -536,7 +567,8 @@ class HierarchyBuilder:
         else:
             data = {}
 
-        return PageRecord(
+        _entities = data.get("entities", {})
+        record = PageRecord(
             page_idx=page_idx,
             page_key=page_key,
             text_content=str(data.get("text_content", "")),
@@ -544,13 +576,17 @@ class HierarchyBuilder:
             summary=str(data.get("summary", "")),
             keywords=list(data.get("keywords", [])),
             anticipated_queries=list(data.get("anticipated_queries", [])),
+            entities=_entities if isinstance(_entities, dict) else {},
         )
+        record.page_type = _detect_page_type(record)
+        return record
 
     def _extract_batch(
         self,
         images: list[Image.Image],
         idxs: list[int],
         keys: list[str],
+        doc_language: str | None = None,
     ) -> list[PageRecord]:
         """Extract PageRecords for N pages in a single VLM call.
 
@@ -560,7 +596,7 @@ class HierarchyBuilder:
         """
         n = len(images)
         capped = [_cap_image_size(img, max_pixels=_MAX_EXTRACT_PIXELS) for img in images]
-        prompt = _batch_prompt(n)
+        prompt = _batch_prompt(n, doc_language=doc_language)
         # Token budget: each page needs ~350 output tokens; cap at 2048.
         batch_tokens = min(2048, _BATCH_TOKENS_PER_PAGE * n)
         raw = self.vlm_fn(capped, prompt, batch_tokens)
@@ -569,7 +605,8 @@ class HierarchyBuilder:
         records: list[PageRecord] = []
         for i, (data, idx, key) in enumerate(zip(parsed, idxs, keys)):
             if data and isinstance(data, dict):
-                records.append(PageRecord(
+                _entities = data.get("entities", {})
+                _rec = PageRecord(
                     page_idx=idx,
                     page_key=key,
                     text_content=str(data.get("text_content", "")),
@@ -577,13 +614,16 @@ class HierarchyBuilder:
                     summary=str(data.get("summary", "")),
                     keywords=list(data.get("keywords", [])),
                     anticipated_queries=list(data.get("anticipated_queries", [])),
-                ))
+                    entities=_entities if isinstance(_entities, dict) else {},
+                )
+                _rec.page_type = _detect_page_type(_rec)
+                records.append(_rec)
             else:
                 self.logger.warning(
                     f"[hindex] Batch slot {i} (page {idx}) empty — "
                     "falling back to single-page extraction"
                 )
-                records.append(self._extract_page_record(images[i], idx, key))
+                records.append(self._extract_page_record(images[i], idx, key, doc_language=doc_language))
         return records
 
     # ------------------------------------------------------------------
@@ -783,21 +823,80 @@ class HierarchyBuilder:
 _MAX_EXTRACT_PIXELS = 1280 * 720
 
 # Per-call token budgets — sized to the actual output, not a single ceiling.
-_SINGLE_PAGE_TOKENS = 768    # one page JSON: ~400 tokens with 4-8 anticipated queries
-_BATCH_TOKENS_PER_PAGE = 512  # per-page budget when batching (tighter than single)
+_SINGLE_PAGE_TOKENS = 1024   # one page JSON: ~500 tokens with entities + 4-8 anticipated queries
+_BATCH_TOKENS_PER_PAGE = 640  # per-page budget when batching (tighter than single)
 _DOC_DESC_TOKENS = 128        # one sentence
 _TOPIC_CLUSTER_TOKENS = 1024  # 3-7 topics × ~120 tokens each
 
 
-def _batch_prompt(n: int) -> str:
+def _build_aq_rules(lang_instr: str, batch_mode: bool = False) -> str:
+    """Build the anticipated_queries rule block for VLM extraction prompts.
+
+    Centralised here so any change applies to both the single-page path
+    (_extract_page_record) and the batch path (_batch_prompt) consistently.
+
+    Parameters
+    ----------
+    lang_instr:
+        Language instruction, e.g. "in English" or
+        "in the same language as the document content".
+    batch_mode:
+        True when the VLM sees multiple pages simultaneously — the cross-page
+        bullet is more permissive since the model can verify adjacency directly.
+    """
+    _target = (
+        "per page that a user would type to find it"
+        if batch_mode else
+        "that a user would type to find this page"
+    )
+    _cross_page_rule = (
+        "    • if a page is a continuation of a prior page, or its content clearly spans\n"
+        "      two adjacent pages (split table, multi-page argument, figure on one page and\n"
+        "      caption on next): add one CROSS-PAGE question whose answer requires reading\n"
+        "      both pages together; assign it to the earlier of the two pages;\n"
+        "      skip this bullet if the page is fully self-contained\n"
+    ) if batch_mode else (
+        "    • if this page is a continuation of a prior page, ends mid-sentence or mid-table,\n"
+        "      or explicitly references adjacent content ('see previous page', 'continued',\n"
+        "      split table, figure caption on a different page): add one CROSS-PAGE question\n"
+        "      whose answer requires reading this page together with the adjacent page;\n"
+        "      skip this bullet if the page is fully self-contained\n"
+    )
+    return (
+        f"- anticipated_queries: 4-8 distinct questions {lang_instr} {_target};\n"
+        "  IMPORTANT — include a DIVERSE MIX of question types; do NOT make all questions entity-anchored:\n"
+        "    • if this page has charts/figures/visual data: at least one VISUAL question\n"
+        "      (e.g. 'what does the bar chart show', 'which category is largest', 'what trend is visible')\n"
+        "    • if this page has tables or specific numeric values: at least one FACT-LOOKUP question\n"
+        "      using ACTUAL labels and numbers visible on this page — NOT placeholder names;\n"
+        "      e.g. if the table shows 'BetaSearch recall@10: 0.82', ask 'What is BetaSearch's recall@10?';\n"
+        "      anchor on real row names, column headers, and numeric results from this page\n"
+        f"{_cross_page_rule}"
+        "    • always include: one KEYWORD PHRASE (3-5 words), one PLAIN-LANGUAGE question\n"
+        "    • if this page is mostly text/paragraphs/arguments (no dominant chart or table):\n"
+        "      add one CONCEPTUAL question approaching the topic from a different angle WITHOUT\n"
+        "      entity names — reframe the concept, not just the wording\n"
+        "      (e.g. 'What does the paper argue about retrieval augmentation?' not 'What is ColPali?')\n"
+        "    • if this page has visual or tabular content (chart, figure, table): add one\n"
+        "      PARAPHRASE of the main finding using different vocabulary\n"
+        "      (e.g. 'How does X change over time?' instead of 'What trend is visible in X?')\n"
+        "    • entity-anchored questions (using a specific name/identifier) are appropriate ONLY\n"
+        "      when the page actually contains named persons, organizations, or product names\n"
+        "  Each query must be self-contained and meaningfully different from the others\n"
+    )
+
+
+def _batch_prompt(n: int, doc_language: str | None = None) -> str:
     """Prompt asking the VLM to extract structured info from N pages at once."""
+    _lang_instr = f"in {doc_language}" if doc_language else "in the same language as the document content"
+    _aq_rules = _build_aq_rules(_lang_instr, batch_mode=True)
     return (
         f"Analyze these {n} document pages (images are in order, one page each).\n"
         f"Output a JSON array of exactly {n} objects, one per page, in the same order.\n"
         "Each object must contain exactly these keys:\n"
         f"{_PAGE_EXTRACT_SCHEMA}\n\n"
         "Rules (apply independently to each page):\n"
-        "- Write ALL text fields in the same language as the document content; do not translate.\n"
+        f"- Write ALL text fields {_lang_instr}; do not translate.\n"
         "- visual_description: if no visual elements (diagrams/charts/figures), "
         "write an empty string\n"
         "- summary: 2-3 sentences on the meaning/purpose of that page\n"
@@ -805,12 +904,50 @@ def _batch_prompt(n: int) -> str:
         "- text_content: MAX 300 characters; if the page contains structured data "
         "(tables, charts, lists), capture ≥3 representative entries verbatim as "
         "'Label: Value' pairs; otherwise capture the most important text visible\n"
-        "- anticipated_queries: 4-8 distinct questions per page that a user would type to find it;\n"
-        "  include a mix of: plain-language, keyword-only, specific-fact, and synonym-phrasing;\n"
-        "  write queries in the document's language; each must be self-contained and meaningfully different\n"
+        "- entities: extract typed named entities (persons, organizations, dates, identifiers);\n"
+        "  do NOT list numeric amounts or percentages — use empty lists for absent categories\n"
+        f"{_aq_rules}"
         f"Output ONLY the JSON array of exactly {n} objects. "
         "No markdown fences, no extra text."
     )
+
+
+def _detect_page_type(record: "PageRecord") -> str:
+    """Classify page content type from VLM-extracted fields.
+
+    No additional VLM call — uses visual_description richness and text_content
+    structure. Stored in PageRecord.page_type and persisted in hindex JSON so
+    the retriever can apply page-type-aware signal weighting at query time.
+
+    Returns one of: 'visual-dominant', 'table-dominant', 'text-dominant', 'mixed'.
+    """
+    vd = (getattr(record, "visual_description", "") or "").lower()
+    tc = (getattr(record, "text_content", "") or "").lower()
+
+    # Visual: VLM produced a non-trivial description mentioning chart/figure elements
+    _VISUAL_MARKERS = {
+        "chart", "figure", "graph", "diagram", "plot", "bar chart", "pie chart",
+        "scatter", "map", "heatmap", "histogram", "illustration", "donut",
+        "treemap", "bubble", "waterfall", "gantt",
+    }
+    has_visual = len(vd) > 40 and any(m in vd for m in _VISUAL_MARKERS)
+
+    # Table: multiple Label:Value patterns, pipe chars, or explicit table mentions
+    has_table = (
+        " | " in tc
+        or "│" in tc
+        or tc.count(":") >= 3
+        or "table" in tc
+        or "\t" in tc
+    )
+
+    if has_visual and has_table:
+        return "mixed"
+    if has_visual:
+        return "visual-dominant"
+    if has_table:
+        return "table-dominant"
+    return "text-dominant"
 
 
 def _parse_batch_response(
