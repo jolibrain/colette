@@ -23,9 +23,6 @@ _chroma_client_cache: dict = {}
 # treated as scanned (image-only) and given an OCR-focused VLM prompt.
 _SCANNED_TEXT_THRESHOLD = 50
 
-# Visual embedding cosine distance above this threshold means the query has
-# no strong visual anchor — skip visual RRF to avoid polluting text/factual results.
-_VISUAL_EMBED_DIST_THRESHOLD = 0.5
 from chromadb.api.types import (
     Embedding,
     EmbeddingFunction,
@@ -198,6 +195,46 @@ def _hierarchy_to_queryhint_tantivy_docs(hierarchy: "DocumentHierarchy") -> list
     return result
 
 
+def _hierarchy_to_entity_tantivy_docs(hierarchy: "DocumentHierarchy") -> list[dict]:
+    """Build one Tantivy doc per page containing extracted named entity values.
+
+    Tagged crop_label='entity' for targeted BM25 search at query time.
+    Only indexes high-specificity entity categories: persons, organizations,
+    dates, and named identifiers. Amounts (numeric values, percentages) are
+    excluded because in homogeneous corpora they coincidentally appear across
+    many documents (e.g. '31.0%' in multiple VIRA reports) and have near-zero
+    discriminating IDF — their inclusion causes false-positive page matches.
+    Pages with no qualifying entities produce no doc (graceful degradation for
+    hindex files built before entity extraction was added).
+    """
+    # Categories eligible for entity BM25 — named, specific, sparse.
+    # 'amounts' excluded: numeric values / percentages are too common across docs.
+    _ENTITY_CATEGORIES = {"persons", "organizations", "dates", "identifiers"}
+    result = []
+    source = hierarchy.doc_name
+    for record in hierarchy.page_records:
+        entities = getattr(record, "entities", {}) or {}
+        parts = []
+        for category, values in entities.items():
+            if category not in _ENTITY_CATEGORIES:
+                continue
+            if isinstance(values, list):
+                parts.extend(str(v).strip() for v in values if v and str(v).strip())
+            elif values:
+                parts.append(str(values).strip())
+        if not parts:
+            continue
+        result.append({
+            "doc_id": f"{source}:page:{record.page_idx + 1}:entity",
+            "source": source,
+            "page_number": record.page_idx + 1,
+            "crop_label": "entity",
+            "label": None,
+            "content": " | ".join(parts),
+        })
+    return result
+
+
 def _vlm_hits_to_page_docs(hits: list[dict], top_k: int) -> dict:
     """Convert Tantivy VLM-description hits to the standard docs format.
 
@@ -279,12 +316,20 @@ def _page_hits_to_docs(
 
 
 def _hindex_page_text(record) -> str:
-    """Build an indexable text string from a PageRecord for dense/BM25 retrieval."""
+    """Build an indexable text string from a PageRecord for dense text embedding.
+
+    Includes anticipated_queries so that the text embedding signal captures
+    semantic similarity to anticipated queries — not just the page description.
+    This closes the vocabulary gap that BM25 queryhint misses: a user asking
+    "which method is fastest?" can match "lowest average latency" via embedding
+    even when BM25 keyword overlap is zero.
+    """
     parts = [p for p in [
         record.summary,
         " ".join(record.keywords) if record.keywords else "",
         record.text_content[:800] if record.text_content else "",
         record.visual_description,
+        " ".join(record.anticipated_queries) if getattr(record, "anticipated_queries", None) else "",
     ] if p and p.strip()]
     return " | ".join(parts)
 
@@ -317,19 +362,199 @@ def _bm25_hits_to_page_list(hits: list[dict]) -> list[tuple[str, int, float]]:
     return result
 
 
+def _normalize_query_for_bm25(query: str) -> str:
+    """Normalize a user query before BM25 search.
+
+    Strips LaTeX math notation so that equation-heavy queries
+    (e.g. arXiv figures) produce valid BM25 tokens instead of
+    punctuation fragments that score zero.
+    """
+    # Unwrap inline math: \( ... \) → content
+    q = re.sub(r'\\\(([^)]*?)\\\)', r'\1', query)
+    # Remove display math blocks: \[ ... \]
+    q = re.sub(r'\\\[.*?\\\]', ' ', q, flags=re.DOTALL)
+    # Remove \begin{...} ... \end{...} blocks
+    q = re.sub(r'\\begin\{[^}]+\}.*?\\end\{[^}]+\}', ' ', q, flags=re.DOTALL)
+    # Expand remaining backslash commands: \delta → delta, \alpha → alpha, etc.
+    q = re.sub(r'\\([a-zA-Z]+)', r'\1', q)
+    return re.sub(r'\s+', ' ', q).strip() or query
+
+
 def _reciprocal_rank_fusion(
     ranked_lists: list[list[tuple[str, int]]],
-    k: int = 60,
+    k: int = 30,
+    weights: list[float] | None = None,
 ) -> list[tuple[str, int, float]]:
-    """Merge multiple (source, page_number) ranked lists using Reciprocal Rank Fusion."""
+    """Merge multiple (source, page_number) ranked lists using Reciprocal Rank Fusion.
+
+    Parameters
+    ----------
+    ranked_lists:
+        Each list is a ranking of (source, page_number) pairs, best-first.
+    k:
+        RRF smoothing constant (default 30).
+    weights:
+        Optional per-list multipliers. When provided, each list's contribution
+        is scaled by its weight before summing. Used for intent-aware signal
+        weighting (e.g. visual_embed gets 2× for visual queries).
+        Must be the same length as ranked_lists; ignored if mismatched.
+    """
     scores: dict[tuple[str, int], float] = {}
-    for lst in ranked_lists:
+    _w = weights if weights and len(weights) == len(ranked_lists) else None
+    for i, lst in enumerate(ranked_lists):
+        w = _w[i] if _w else 1.0
         for rank, item in enumerate(lst):
-            scores[item] = scores.get(item, 0.0) + 1.0 / (k + rank + 1)
+            scores[item] = scores.get(item, 0.0) + w / (k + rank + 1)
     return [
         (s, p, score)
         for (s, p), score in sorted(scores.items(), key=lambda x: -x[1])
     ]
+
+
+def _classify_query_intent(question: str) -> str:
+    """Classify query as 'visual', 'entity', or 'semantic'.
+
+    Used to gate entity BM25 (entity intent only) and to weight visual
+    embedding higher for visual queries. Rule-based — fast, no model needed.
+
+    visual   — asks about what a chart/figure shows, visual patterns, rankings,
+               trends, proportions, spatial relationships
+    entity   — asks for a specific value about a named entity (proper noun +
+               value-lookup pattern); entity BM25 is activated
+    semantic — conceptual, comparative, or interpretive question without a
+               strong visual or entity signal; text embedding takes priority
+
+    Priority order: visual > entity > semantic.
+    """
+    import re
+
+    q_lower = question.lower()
+
+    # ── Visual/analytical signals ──────────────────────────────────────────
+    # Words describing visual elements or asking about patterns in data.
+    # "figure" is intentionally absent — "sales figures" / "figures show" creates
+    # false positives; "Figure N" references are caught by the named_ids regex below.
+    _VISUAL_WORDS = {
+        "chart", "graph", "diagram", "scatter plot", "bar chart", "pie chart",
+        "line chart", "donut chart", "heatmap", "histogram", "treemap",
+        "shows", "shown", "visual", "trend", "highlighted", "legend",
+        "axis", "x-axis", "y-axis", "color", "colour", "darkest", "lightest",
+        "tallest", "shortest", "stacked", "grouped", "on the left", "on the right",
+    }
+    _ANALYTICAL_PATTERNS = [
+        # "which X is the most/least/highest/lowest..."
+        r"\bwhich\b.{0,60}\b(?:most|least|highest|lowest|best|worst|largest|smallest|top|bottom)\b",
+        # "which X shows/demonstrates/reveals..."
+        r"\bwhich\b.{0,60}\b(?:shows?|demonstrates?|reveals?|indicates?|suggests?|appears?)\b",
+        # "what is the most/least..."
+        r"\bwhat (?:is|are) (?:the )?(?:most|least|best|worst|largest|smallest|highest|lowest)\b",
+        # "how many/much..."
+        r"\bhow (?:many|much)\b",
+        # "do/does all/any/most/some..."
+        r"\bdo(?:es)? (?:all|any|most|some)\b",
+        # "what share/proportion/percentage..."
+        r"\bwhat (?:share|proportion|percentage|fraction)\b",
+        # trend/comparison words
+        r"\b(?:compared? to|relative to|versus| vs )\b",
+        r"\b(?:trend|dip|spike|peak|recovery|recovering|growth|decline|fluctuat)\b",
+        r"\b(?:uninterrupted|consistent|steady|gradual|sudden)\b",
+        r"\b(?:across all|overall|in general|generally speaking)\b",
+        # comparison magnitude phrases ("is X larger/higher/greater than Y")
+        r"\b(?:larger|smaller|higher|lower|greater|less|more|fewer) than\b",
+        # standalone proportion/percentage questions (no "what" prefix needed)
+        r"\b(?:proportion|percentage|fraction|share) of\b",
+        r"\b(?:majority|minority|most of|fewer than half)\b",
+    ]
+
+    visual_score = sum(1 for w in _VISUAL_WORDS if w in q_lower)
+    analytical_score = sum(1 for p in _ANALYTICAL_PATTERNS if re.search(p, q_lower))
+
+    # ── Entity lookup signals ──────────────────────────────────────────────
+    # TitleCase proper nouns (skip first word — always capitalized at start)
+    _first_space = question.find(" ")
+    _tail = question[_first_space + 1:] if _first_space >= 0 else ""
+    proper_nouns = re.findall(r"\b[A-Z][a-z]{2,}(?:\s[A-Z][a-z]+)*\b", _tail)
+    # Named identifiers: Figure 1, Table 2, AlphaNet, VIRA-v2, BenchA
+    named_ids = re.findall(
+        r"\b(?:Fig(?:ure)?|Table|Section|Appendix)\s*\d+\b"
+        r"|\b[A-Z][a-zA-Z]*(?:\d+[a-zA-Z\d]*|-v?\d+)\b",
+        question,
+    )
+    # Value-lookup pattern: "what is/are/was/were the X of Y" with a named thing
+    value_lookup = bool(
+        re.search(r"\bwhat (?:is|are|was|were) (?:the )?(?:\w+ ){0,5}(?:of|for)\b", q_lower)
+        and (proper_nouns or named_ids)
+    )
+    entity_score = len(proper_nouns) + len(named_ids) * 2 + (3 if value_lookup else 0)
+
+    # ── Classification (visual takes priority — it's the hardest to recover) ──
+    # Interpretive shortcut: "why..." and "what does X suggest/imply" are
+    # always conceptual — text embedding serves them best regardless of entity
+    # signals (proper nouns in "Why does BetaSearch lead..." are not entity lookups).
+    if re.search(r"^why\b", q_lower) or re.search(
+        r"^what does\b.{0,80}\b(?:suggest|imply|tell us|indicate|mean)\b", q_lower
+    ):
+        return "semantic"
+    if visual_score >= 2 or analytical_score >= 2:
+        return "visual"
+    if entity_score >= 4 and value_lookup:
+        return "entity"
+    if visual_score >= 1 or analytical_score >= 1:
+        return "visual"
+    if entity_score >= 2:
+        return "entity"
+    return "semantic"
+
+
+def _filter_queryhint_hits(
+    qh_all: list[tuple[str, int, float]],
+    score_ratio_threshold: float = 0.5,
+    per_doc_cap: int = 4,
+) -> list[tuple[str, int, float]]:
+    """Filter queryhint BM25 hits using a score-ratio threshold and per-doc cap.
+
+    Two complementary filters prevent same-doc clustering while preserving coverage:
+
+    - Score-ratio threshold: keep a page only if its BM25 score >=
+      ``score_ratio_threshold * best_page_score_for_that_doc``.  Adaptive
+      per-query: when one page clearly dominates (e.g. 100% vs 30%) only that
+      page gets a vote; when several pages match similarly (e.g. 80%, 75%, 65%)
+      all pass.
+
+    - Per-doc cap: hard upper limit on pages from any single document.
+      Setting this equal to ``top_k`` means a doc can at most fill every
+      retrieval slot — the threshold does the real filtering; the cap is a
+      safety valve against pathological cases.
+
+    Args:
+        qh_all: ``(source, page_number, inv_dist)`` tuples sorted by BM25
+            score descending (``inv_dist = 1 / (1 + bm25_score)``; lower
+            value means better match).  The sort order within each document
+            is preserved in the output.
+        score_ratio_threshold: fraction of the document's best BM25 score
+            that a page must reach to be included.  0.5 means 50%.
+        per_doc_cap: maximum pages from any single source document.
+
+    Returns:
+        Filtered list; relative order within each document is preserved.
+    """
+    qh_by_doc: dict[str, list[tuple[str, int, float]]] = {}
+    for s, p, d in qh_all:
+        qh_by_doc.setdefault(s, []).append((s, p, d))
+
+    result: list[tuple[str, int, float]] = []
+    for doc_pages in qh_by_doc.values():
+        best_inv = doc_pages[0][2]       # smallest inv_dist = best BM25 match
+        best_score = 1.0 / best_inv - 1.0
+        threshold = score_ratio_threshold * best_score
+        count = 0
+        for s, p, d in doc_pages:
+            if count >= per_doc_cap:
+                break
+            if (1.0 / d - 1.0) >= threshold:
+                result.append((s, p, d))
+                count += 1
+    return result
 
 
 def _theme_tokens(theme: str) -> set[str]:
@@ -1393,6 +1618,7 @@ class RAGImg:
             vlm_tantivy_documents = []
             doc_level_tantivy_docs: list[dict] = []
             queryhint_tantivy_docs: list[dict] = []
+            entity_tantivy_docs: list[dict] = []
             text_embed_ids: list[str] = []
             text_embed_docs_list: list[str] = []
             text_embed_metas: list[dict] = []
@@ -1423,6 +1649,7 @@ class RAGImg:
                                     if _ddoc:
                                         doc_level_tantivy_docs.append(_ddoc)
                                     queryhint_tantivy_docs.extend(_hierarchy_to_queryhint_tantivy_docs(existing))
+                                    entity_tantivy_docs.extend(_hierarchy_to_entity_tantivy_docs(existing))
                                 if text_embed_requested:
                                     for _pi, _rec in enumerate(existing.page_records):
                                         _txt = _hindex_page_text(_rec)
@@ -1484,6 +1711,7 @@ class RAGImg:
                                 if _ddoc:
                                     doc_level_tantivy_docs.append(_ddoc)
                                 queryhint_tantivy_docs.extend(_hierarchy_to_queryhint_tantivy_docs(_h_built))
+                                entity_tantivy_docs.extend(_hierarchy_to_entity_tantivy_docs(_h_built))
 
                     # Accumulate page/topic texts for dense embedding into ChromaDB.
                     if text_embed_requested or topic_embed_requested:
@@ -1573,31 +1801,37 @@ class RAGImg:
                 # Merge OCR text + VLM descriptions + doc-level descriptions into a
                 # single Tantivy index so BM25 can match page content, semantic prose,
                 # and whole-document context (for cross-document retrieval).
-                all_hybrid_docs = tantivy_documents + vlm_tantivy_documents + doc_level_tantivy_docs + queryhint_tantivy_docs
+                all_hybrid_docs = tantivy_documents + vlm_tantivy_documents + doc_level_tantivy_docs + queryhint_tantivy_docs + entity_tantivy_docs
                 self.text_search_engine_index.add_documents(
                     all_hybrid_docs, recreate=self.rag_reindex and not self.rag_update_index
                 )
                 self.logger.info(
-                    "[vision_hybrid_bm25] Indexed %d docs (OCR=%d + VLM=%d + doc=%d + queryhint=%d) [%.2fs]",
+                    "[vision_hybrid_bm25] Indexed %d docs (OCR=%d + VLM=%d + doc=%d + queryhint=%d + entity=%d) [%.2fs]",
                     len(all_hybrid_docs), len(tantivy_documents), len(vlm_tantivy_documents),
-                    len(doc_level_tantivy_docs), len(queryhint_tantivy_docs), time() - t1,
+                    len(doc_level_tantivy_docs), len(queryhint_tantivy_docs), len(entity_tantivy_docs), time() - t1,
                 )
             if text_embed_requested and self.rag_text_embed_collection is not None and text_embed_ids:
-                self.rag_text_embed_collection.upsert(
-                    ids=text_embed_ids,
-                    documents=text_embed_docs_list,
-                    metadatas=text_embed_metas,
-                )
+                # Batch upsert to avoid OOM: embedding all pages at once with padding=True
+                # inflates KV-cache proportionally to batch_size × max_seq_len.
+                _TEXT_EMBED_BATCH = 4
+                for _i in range(0, len(text_embed_ids), _TEXT_EMBED_BATCH):
+                    self.rag_text_embed_collection.upsert(
+                        ids=text_embed_ids[_i:_i + _TEXT_EMBED_BATCH],
+                        documents=text_embed_docs_list[_i:_i + _TEXT_EMBED_BATCH],
+                        metadatas=text_embed_metas[_i:_i + _TEXT_EMBED_BATCH],
+                    )
                 self.logger.info(
                     "[vision_text_embed] Indexed %d page text embeddings [%.2fs]",
                     len(text_embed_ids), time() - t1,
                 )
             if topic_embed_requested and self.rag_topic_embed_collection is not None and topic_embed_ids:
-                self.rag_topic_embed_collection.upsert(
-                    ids=topic_embed_ids,
-                    documents=topic_embed_docs_list,
-                    metadatas=topic_embed_metas,
-                )
+                _TOPIC_EMBED_BATCH = 4
+                for _i in range(0, len(topic_embed_ids), _TOPIC_EMBED_BATCH):
+                    self.rag_topic_embed_collection.upsert(
+                        ids=topic_embed_ids[_i:_i + _TOPIC_EMBED_BATCH],
+                        documents=topic_embed_docs_list[_i:_i + _TOPIC_EMBED_BATCH],
+                        metadatas=topic_embed_metas[_i:_i + _TOPIC_EMBED_BATCH],
+                    )
                 self.logger.info(
                     "[vision_topic_embed] Indexed %d topic text embeddings [%.2fs]",
                     len(topic_embed_ids), time() - t1,
@@ -1763,14 +1997,12 @@ class RAGImg:
             if self.text_search_engine_index is None:
                 self.logger.warning("[vision_hybrid_bm25] text_search_engine_index not initialized.")
             else:
+                _bm25_query = _normalize_query_for_bm25(rag_question)
                 _bm25_hits_all = self.text_search_engine_index.search(
-                    rag_question,
+                    _bm25_query,
                     limit=rag_config.top_k * 8,
                     fields=["content"],
                     crop_label=None,
-                    # Boost raw OCR text (crop_label=None) so exact-match terminology
-                    # outranks VLM paraphrase / queryhint when BM25 scores are close.
-                    score_multipliers={None: 1.5},
                 )
                 # Split page-level from doc-level hits
                 _page_bm25_hits = [h for h in _bm25_hits_all if h.get("crop_label") != "docdesc"]
@@ -1795,6 +2027,33 @@ class RAGImg:
                             if (_src, _pn) not in _seen_pages:
                                 _seen_pages.add((_src, _pn))
                                 _page_list.append((_src, _pn, 1.0 / (1.0 + _score)))
+                # Queryhint-boosted BM25: search only over anticipated-query entries.
+                # Pages whose anticipated queries match the user question get an extra RRF
+                # vote, lifting them above pages that matched only via pagedesc or OCR.
+                # This is critical when a specific inner page (e.g. a roadmap table) is
+                # outranked by a cover page that incidentally contains the same keywords.
+                # Score-ratio filter + per-doc cap via _filter_queryhint_hits:
+                # threshold=0.5 (adaptive quality gate) and cap=top_k (safety valve).
+                # See _filter_queryhint_hits docstring for rationale.
+                _queryhint_page_list: list[tuple[str, int, float]] = []
+                try:
+                    _qh_hits = self.text_search_engine_index.search(
+                        _bm25_query,
+                        limit=rag_config.top_k * 8,
+                        fields=["content"],
+                        crop_label="queryhint",
+                    )
+                    _qh_all = _bm25_hits_to_page_list(_qh_hits)
+                    # Group by doc; _qh_all is sorted by BM25 desc so first entry per
+                    # doc is always the best-scoring page for that document.
+                    _queryhint_page_list = _filter_queryhint_hits(
+                        _qh_all,
+                        score_ratio_threshold=0.5,
+                        per_doc_cap=rag_config.top_k,
+                    )
+                except Exception as _e:
+                    self.logger.warning("[vision_hybrid_bm25] queryhint BM25 failed: %s", _e)
+
                 # Text embedding retrieval (semantic match over VLM-generated page text)
                 _text_embed_page_list: list[tuple[str, int, float]] = []
                 if self.rag_text_embed_collection is not None:
@@ -1839,24 +2098,108 @@ class RAGImg:
                     except Exception as _e:
                         self.logger.warning("[vision_hybrid_bm25] visual embed query failed: %s", _e)
 
-                # RRF fusion: BM25 + text embed (always); visual embed only if query has
-                # a strong visual anchor (min cosine distance < threshold)
-                _bm25_ranked = [(_s, _p) for _s, _p, _ in _page_list]
-                _text_ranked = [(_s, _p) for _s, _p, _ in _text_embed_page_list]
-                _embed_ranked = [(_s, _p) for _s, _p, _ in _embed_page_list]
-                _ranked_lists = [_bm25_ranked]
-                if _text_ranked:
-                    _ranked_lists.append(_text_ranked)
-                _min_visual_dist = min((d for _, _, d in _embed_page_list), default=1.0)
-                if _embed_ranked and _min_visual_dist < _VISUAL_EMBED_DIST_THRESHOLD:
-                    _ranked_lists.append(_embed_ranked)
-                if len(_ranked_lists) > 1:
-                    _page_list = _reciprocal_rank_fusion(_ranked_lists)
-
-                # Topic-sibling expansion: inject cross-document pages sharing a topic
-                _page_list = _expand_with_topic_siblings(
-                    _page_list, rag_config.top_k, self.hindex_store, self.logger
+                # ── Query intent classification ────────────────────────────────────
+                # Determines which signals to activate and how to weight them.
+                # visual   → entity BM25 off; visual_embed weight ×2
+                # entity   → entity BM25 on; all weights equal
+                # semantic → entity BM25 off; text_embed weight ×2
+                _intent = _classify_query_intent(_bm25_query)
+                self.logger.debug(
+                    "[vision_hybrid_bm25] query intent=%s for '%s'",
+                    _intent, _bm25_query[:80],
                 )
+
+                # ── Entity BM25 (intent-gated) ────────────────────────────────────
+                # Only activated for entity-intent queries. For visual and semantic
+                # queries the entity index adds noise: amounts and named identifiers
+                # that appear across documents score without discriminating power.
+                _entity_page_list: list[tuple[str, int, float]] = []
+                if _intent == "entity":
+                    try:
+                        _ent_hits = self.text_search_engine_index.search(
+                            _bm25_query,
+                            limit=rag_config.top_k * 8,
+                            fields=["content"],
+                            crop_label="entity",
+                        )
+                        _entity_page_list = _bm25_hits_to_page_list(_ent_hits)
+                    except Exception as _e:
+                        self.logger.warning("[vision_hybrid_bm25] entity BM25 failed: %s", _e)
+
+                # ── Intent-aware weighted RRF ─────────────────────────────────────
+                # Signal weights by intent:
+                #   visual   → visual_embed ×1.5 (pattern recognition primary)
+                #   entity   → entity_bm25 ×1.5 (named entity lookup primary)
+                #   semantic → text_embed ×1.5 (vocabulary bridge primary)
+                # ×1.5 (not ×2) keeps boosted signal from crowding out queryhint
+                # BM25, which is the primary cross-page fusion signal.
+                # Base signals (BM25 + queryhint) always weight 1.0.
+                _bm25_ranked     = [(_s, _p) for _s, _p, _ in _page_list]
+                _queryhint_ranked= [(_s, _p) for _s, _p, _ in _queryhint_page_list]
+                _text_ranked     = [(_s, _p) for _s, _p, _ in _text_embed_page_list]
+                _embed_ranked    = [(_s, _p) for _s, _p, _ in _embed_page_list]
+                _entity_ranked   = [(_s, _p) for _s, _p, _ in _entity_page_list]
+
+                _rrf_lists: list[list[tuple[str, int]]] = [_bm25_ranked]
+                _rrf_weights: list[float] = [1.0]
+
+                if _queryhint_ranked:
+                    _rrf_lists.append(_queryhint_ranked)
+                    _rrf_weights.append(1.0)
+                if _text_ranked:
+                    _rrf_lists.append(_text_ranked)
+                    _rrf_weights.append(1.5 if _intent == "semantic" else 1.0)
+                if _embed_ranked:
+                    _rrf_lists.append(_embed_ranked)
+                    _rrf_weights.append(1.5 if _intent == "visual" else 1.0)
+                if _entity_ranked:
+                    _rrf_lists.append(_entity_ranked)
+                    _rrf_weights.append(1.5)  # entity intent → entity BM25 is primary
+
+                if len(_rrf_lists) > 1:
+                    _page_list = _reciprocal_rank_fusion(_rrf_lists, weights=_rrf_weights)
+
+                # ── Page-type boost for visual queries ────────────────────────────
+                # After RRF, give a small relevance boost to visual-dominant pages
+                # (charts, figures, diagrams) when the query is visual-intent.
+                # Uses page_type stored in the hindex — no extra VLM call.
+                # Hierarchies are cached per-source to avoid repeated disk reads.
+                if _intent == "visual" and self.hindex_store is not None:
+                    _pt_cache: dict[str, object] = {}
+                    _boosted: list[tuple[str, int, float]] = []
+                    for _src, _pn, _rrf_score in _page_list:
+                        if _src not in _pt_cache:
+                            _pt_cache[_src] = self.hindex_store.load(_src)
+                        _pt_h = _pt_cache[_src]
+                        _pt_rec = _pt_h.record_for_page(_pn - 1) if _pt_h else None
+                        _pt = getattr(_pt_rec, "page_type", "") if _pt_rec else ""
+                        _pt_boost = 1.2 if _pt == "visual-dominant" else (1.05 if _pt == "mixed" else 1.0)
+                        _boosted.append((_src, _pn, _rrf_score * _pt_boost))
+                    _page_list = sorted(_boosted, key=lambda x: -x[2])
+
+                # Topic-sibling expansion: inject cross-document pages sharing a topic.
+                # Disabled: token-overlap matching is too loose for thematically related
+                # corpora (all docs share words like "performance", "metrics", "2025"),
+                # causing irrelevant docs to dominate top-k slots. The existing doc-level
+                # BM25 expansion already handles cross-doc discovery via docdesc hits.
+                # _page_list = _expand_with_topic_siblings(
+                #     _page_list, rag_config.top_k, self.hindex_store, self.logger
+                # )
+
+                # Per-doc cap: prevent a single document from filling all top-k slots.
+                # Guarantees cross-document diversity in cross_doc queries where entity
+                # BM25 can lock onto one document's entity matches exclusively.
+                # Cap = max(1, top_k // 2) so each doc holds at most half the slots.
+                _final_cap = max(1, rag_config.top_k // 2)
+                _capped_list: list[tuple[str, int, float]] = []
+                _doc_counts: dict[str, int] = {}
+                for _s, _p, _sc in _page_list:
+                    if _doc_counts.get(_s, 0) < _final_cap:
+                        _capped_list.append((_s, _p, _sc))
+                        _doc_counts[_s] = _doc_counts.get(_s, 0) + 1
+                    if len(_capped_list) >= rag_config.top_k * 2:
+                        break
+                _page_list = _capped_list
 
                 docs = _page_hits_to_docs(_page_list[: rag_config.top_k], self.hindex_store, self.kvstore, rag_config.top_k)
                 _tc_hits, _tc_prompt = _hindex_text_context_for_pages(
@@ -1868,11 +2211,11 @@ class RAGImg:
                 docs["text_context"] = _tc_hits
                 docs["text_context_prompt"] = _tc_prompt
                 self.logger.debug(
-                    "[vision_hybrid_bm25] bm25=%d text_embed=%d visual_embed=%d "
-                    "(visual_dist=%.3f, gate=%s) siblings=%d for '%s'",
-                    len(_page_bm25_hits), len(_text_embed_page_list), len(_embed_page_list),
-                    _min_visual_dist, _min_visual_dist < _VISUAL_EMBED_DIST_THRESHOLD,
-                    len(_page_list) - len(_bm25_ranked), rag_question[:80],
+                    "[vision_hybrid_bm25] intent=%s bm25=%d queryhint=%d text_embed=%d visual_embed=%d entity=%d for '%s'",
+                    _intent,
+                    len(_page_bm25_hits), len(_queryhint_page_list),
+                    len(_text_embed_page_list), len(_embed_page_list),
+                    len(_entity_page_list), rag_question[:80],
                 )
 
         elif _mode == "vision_topic_embed":
@@ -2018,6 +2361,31 @@ class RAGImg:
                     len(scanned_page_indices), doc_name,
                 )
 
+        # Detect document language from OCR text so the VLM can be instructed
+        # explicitly (prevents defaulting to English for international docs).
+        _doc_language: str | None = None
+        if page_texts:
+            try:
+                from langdetect import detect as _langdetect
+                _LANG_NAMES = {
+                    "fr": "French", "en": "English", "de": "German", "es": "Spanish",
+                    "it": "Italian", "nl": "Dutch", "pt": "Portuguese", "ja": "Japanese",
+                    "zh-cn": "Chinese", "zh-tw": "Chinese", "ar": "Arabic",
+                    "ko": "Korean", "ru": "Russian", "pl": "Polish",
+                }
+                _lang_sample = " ".join(
+                    page_texts.get(pn, "").strip()
+                    for pn in range(1, min(6, page_count + 1))
+                    if len(page_texts.get(pn, "").strip()) > 20
+                )
+                if len(_lang_sample) > 50:
+                    _detected = _langdetect(_lang_sample)
+                    _doc_language = _LANG_NAMES.get(_detected)
+                    if _doc_language:
+                        self.logger.info("[hindex] Detected document language: %s", _doc_language)
+            except Exception as _e:
+                self.logger.debug("[hindex] Language detection failed: %s", _e)
+
         # Build the hierarchy (Phase 1 + 2 happen inside builder.build())
         page_images = [img_dict["image"] for img_dict in document["images"]]
         builder = HierarchyBuilder(
@@ -2029,6 +2397,7 @@ class RAGImg:
         hierarchy = builder.build(
             doc_name, page_images, page_keys=page_keys,
             scanned_page_indices=scanned_page_indices or None,
+            doc_language=_doc_language,
         )
 
         # Phase 3 — Populate crop_keys on each PageRecord from document["parts"].
