@@ -148,8 +148,18 @@ This section controls how Colette **filters and processes files** before they ar
 Controls settings for **retrieval and vector database indexing**:
 - **`indexdb_lib`**: The vector database used (`chromadb`).
 - **`retrieval_mode`**: Retrieval strategy (`embedding_retrieval`, `text_search_retrieval`, `hybrid`).
-- **`embedding_lib`**: The library used to compute text embeddings (`huggingface`).
+- **`embedding_lib`**: The library used to compute text embeddings (`huggingface`, `colbert`, `vllm`, or `twelvelabs`).
 - **`embedding_model`**: The embedding model (`intfloat/multilingual-e5-small`).
+
+> **TwelveLabs (optional, video-aware multimodal RAG).** Set `"embedding_lib": "twelvelabs"`
+> to embed text with the TwelveLabs [Marengo](https://twelvelabs.io) model (512-dim multimodal
+> vectors shared across text/image/audio/video). `embedding_model` is optional and defaults to
+> `marengo3.0`. Requires `pip install twelvelabs` and the `TWELVELABS_API_KEY` environment
+> variable (free tier available at https://twelvelabs.io). Because Marengo embeds text and video
+> into the same space, you can also turn videos into searchable text with the Pegasus helper
+> `colette.backends.langchain.rag.twelvelabs_embeddings.analyze_video(prompt=..., url=...)` and
+> index the result like any other document. This integration is fully opt-in and does not change
+> any existing defaults.
 - **`gpu_id`**: Specifies which GPU to use (`0` means the first available GPU).
 - **`text_search_engine_top_k`**: Number of text-search hits to fetch.
 - **`text_search_engine_fields`**: Indexed fields queried by the text search engine.

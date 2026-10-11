@@ -65,6 +65,7 @@ trag = [
     "llama-cpp-python==0.3.1",
     "pymupdf==1.26.4",
     "tantivy==0.25.1",
+    "twelvelabs>=1.2.8",
 ]
 
 [project.scripts]
